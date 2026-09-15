@@ -2,6 +2,9 @@
   'test_type': 'runtime',
   'output': """
 skip: 1 2 3 4
+
 skip: 9 8 7 0
+
+varargs_forward_skip.amx returns 0
 """
 }
