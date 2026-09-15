@@ -1,10 +1,16 @@
 {
+  # Task 3 (2026-09-15): observed output updated from the brief's guess.
+  # The CompuPhase console printf (amxcons.c amx_printstring) raises
+  # AMX_ERR_NATIVE when the number of arguments does not match the format
+  # specifiers -- both too few AND too many. The first call forwards
+  # (3, 4, 5) so printf receives 5 arguments for 4 specifiers: the line
+  # prints, then the run aborts with a native error. "skip: 9 8 7 0" is
+  # not achievable on this runtime; the second call never runs.
   'test_type': 'runtime',
+  'should_fail': True,
   'output': """
 skip: 1 2 3 4
 
-skip: 9 8 7 0
-
-varargs_forward_skip.amx returns 0
+Run time error 10: "Native function failed"
 """
 }
