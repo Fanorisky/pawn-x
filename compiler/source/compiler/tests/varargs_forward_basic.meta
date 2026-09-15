@@ -2,7 +2,11 @@
   'test_type': 'runtime',
   'output': """
 basic: 42 43
+
 basic: hello
+
 basic: none
+
+varargs_forward_basic.amx returns 0
 """
 }

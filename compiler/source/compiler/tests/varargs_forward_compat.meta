@@ -2,5 +2,7 @@
   'test_type': 'runtime',
   'output': """
 compat: 5 7
+
+varargs_forward_compat.amx returns 0
 """
 }
