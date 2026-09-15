@@ -103,3 +103,55 @@ expectations, executed by `run_tests.py` via CMake.
 4. **Test both acceptance and rejection**: one test for valid code that must
    compile, one for invalid code with the exact error line.
 5. **Run the suite before every commit** (see Task 4's `tools/run-tests.sh`).
+
+## 4. Pawn Scripts (experiments/ and tests)
+
+Pawn style follows the conventions visible in YSI 5 and the compiler's own
+test suite (`compiler/source/compiler/tests/__addressof.pwn` is the reference).
+
+### 4.1 Formatting
+
+| Rule | Convention |
+|---|---|
+| Indentation | tabs (1 tab per level) — as in YSI and test scripts |
+| Braces | Allman (own line), matching C |
+| Include guard | `#if defined _INC_<name>` + `#endinput` + `#define _INC_<name>` |
+| Line width | keep under 100 columns |
+
+Reference include guard shape (from y_timers.inc):
+
+    #if defined _INC_y_timers
+      #endinput
+    #endif
+    #define _INC_y_timers
+
+### 4.2 Naming
+
+| Kind | Convention | Example |
+|---|---|---|
+| Functions | `Snake_Case` (Pawn community style: capitalized words) | `GetPlayerName` |
+| Our experiment natives/keywords | lowercase, prefixed per feature | `varargs_...` |
+| Variables | `snake_case` | `player_count` |
+| Constants | `UPPERCASE` or `CONST_CASE` | `MAX_PLAYERS` |
+| Public functions (timer/callback) | descriptive, prefixed | `OnVarargsExperiment` |
+| Test scripts | `feature_name.pwn` matching the `.meta` | `varargs_native.pwn` |
+
+### 4.3 Experiment scripts
+
+- Every experiment lives in `experiments/<NNN>-<short-name>/` (e.g.
+  `experiments/001-varargs/`) containing:
+  - `script.pwn` — the Pawn code under experiment
+  - `RESULT.md` — what was tried, what happened, verdict
+- Experiments that modify the compiler pin the compiler commit hash in
+  `RESULT.md` (`git rev-parse HEAD` at run time).
+- Suppress warnings explicitly (`#pragma unused x`) rather than ignoring
+  them — the build log must be warning-clean.
+
+## 5. Documentation Rules
+
+- `docs/` holds standards, design docs (`docs/superpowers/specs/`), and
+  implementation plans (`docs/superpowers/plans/`).
+- Every experiment report (`RESULT.md`) answers four questions: what was
+  tried, what worked, what broke, what is next.
+- Commit messages: Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`,
+  `test:`, `experiment:`).
