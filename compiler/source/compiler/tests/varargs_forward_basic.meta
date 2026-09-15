@@ -1,6 +1,6 @@
 {
   'test_type': 'runtime',
-  'expected_output': """
+  'output': """
 basic: 42 43
 basic: hello
 basic: none
