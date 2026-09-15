@@ -96,10 +96,11 @@ static void (*op1[17])(void) = {
  *  Recognizes the varargs-forwarding argument "___" or "___(skip)", which
  *  passes the variable arguments of the enclosing function on to the called
  *  function, optionally skipping the first "skip" arguments. On a match, the
- *  tokens are consumed, the skip count is stored in "*skip" (0 when absent)
- *  and the routine returns TRUE. On no match, the token(s) read are pushed
- *  back and the routine returns FALSE, so that the caller can process the
- *  argument in the normal way.
+ *  tokens are consumed, the skip count is stored in "*skip" (-1 when the
+ *  token was a bare "___", so that the caller can distinguish it from an
+ *  explicit "___(0)") and the routine returns TRUE. On no match, the token(s)
+ *  read are pushed back and the routine returns FALSE, so that the caller
+ *  can process the argument in the normal way.
  */
 static int matchfwdtoken(cell *skip)
 {
@@ -107,10 +108,10 @@ static int matchfwdtoken(cell *skip)
   char *str;
   int tok;
 
-  *skip=0;
+  *skip=-1;                      /* -1 means: no explicit skip count */
   tok=lex(&val,&str);
   if (tok!=tSYMBOL || strcmp(str,"___")!=0) {
-    lexpush();                    /* not "___": let the caller handle it */
+    lexpush();                   /* not "___": let the caller handle it */
     return FALSE;
   } /* if */
   if (matchtoken('(')) {
@@ -2267,6 +2268,184 @@ enum {
   ARG_DONE,
 };
 
+/*  fwdnamedargs
+ *
+ *  Counts the declared (non-variadic) parameters of the function that is
+ *  currently being compiled. Returns -1 if that function has no variable
+ *  argument list; "___" is not valid in such a function (it then parses as
+ *  an ordinary symbol).
+ */
+static int fwdnamedargs(void)
+{
+  int i;
+
+  assert(curfunc!=NULL);
+  for (i=0; curfunc->dim.arglist[i].ident!=0; i++) {
+    if (curfunc->dim.arglist[i].ident==iVARARGS)
+      return i;                  /* "i" cells precede the "..." */
+  } /* for */
+  return -1;                     /* the function is not variadic */
+}
+
+/*  fwdpushloop
+ *
+ *  Emits a loop that copies the variable arguments of the function that is
+ *  currently being compiled onto the stack of the function that is being
+ *  called. "srcoff" is the offset (in bytes) from the start of the frame of
+ *  the first argument to copy; the run-time upper bound is the byte count of
+ *  the current function (at frm+2*cell), because the number of forwarded
+ *  cells is only known at run time. The loop starts at the last argument of
+ *  the frame and walks down to "srcoff", pushing every cell that it passes;
+ *  walking downwards makes the callee see the forwarded cells in their
+ *  original order (arguments are pushed right to left). The loop is also
+ *  safe when there are no cells to copy: the end check (an unsigned
+ *  comparison of the addresses) then fails immediately.
+ *  Only PRI and ALT are clobbered, and no new opcodes are used.
+ *  Frame layout (see sc1.c): frm+0 previous frame, frm+4 return address,
+ *  frm+8 byte count, frm+12 first argument.
+ */
+static void fwdpushloop(cell srcoff)
+{
+  int loop,done;
+
+  loop=getlabel();
+  done=getlabel();
+  /* PRI = address of the last argument of the current function
+   * ("frm + 3*cell + bytecount - cell")
+   */
+  getfrm();
+  addconst(3*sizeof(cell));      /* PRI = frm + 3*cell (the first argument) */
+  stgwrite("\tmove.alt\n");      /* ALT = frm + 3*cell */
+  code_idx+=opcodes(1);
+  getfrm();
+  addconst(2*sizeof(cell));      /* PRI = &bytecount */
+  stgwrite("\tload.i\n");        /* PRI = bytecount (in bytes) */
+  code_idx+=opcodes(1);
+  stgwrite("\tadd\n");           /* PRI = one past the last argument */
+  code_idx+=opcodes(1);
+  addconst(-sizeof(cell));       /* PRI = the last argument */
+  setlabel(loop);
+  /* ALT = the address of the next argument to push */
+  stgwrite("\tmove.alt\n");
+  code_idx+=opcodes(1);
+  getfrm();
+  addconst(srcoff);              /* PRI = address of the first argument to copy */
+  /* if that address is above the current one, all arguments are copied
+   * (an unsigned comparison, because both are addresses)
+   */
+  stgwrite("\tjgrtr ");
+  outval(done,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.pri\n");      /* PRI = the address of the argument */
+  code_idx+=opcodes(1);
+  stgwrite("\tload.i\n");        /* PRI = the value of the argument */
+  code_idx+=opcodes(1);
+  pushreg(sPRI);                 /* push the value */
+  stgwrite("\txchg\n");          /* PRI = the address (ALT holds the value) */
+  code_idx+=opcodes(1);
+  addconst(-sizeof(cell));       /* PRI = the address of the previous argument */
+  jumplabel(loop);
+  setlabel(done);
+}
+
+/*  fwdbytecount
+ *
+ *  Pushes the run-time computed byte count for the function that is being
+ *  called, replacing the constant "pushval(nargs*sizeof(cell))" for calls
+ *  with forwarded arguments. The count is the number of statically pushed
+ *  cells plus the number of forwarded cells; the latter is the byte count
+ *  of the current function minus the skipped cells. It is clamped at zero,
+ *  because the current function may have received fewer arguments than the
+ *  skip count of "___(skip)" skips.
+ */
+static void fwdbytecount(int staticargs,int skip)
+{
+  int lbl_neg,lbl_pos;
+
+  lbl_neg=getlabel();
+  lbl_pos=getlabel();
+  getfrm();
+  addconst(2*sizeof(cell));
+  stgwrite("\tload.i\n");        /* PRI = bytecount of the current function */
+  code_idx+=opcodes(1);
+  addconst(-(cell)(skip*sizeof(cell)));
+                                 /* PRI = bytes to forward (may be negative) */
+  stgwrite("\tzero.alt\n");      /* ALT = 0 */
+  code_idx+=opcodes(1);
+  stgwrite("\tjsless ");
+  outval(lbl_neg,TRUE);          /* negative: clamp at zero */
+  code_idx+=opcodes(1)+opargs(1);
+  jumplabel(lbl_pos);
+  setlabel(lbl_neg);
+  ldconst(0,sPRI);               /* PRI = 0 */
+  setlabel(lbl_pos);
+  addconst((cell)(staticargs*sizeof(cell)));
+                                 /* PRI = the byte count for the callee */
+  pushreg(sPRI);                 /* push the byte count */
+}
+
+/*  fwdpopnative
+ *
+ *  A native function removes its parameters via a constant "stack"
+ *  instruction that ffcall() emits; this instruction covers only the
+ *  statically pushed arguments. When arguments were forwarded, the extra
+ *  cells must be popped at run time as well: the number of bytes to pop is
+ *  the byte count of the current function (still readable at frm+2*cell)
+ *  minus the skipped cells, clamped at zero (the copy loop never pushes
+ *  more than that).
+ *  The return value of the native function is in PRI; it is saved in a
+ *  temporary cell on the heap, because the stack adjustment needs both
+ *  registers (the "heap" opcode conveniently loads the address of the new
+ *  cell in ALT without touching PRI). The value is read back before the
+ *  cell is released, because the interpreter forbids access to memory at
+ *  or above the heap top.
+ */
+static void fwdpopnative(int skip)
+{
+  int lbl_neg,lbl_pos;
+
+  lbl_neg=getlabel();
+  lbl_pos=getlabel();
+  stgwrite("\theap ");
+  outval(sizeof(cell),TRUE);     /* ALT = address of a new heap cell */
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tstor.i\n");        /* save PRI (the return value) */
+  code_idx+=opcodes(1);
+  /* PRI = forwarded bytes = bytecount of the current function - skipped */
+  getfrm();
+  addconst(2*sizeof(cell));
+  stgwrite("\tload.i\n");        /* PRI = bytecount of the current function */
+  code_idx+=opcodes(1);
+  addconst(-(cell)(skip*sizeof(cell)));
+  stgwrite("\tzero.alt\n");      /* ALT = 0 */
+  code_idx+=opcodes(1);
+  stgwrite("\tjsless ");
+  outval(lbl_neg,TRUE);          /* negative: clamp at zero */
+  code_idx+=opcodes(1)+opargs(1);
+  jumplabel(lbl_pos);
+  setlabel(lbl_neg);
+  ldconst(0,sPRI);               /* PRI = 0 */
+  setlabel(lbl_pos);
+  /* STK += forwarded bytes */
+  stgwrite("\tmove.alt\n");      /* ALT = forwarded bytes */
+  code_idx+=opcodes(1);
+  stgwrite("\tlctrl 4\n");       /* PRI = STK */
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd\n");           /* PRI = STK + forwarded bytes */
+  code_idx+=opcodes(1);
+  stgwrite("\tsctrl 4\n");       /* pop the forwarded cells */
+  code_idx+=opcodes(1)+opargs(1);
+  /* restore the return value and release the heap cell */
+  stgwrite("\tlctrl 2\n");       /* PRI = HEA */
+  code_idx+=opcodes(1)+opargs(1);
+  addconst(-sizeof(cell));       /* PRI = the address of the heap cell */
+  stgwrite("\tload.i\n");        /* PRI = the saved return value */
+  code_idx+=opcodes(1);
+  stgwrite("\theap ");
+  outval(-(cell)sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+}
+
 /*  callfunction
  *
  *  Generates code to call a function. This routine handles default arguments
@@ -2283,6 +2462,14 @@ static int nesting=0;
   int nargs=0;      /* number of arguments */
   int heapalloc=0;
   int namedparams=FALSE;
+  int fwdnamed=-1;  /* number of named parameters of the current function, */
+                    /* or -1 if it is not variadic (no "___" forwarding then) */
+  int fwdpending=FALSE; /* set when the call forwards the current function's */
+                    /* variable arguments ("___"); the number of forwarded */
+                    /* cells is only known at run time */
+  cell fwdskip=0;   /* index (in the frame) of the first forwarded argument */
+  int fwdstk=0;     /* stack-usage margin booked for the forwarded cells */
+  int fwdarg=FALSE; /* TRUE when the current argument is a "___" forwarding */
   value lval = {0};
   arginfo *arg;
   char arglist[sMAXARGS];
@@ -2366,6 +2553,7 @@ static int nesting=0;
     } /* if */
   } /* if */
   if (!close) {
+    fwdnamed=fwdnamedargs();
     do {
       if (matchtoken('.')) {
         namedparams=TRUE;
@@ -2396,7 +2584,56 @@ static int nesting=0;
       stgmark((char)(sEXPRSTART+argpos));/* mark beginning of new expression in stage */
       if (arglist[argpos]!=ARG_UNHANDLED)
         error(58);                /* argument already set */
-      if (matchtoken('_')) {
+      fwdarg=FALSE;
+      if (fwdnamed>=0 && matchfwdtoken(&fwdskip)) {
+        /* "___": forward the variable arguments of the current function to
+         * the called function; which cells to copy is decided at run time,
+         * from the frame of the current function. A bare "___" skips the
+         * named parameters of the current function; "___(skip)" forwards
+         * the arguments of the current function starting at index "skip"
+         * (counted from the first argument).
+         */
+        if (fwdskip==-1) {
+          fwdskip=fwdnamed;       /* bare "___": skip the named parameters */
+        } else if (fwdskip<0) {
+          error(29);              /* negative skip count: assume zero */
+          fwdskip=0;
+        } /* if */
+        if (arg[argidx].ident==0)
+          error(202);             /* argument count mismatch */
+        arglist[argpos]=ARG_DONE; /* types of forwarded arguments are not */
+                                  /* checked (they were checked on entry) */
+        /* the forwarded cells also fill the parameters of the called
+         * function that follow the "___" (up to its variable argument
+         * list); mark them as handled, so that no default values are
+         * pushed for them and that they are not counted as missing
+         */
+        {
+          int fwdmark;
+          for (fwdmark=argpos+1; arg[fwdmark].ident!=0
+               && arg[fwdmark].ident!=iVARARGS; fwdmark++) {
+            if (arglist[fwdmark]==ARG_UNHANDLED)
+              arglist[fwdmark]=ARG_DONE;
+          } /* for */
+        } /* block */
+        fwdpending=TRUE;
+        fwdarg=TRUE;
+        /* The forwarded cells are pushed at run time; their number is not
+         * known at compile time, so book a conservative margin for the
+         * stack-usage statistics: "sMAXARGS" is the maximum number of
+         * arguments that the compiler accepts, and the forwarded count
+         * cannot exceed the number of arguments of the current function.
+         */
+        fwdstk=sMAXARGS;
+        nest_stkusage+=sMAXARGS;
+        /* The copy loop is emitted here (inside the reorder region), so
+         * that the forwarded cells are pushed before the arguments that
+         * precede "___" in the argument list; the compiler passes the
+         * arguments of a call on to the stack from right to left.
+         */
+        fwdpushloop((fwdskip+3)*sizeof(cell));
+        markexpr(sPARM,NULL,0);   /* mark the end of the parameter */
+      } else if (matchtoken('_')) {
         arglist[argpos]=ARG_IGNORED;  /* flag argument as "present, but ignored" */
         if (arg[argidx].ident==0 || arg[argidx].ident==iVARARGS) {
           error(202);             /* argument count mismatch */
@@ -2592,7 +2829,8 @@ static int nesting=0;
         nest_stkusage++;
       } /* if */
       assert(arglist[argpos]!=ARG_UNHANDLED);
-      nargs++;
+      if (!fwdarg)
+        nargs++;                  /* forwarded cells are counted at run time */
       if (matchparanthesis) {
         close=matchtoken(')');
         if (!close)               /* if not paranthese... */
@@ -2710,9 +2948,24 @@ static int nesting=0;
     arglist[argidx]=ARG_DONE;
   } /* for */
   stgmark(sENDREORDER);         /* mark end of reversed evaluation */
-  pushval((cell)nargs*sizeof(cell));
+  if (fwdpending) {
+    /* the byte count covers the statically pushed arguments plus the
+     * forwarded cells; the latter part is only known at run time
+     */
+    fwdbytecount(nargs,(int)fwdskip);
+  } else {
+    pushval((cell)nargs*sizeof(cell));
+  } /* if */
   nest_stkusage++;
   ffcall(sym,NULL,nargs);
+  if (fwdpending && (sym->usage & uNATIVE)!=0) {
+    /* a native function removes its parameters with a constant "stack"
+     * instruction, which covers only the statically pushed arguments;
+     * pop the forwarded cells too, preserving the return value of the
+     * native function (which is in PRI)
+     */
+    fwdpopnative((int)fwdskip);
+  } /* if */
   if (sc_status!=statSKIP)
     markusage(sym,uREAD);       /* do not mark as "used" when this call itself is skipped */
   if ((sym->usage & uNATIVE)!=0 &&sym->x.lib!=NULL)
@@ -2737,7 +2990,9 @@ static int nesting=0;
     assert(curfunc!=NULL);
     if (curfunc->x.stacksize<totalsize)
       curfunc->x.stacksize=totalsize;
-    nest_stkusage-=nargs+heapalloc+1; /* stack/heap space, +1 for argcount param */
+    nest_stkusage-=nargs+heapalloc+1+fwdstk; /* stack/heap space, +1 for argcount
+                                             * param, + the margin booked for
+                                             * the forwarded cells */
     /* if there is a syntax error in the script, the stack calculation is
      * probably incorrect; but we may not allow it to drop below zero
      */
