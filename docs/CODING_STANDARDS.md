@@ -155,3 +155,32 @@ Reference include guard shape (from y_timers.inc):
   tried, what worked, what broke, what is next.
 - Commit messages: Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`,
   `test:`, `experiment:`).
+
+## 6. Tooling (shell, Python)
+
+### 6.1 Shell
+
+- `#!/usr/bin/env bash`, `set -euo pipefail` at the top of every script.
+- `snake_case.sh` filenames in `tools/`.
+- Every script supports `--help` and exits non-zero on failure.
+- No interactive prompts in scripts — they run in CI and agents.
+
+### 6.2 Python
+
+- The upstream `run_tests.py` is Python-2/3 compatible; keep any script we
+  add in `tools/` Python 3 only, stdlib only (no pip dependencies).
+- `snake_case` functions, 2-space indent (matching upstream runner style),
+  `#!/usr/bin/env python3`, `argparse` for CLI.
+
+### 6.3 Editor enforcement
+
+`.editorconfig` at the repo root enforces: 2-space indent for C and
+Python, tabs for Pawn, final newline everywhere, UTF-8. Editors that
+support EditorConfig apply this automatically; the rules mirror
+sections 2–4 of this document.
+
+### 6.4 Verification
+
+`tools/run-tests.sh <build_dir> [test...]` builds nothing itself — it
+runs the upstream suite against an already-built `pawncc` in `<build_dir>`.
+Run it before every commit that touches `compiler/`.
