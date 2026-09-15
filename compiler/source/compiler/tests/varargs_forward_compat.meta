@@ -1,0 +1,6 @@
+{
+  'test_type': 'runtime',
+  'expected_output': """
+compat: 5 7
+"""
+}

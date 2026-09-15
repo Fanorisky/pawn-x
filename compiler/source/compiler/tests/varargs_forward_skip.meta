@@ -1,0 +1,7 @@
+{
+  'test_type': 'runtime',
+  'expected_output': """
+skip: 1 2 3 4
+skip: 9 8 7 0
+"""
+}

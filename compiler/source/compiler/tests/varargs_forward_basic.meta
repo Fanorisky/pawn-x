@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'expected_output': """
+basic: 42 43
+basic: hello
+basic: none
+"""
+}
