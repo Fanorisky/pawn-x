@@ -77,7 +77,7 @@ New functions look like this (real style, from sc5.c):
 ### 2.5 Upstream compatibility
 
 - New compiler features must not break existing scripts: the whole
-  `compiler/source/compiler/tests/` suite (94 tests) must pass before commit.
+  `compiler/source/compiler/tests/` suite (93 tests) must pass before commit.
 - New language constructs are opt-in: they must not change the meaning of
   any program that compiled before, unless behind a flag or `#pragma`.
 
@@ -121,7 +121,7 @@ test suite (`compiler/source/compiler/tests/__addressof.pwn` is the reference).
 Reference include guard shape (from y_timers.inc):
 
     #if defined _INC_y_timers
-      #endinput
+    	#endinput
     #endif
     #define _INC_y_timers
 
@@ -177,10 +177,16 @@ Reference include guard shape (from y_timers.inc):
 `.editorconfig` at the repo root enforces: 2-space indent for C and
 Python, tabs for Pawn, final newline everywhere, UTF-8. Editors that
 support EditorConfig apply this automatically; the rules mirror
-sections 2–4 of this document.
+sections 2–4 of this document. Note: the vendored `compiler/` carries
+its own upstream `.editorconfig` (`root = true`), which takes
+precedence inside that subtree — follow sections 2–4 (this document)
+when editing there, especially tabs for `.pwn`.
 
 ### 6.4 Verification
 
-`tools/run-tests.sh <build_dir> [test...]` builds nothing itself — it
-runs the upstream suite against an already-built `pawncc` in `<build_dir>`.
-Run it before every commit that touches `compiler/`.
+`tools/run-tests.sh [-r <runner>] <build_dir> [test...]` builds nothing
+itself — it runs the upstream suite against an already-built `pawncc` in
+`<build_dir>`. `-r <runner>` (optional, and it must be the first
+argument) points at a `pawnruns` executable and enables the two
+runtime-type tests. Run the script before every commit that touches
+`compiler/`.
