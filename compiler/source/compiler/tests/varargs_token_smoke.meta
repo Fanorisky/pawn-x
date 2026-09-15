@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+3
+
+varargs_token_smoke.amx returns 0
+"""
+}

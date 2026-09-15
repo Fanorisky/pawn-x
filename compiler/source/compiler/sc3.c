@@ -60,6 +60,7 @@ static void callfunction(symbol *sym,value *lval_result,int matchparanthesis);
 static int dbltest(void (*oper)(),value *lval1,value *lval2);
 static int commutative(void (*oper)());
 static int constant(value *lval);
+static int matchfwdtoken(cell *skip);
 
 static const char str_w247unary[]="a \"bool:\" value";
 static const char str_w247binary[]="\"bool:\" values";
@@ -89,6 +90,48 @@ static void (*op1[17])(void) = {
  */
 #define user_inc ((void (*)(void))inc)
 #define user_dec ((void (*)(void))dec)
+
+/*  matchfwdtoken
+ *
+ *  Recognizes the varargs-forwarding argument "___" or "___(skip)", which
+ *  passes the variable arguments of the enclosing function on to the called
+ *  function, optionally skipping the first "skip" arguments. On a match, the
+ *  tokens are consumed, the skip count is stored in "*skip" (0 when absent)
+ *  and the routine returns TRUE. On no match, the token(s) read are pushed
+ *  back and the routine returns FALSE, so that the caller can process the
+ *  argument in the normal way.
+ */
+static int matchfwdtoken(cell *skip)
+{
+  cell val;
+  char *str;
+  int tok;
+
+  *skip=0;
+  tok=lex(&val,&str);
+  if (tok!=tSYMBOL || strcmp(str,"___")!=0) {
+    lexpush();                    /* not "___": let the caller handle it */
+    return FALSE;
+  } /* if */
+  if (matchtoken('(')) {
+    tok=lex(&val,&str);
+    if (tok!=tNUMBER) {
+      /* no constant skip count; "tok" is pushed back so that the regular
+       * expression parser handles (and reports) what follows
+       */
+      lexpush();
+      return FALSE;
+    } /* if */
+    if (!matchtoken(')')) {
+      /* the token that should have been ")" was already pushed back by
+       * matchtoken()
+       */
+      return FALSE;
+    } /* if */
+    *skip=val;
+  } /* if */
+  return TRUE;
+}
 
 /*
  *  Searches for a binary operator a list of operators. The list is stored in
