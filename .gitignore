@@ -1,0 +1,22 @@
+# Server binaries and archives (downloaded, not vendored)
+openmp/
+*.tar.gz
+
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+
+# Compiler output
+*.amx
+*.asm
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors
+.vscode/
+.idea/
+*.swp
