@@ -1,6 +1,6 @@
 {
   'test_type': 'runtime',
-  'expected_output': """
+  'output': """
 compat: 5 7
 """
 }
