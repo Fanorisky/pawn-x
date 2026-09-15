@@ -29,16 +29,25 @@ symbol-truncation warning), so the baseline uses plain `-m32`.
 
 ## Test results
 
-`tools/run-tests.sh build` (as specified in Task 4, which does not pass
-a `-r`/pawnruns argument): **90 PASSED, 3 FAILED** out of 93.
+Updated 2026-09-15 after the fix round for `tools/run-tests.sh`
+(commit `7cfd1eb` + fix): the script now resolves relative build-dir
+paths and accepts an optional `-r <pawnruns>` argument, so both
+invocation forms below were run from the repo root with relative paths.
 
-| Test | Type | Result | Cause |
-|---|---|---|---|
-| `gh_353_symbol_suggestions` | output_check | FAIL | Expected no suggestion for `float` (line 30); compiler suggests `fstat` (a native from `file.inc`, Levenshtein distance 2 = the threshold). Genuine behavioral difference from the recorded expectation; upstream's current CI does not run this suite on Linux, so this may be a latent upstream/platform issue. |
-| `__timestamp` | runtime | FAIL | Two causes: (1) `tools/run-tests.sh` does not pass a runner (`-r`), so the test cannot execute via the script; (2) even when run with `-r build/pawnruns` directly, the output contains an extra blank line between `result: 0` and `__timestamp.amx returns 0`, so it fails the string comparison. |
-| `runtime_test_example` | runtime | FAIL | `tools/run-tests.sh` does not pass a runner (`-r`). When run directly with `-r build/pawnruns` the test PASSES. |
+**Without the runner** — `tools/run-tests.sh build`:
+**90 PASSED, 3 FAILED** out of 93.
 
-All other 90 tests pass. The two runtime-test failures are an artifact
-of the test-runner script's interface (Task 4 spec), not of the
-compiler; `gh_353_symbol_suggestions` is the only genuine compiler
-behavior deviation observed.
+**With the runner** — `tools/run-tests.sh -r build/pawnruns build`:
+**91 PASSED, 2 FAILED** out of 93.
+
+| Test | Type | Without `-r` | With `-r` | Cause |
+|---|---|---|---|---|
+| `gh_353_symbol_suggestions` | output_check | FAIL | FAIL | Expected no suggestion for `float` (line 30); compiler suggests `fstat` (a native from `file.inc`, Levenshtein distance 2 = the threshold). Genuine behavioral difference from the recorded expectation; upstream's current CI does not run this suite on Linux, so this may be a latent upstream/platform issue. |
+| `__timestamp` | runtime | FAIL (runner not set) | FAIL | The runtime output contains an extra blank line between `result: 0` and `__timestamp.amx returns 0`, so it fails the string comparison. Cosmetic platform deviation in the runtime output, not a compiler defect. |
+| `runtime_test_example` | runtime | FAIL (runner not set) | PASS | Only failed previously because no runner (`-r`) was passed; it passes with `pawnruns`. |
+
+All other 90 tests pass under both invocation forms. The remaining
+runtime failure (`__timestamp`) is a whitespace mismatch in the test
+runner's output comparison, not the compiler;
+`gh_353_symbol_suggestions` is the only genuine compiler behavior
+deviation observed.
