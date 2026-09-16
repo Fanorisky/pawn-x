@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+val 7
+
+val 42
+
+foreach_basic.amx returns 0
+"""
+}

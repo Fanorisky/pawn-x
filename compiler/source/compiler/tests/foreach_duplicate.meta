@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+val 5
+
+count=1
+
+foreach_duplicate.amx returns 0
+"""
+}
