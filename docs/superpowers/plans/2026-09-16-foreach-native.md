@@ -142,14 +142,16 @@ Implement the set-maintenance natives in the AMX runtime and register them so sc
 
 **Files:**
 - Modify: `compiler/source/amx/amxcore.c` (add the five `AMX_NATIVE_CALL` functions + table entries — mirror how `numargs` at line ~139 is defined)
-- Modify: `compiler/source/amx/amxcore.def` / the matching `.def` the build uses (export the symbols — check which def file `CMakeLists.txt` references; add the five names)
 - Create: `compiler/include/foreach.inc` (the `native` declarations, includable by tests)
+- Modify: ALL `compiler/source/compiler/tests/foreach_*.pwn` + `iter_contains.pwn` (add `#include <foreach>`; the native `Iter_*` signature is `Iter_Add(const array[], value)` — array passed BY REFERENCE via `amx_GetAddr`, NOT by name; the count cell is reserved as `array[0]`, value region is `array[1..count+1]`, so `new data[N]` holds N-1 values)
+
+**CRITICAL API DESIGN (locked — do not use names):** The initial plan had `Iter_Add(array[], size, value)` taking the array by NAME via `amx_FindPubVar`. That is INFEASIBLE in this compiler: only `public` variables are exported to the `pubvars` table (sc6.c:791-794), and `public` arrays are explicitly forbidden (error 056, verified). Therefore `Iter_*` MUST take the array BY REFERENCE: `Iter_Add(const data[], value)` where `data` is any script global array. The native resolves the array address from the call frame (the AMX calling convention passes array addresses in the params the compiler pushes — see how `swapchars`/`getstring` use `amx_GetAddr(amx, params[N], &cptr)` in amxcore.c). No `.def` change, no name resolution, no `public` requirement. The `size` param is dropped from every `Iter_*` signature (the capacity check uses the reserved-cell layout's bounds, or is omitted in V1).
+
+**Layout (locked):** `array[0]` = count. `array[1..count]` = compact sorted values. `array[count+1..capacity-1]` = free. So a `new data[8]` set holds values in slots 1..7 (7 slots), `data[0]` tracks count. This shifts value region by one vs the probe — the tests pin *values*, not layout, so adjust test expected output if a value lands differently; the .pwn `new data[N]` declarations stay.
 
 **Interfaces:**
 - Consumes: Task 0's invariant list (sorted-ascending compact run).
-- Produces: natives `Iter_Init(array[], size)`, `Iter_Add(array[], size, value)`, `Iter_Remove(array[], size, value)`, `bool:Iter_Contains(array[], size, value)`, `Iter_Count(array[], size)` — each operating on a compact sorted run `[0..count)` plus an implicit count. The count is stored in a reserved cell the natives manage (layout documented in the header).
-
-**Design note for implementer:** the compact run needs a count. Two options: (a) reserve the first cell of the array as the count (shifts the value region to `[1..count]`), or (b) pass count as a separate array and require `Iter_Init` to allocate. Pick (a) — one array, self-describing — and document it in `foreach.inc`. Confirm `sizeof` arithmetic so a `new data[8]` holds 7 values + 1 count cell (Task 1 tests used `[8]` for up to 7 values; adjust the probe if the layout changes — the tests pin the *values*, not the internal layout).
+- Produces: natives `Iter_Init(array[])`, `Iter_Add(const array[], value)`, `Iter_Remove(const array[], value)`, `bool:Iter_Contains(const array[], value)`, `Iter_Count(array[])` — each operates on the compact sorted run `[1..count]` with count in `array[0]`.
 
 - [ ] **Step 1: Write the natives**
 
