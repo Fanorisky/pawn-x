@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+val 1
+
+count=2
+
+foreach_remove_during.amx returns 0
+"""
+}

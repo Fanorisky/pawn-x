@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+c9=1 c8=0
+
+count=2
+
+iter_contains.amx returns 0
+"""
+}

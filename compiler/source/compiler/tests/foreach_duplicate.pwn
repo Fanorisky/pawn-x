@@ -1,0 +1,15 @@
+#include <console>
+
+new data[8];
+
+main()
+{
+	Iter_Init(data, 8);
+	Iter_Add(data, 5);
+	Iter_Add(data, 5);
+	foreach (new i : data)
+	{
+		printf("val %d\n", i);
+	}
+	printf("count=%d\n", Iter_Count(data));
+}

@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+done
+
+foreach_empty.amx returns 0
+"""
+}

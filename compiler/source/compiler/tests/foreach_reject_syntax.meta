@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+foreach_reject_syntax.pwn(10) : error 255: "foreach" syntax requires ": <array>" after the loop variable
+"""
+}
