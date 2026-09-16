@@ -1,0 +1,15 @@
+{
+  # Final review F2 (2026-09-16): spec §3's position rule, now enforced as
+  # error 254. "___" is only valid at the position of the target's variable
+  # argument list. BadNamed puts it in strformat's named "format" slot (the
+  # memory-unsafe footgun from the review: the first forwarded cell would be
+  # fed to the native as the format-string address); BadTail puts it behind
+  # the target's last parameter. Both are rejected; the argument is compiled
+  # as the value 0 so the rest of the call still parses (same recovery as the
+  # error 253 path). #pragma unused keeps warning 203 out of the meta.
+  'test_type': 'output_check',
+  'errors': """
+varargs_forward_position.pwn(13) : error 254: "___" used in a position that does not accept variable arguments
+varargs_forward_position.pwn(19) : error 254: "___" used in a position that does not accept variable arguments
+"""
+}
