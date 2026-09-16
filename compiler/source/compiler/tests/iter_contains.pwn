@@ -1,10 +1,11 @@
 #include <console>
+#include <foreach>
 
 new data[8];
 
 main()
 {
-	Iter_Init(data, 8);
+	Iter_Init(data);
 	Iter_Add(data, 9);
 	printf("c9=%d c8=%d\n", Iter_Contains(data, 9), Iter_Contains(data, 8));
 	Iter_Add(data, 12);
