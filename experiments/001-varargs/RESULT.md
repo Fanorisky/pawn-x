@@ -82,20 +82,20 @@ the target has fixed arity; forwarded variadic arguments are references
 
 ## What is next
 
-- Spec amendment (queued): §4.1 formula (implemented semantics above);
-  §3 compat gate refinement (a resolvable `___` symbol in a non-variadic
-  function keeps its old meaning; in variadic functions the token wins
-  over same-named symbols); note that third-party pc_error hosts print
-  "warning 253"; the 253–299 errors-in-warning-numbering policy.
+- ~~Spec amendment (queued)~~ — DONE (2026-09-16): appended as a dated
+  Amendment section to the spec, covering the corrected §4.1 semantics,
+  the §3 compat gate, the 253–299 errors-in-warning-numbering policy,
+  the third-party pc_error caveat, and error 254.
+- Position rule (was open): `___` in a non-variadic target slot is now
+  rejected with error 254 ("___ used in a position that does not accept
+  variable arguments"), pinned by `varargs_forward_position` (output_check).
+- ~~Deferred review nits~~ — DONE: error 253/254 now count toward the
+  error-107 three-per-line guard (sc5.c); `pc_enablewarning` returns FALSE
+  for >=253; the matchfwdtoken protocol comment was rewritten.
 - Manual validation of runtime dispatch passthrough under open.mp
   (CallLocalFunction + `___` into a public).
-- Skipped/parked items from the spec's YAGNI list (mid-list `___`
-  position rule, etc.).
 - Benchmark Option A (self-contained downward-walking loop, implemented)
   vs Option B (memcpy-native) codegen — A worked first, so B was never
   benchmarked.
-- Remaining deferred review nits: error 253 is not counted toward the
-  error-107 three-per-line guard (sc5.c, `number<200 || errwarn`);
-  pc_enablewarning(253) NITs.
 - Upstream PR readiness: split the feature for the CompuPhase/pawn
   upstream (open.mp's compiler fork is the realistic first target).
