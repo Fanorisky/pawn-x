@@ -98,9 +98,11 @@ static void (*op1[17])(void) = {
  *  function, optionally skipping the first "skip" arguments. On a match, the
  *  tokens are consumed, the skip count is stored in "*skip" (-1 when the
  *  token was a bare "___", so that the caller can distinguish it from an
- *  explicit "___(0)") and the routine returns TRUE. On no match, the token(s)
- *  read are pushed back and the routine returns FALSE, so that the caller
- *  can process the argument in the normal way.
+ *  explicit "___(0)"; -2 when "___(" was not followed by a constant and a
+ *  closing parenthesis --error 253 is then already reported) and the routine
+ *  returns TRUE. On no match, the token(s) read are pushed back and the
+ *  routine returns FALSE, so that the caller can process the argument in the
+ *  normal way.
  */
 static int matchfwdtoken(cell *skip)
 {
@@ -116,20 +118,31 @@ static int matchfwdtoken(cell *skip)
   } /* if */
   if (matchtoken('(')) {
     tok=lex(&val,&str);
-    if (tok!=tNUMBER) {
-      /* no constant skip count; "tok" is pushed back so that the regular
-       * expression parser handles (and reports) what follows
+    if (tok==tNUMBER && matchtoken(')')) {
+      *skip=val;
+    } else {
+      /* "___(" must be followed by a single constant and ")"; report the
+       * error and skip to the matching ")" (or to the end of the statement,
+       * whichever comes first), so that the rest of the argument list can
+       * still be parsed
        */
-      lexpush();
-      return FALSE;
+      int level=1;
+      error(253);
+      for (;;) {
+        if (tok=='(') {
+          level++;
+        } else if (tok==')') {
+          level--;
+          if (level==0)
+            break;               /* the matching ")" was found */
+        } else if (tok==';' || tok==tENDEXPR || tok==0) {
+          lexpush();             /* no matching ")": push the terminator back, */
+          break;                 /* the parser will handle it */
+        } /* if */
+        tok=lex(&val,&str);
+      } /* for */
+      *skip=-2;
     } /* if */
-    if (!matchtoken(')')) {
-      /* the token that should have been ")" was already pushed back by
-       * matchtoken()
-       */
-      return FALSE;
-    } /* if */
-    *skip=val;
   } /* if */
   return TRUE;
 }
@@ -2470,6 +2483,9 @@ static int nesting=0;
   cell fwdskip=0;   /* index (in the frame) of the first forwarded argument */
   int fwdstk=0;     /* stack-usage margin booked for the forwarded cells */
   int fwdarg=FALSE; /* TRUE when the current argument is a "___" forwarding */
+  int fwdcompat=FALSE; /* TRUE when a script symbol "___" must keep its */
+                    /* usual meaning (the current function has no variable */
+                    /* argument list, so "___" cannot forward anything) */
   value lval = {0};
   arginfo *arg;
   char arglist[sMAXARGS];
@@ -2554,6 +2570,14 @@ static int nesting=0;
   } /* if */
   if (!close) {
     fwdnamed=fwdnamedargs();
+    /* A script symbol named "___" keeps its usual meaning in a function
+     * without a variable argument list; there, "___" is only an error when
+     * no such symbol exists. In a function with a variable argument list,
+     * the forwarding token takes precedence over a symbol with that name.
+     */
+    fwdcompat=(fwdnamed<0 && (findconst("___",NULL)!=NULL
+                               || findloc("___")!=NULL
+                               || findglb("___",sSTATEVAR)!=NULL));
     do {
       if (matchtoken('.')) {
         namedparams=TRUE;
@@ -2585,54 +2609,75 @@ static int nesting=0;
       if (arglist[argpos]!=ARG_UNHANDLED)
         error(58);                /* argument already set */
       fwdarg=FALSE;
-      if (fwdnamed>=0 && matchfwdtoken(&fwdskip)) {
-        /* "___": forward the variable arguments of the current function to
-         * the called function; which cells to copy is decided at run time,
-         * from the frame of the current function. A bare "___" skips the
-         * named parameters of the current function; "___(skip)" forwards
-         * the arguments of the current function starting at index "skip"
-         * (counted from the first argument).
-         */
-        if (fwdskip==-1) {
-          fwdskip=fwdnamed;       /* bare "___": skip the named parameters */
-        } else if (fwdskip<0) {
-          error(29);              /* negative skip count: assume zero */
-          fwdskip=0;
+      if (!fwdcompat && matchfwdtoken(&fwdskip)) {
+        if (fwdskip==-2 || fwdnamed<0) {
+          /* "___" in a function without a variable argument list, or a
+           * malformed "___(" (error 253 was already reported inside
+           * matchfwdtoken() for the latter); treat the argument as the
+           * value zero, so that the rest of the call is still compiled
+           * and further errors can be reported
+           */
+          if (fwdskip!=-2)
+            error(253);
+          arglist[argpos]=ARG_DONE;
+          if (arg[argidx].ident!=0 && arg[argidx].ident!=iVARARGS)
+            argidx++;
+          ldconst(0,sPRI);            /* the value of the argument: 0 */
+          pushreg(sPRI);              /* store the function argument on the stack */
+          markexpr(sPARM,NULL,0);     /* mark the end of a sub-expression */
+          nest_stkusage++;
+        } else {
+          /* "___": forward the variable arguments of the current function to
+           * the called function; which cells to copy is decided at run time,
+           * from the frame of the current function. A bare "___" skips the
+           * named parameters of the current function; "___(skip)" forwards
+           * the arguments of the current function starting at index "skip"
+           * (counted from the first argument).
+           */
+          if (fwdskip==-1) {
+            fwdskip=fwdnamed;     /* bare "___": skip the named parameters */
+          } else if (fwdskip<0) {
+            error(29);            /* negative skip count: assume zero */
+            fwdskip=0;
+          } /* if */
+          if (arg[argidx].ident==0)
+            error(202);           /* argument count mismatch */
+          arglist[argpos]=ARG_DONE; /* types of forwarded arguments are not */
+                                    /* checked (they were checked on entry) */
+          /* the forwarded cells also fill the parameters of the called
+           * function that follow the "___" (up to its variable argument
+           * list); mark them as handled, so that no default values are
+           * pushed for them and that they are not counted as missing
+           */
+          {
+            int fwdmark;
+            for (fwdmark=argpos+1; arg[fwdmark].ident!=0
+                 && arg[fwdmark].ident!=iVARARGS; fwdmark++) {
+              if (arglist[fwdmark]==ARG_UNHANDLED)
+                arglist[fwdmark]=ARG_DONE;
+            } /* for */
+          } /* block */
+          fwdpending=TRUE;
+          fwdarg=TRUE;
+          /* The forwarded cells are pushed at run time; their number is not
+           * known at compile time, so book a conservative margin for the
+           * stack-usage statistics: "sMAXARGS" is the maximum number of
+           * arguments that the compiler accepts, and the forwarded count
+           * cannot exceed the number of arguments of the current function.
+           * A call may hold more than one "___"; every occurrence books its
+           * own margin, and the subtraction at the bottom of this routine
+           * removes them all again.
+           */
+          fwdstk+=sMAXARGS;
+          nest_stkusage+=sMAXARGS;
+          /* The copy loop is emitted here (inside the reorder region), so
+           * that the forwarded cells are pushed before the arguments that
+           * precede "___" in the argument list; the compiler passes the
+           * arguments of a call on to the stack from right to left.
+           */
+          fwdpushloop((fwdskip+3)*sizeof(cell));
+          markexpr(sPARM,NULL,0); /* mark the end of the parameter */
         } /* if */
-        if (arg[argidx].ident==0)
-          error(202);             /* argument count mismatch */
-        arglist[argpos]=ARG_DONE; /* types of forwarded arguments are not */
-                                  /* checked (they were checked on entry) */
-        /* the forwarded cells also fill the parameters of the called
-         * function that follow the "___" (up to its variable argument
-         * list); mark them as handled, so that no default values are
-         * pushed for them and that they are not counted as missing
-         */
-        {
-          int fwdmark;
-          for (fwdmark=argpos+1; arg[fwdmark].ident!=0
-               && arg[fwdmark].ident!=iVARARGS; fwdmark++) {
-            if (arglist[fwdmark]==ARG_UNHANDLED)
-              arglist[fwdmark]=ARG_DONE;
-          } /* for */
-        } /* block */
-        fwdpending=TRUE;
-        fwdarg=TRUE;
-        /* The forwarded cells are pushed at run time; their number is not
-         * known at compile time, so book a conservative margin for the
-         * stack-usage statistics: "sMAXARGS" is the maximum number of
-         * arguments that the compiler accepts, and the forwarded count
-         * cannot exceed the number of arguments of the current function.
-         */
-        fwdstk=sMAXARGS;
-        nest_stkusage+=sMAXARGS;
-        /* The copy loop is emitted here (inside the reorder region), so
-         * that the forwarded cells are pushed before the arguments that
-         * precede "___" in the argument list; the compiler passes the
-         * arguments of a call on to the stack from right to left.
-         */
-        fwdpushloop((fwdskip+3)*sizeof(cell));
-        markexpr(sPARM,NULL,0);   /* mark the end of the parameter */
       } else if (matchtoken('_')) {
         arglist[argpos]=ARG_IGNORED;  /* flag argument as "present, but ignored" */
         if (arg[argidx].ident==0 || arg[argidx].ident==iVARARGS) {
