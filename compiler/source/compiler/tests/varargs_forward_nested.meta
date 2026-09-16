@@ -1,0 +1,16 @@
+{
+  # Task 5 (2026-09-16): nested forwarding (y_va's y_va2_Nesting shape).
+  # Under the implemented semantics ___(1) is redundant with bare ___ here
+  # (each wrapper has exactly one named arg, so skipping it == forwarding
+  # from absolute index 1), but the test pins the nesting behavior: an
+  # outer ___ call inside the argument list of a call whose arguments
+  # themselves contain ___. `#pragma unused outer` added vs the brief's
+  # sketch: warning 203 would otherwise fire (CODING_STANDARDS 4.3
+  # warning-clean rule).
+  'test_type': 'runtime',
+  'output': """
+nested: first second
+
+varargs_forward_nested.amx returns 0
+"""
+}

@@ -1,0 +1,14 @@
+{
+  # Task 5 (2026-09-16): dynamic-dispatch passthrough (y_va's
+  # CallLocalFunction test shape), reduced to compile-time per the brief's
+  # implementer note. CallLocalFunction is an open.mp/SA-MP host native:
+  # absent from compiler/include (proven: brief's verbatim .pwn fails with
+  # error 017) and from pawnruns (registers console/string/core natives
+  # only; the compiled .amx aborts with run time error 19). The native is
+  # declared in the .pwn so the exact dispatch pattern -- ___ forwarded
+  # into CallLocalFunction("Target", "ii", ...) dispatching to a public --
+  # is captured as a successful compile. Runtime passthrough validation
+  # requires the open.mp server environment (manual step, recorded in
+  # experiments/001-varargs/RESULT.md).
+  'test_type': 'output_check'
+}
