@@ -281,9 +281,9 @@ static char *prefix[3]={ "error", "fatal error", "warning" };
     char *pre;
 
     pre=prefix[number/100];
-    if (number>=200 && pc_geterrorwarnings()){
-      pre=prefix[0];
-    }
+    if (number>=253 || (number>=200 && pc_geterrorwarnings())){
+      pre=prefix[0];      /* error numbers 253 and up are errors, although */
+    }                     /* they share the number range of the warnings */
     if (firstline>=0)
       fprintf(stderr,"%s(%d -- %d) : %s %03d: ",filename,firstline,lastline,pre,number);
     else

@@ -135,9 +135,9 @@ int pc_error(int number,char *message,char *filename,int firstline,int lastline,
     char *pre;
 
     pre=prefix[number/100];
-    if (number>=200 && pc_geterrorwarnings()){
-      pre=prefix[0];
-    }
+    if (number>=253 || (number>=200 && pc_geterrorwarnings())){
+      pre=prefix[0];      /* error numbers 253 and up are errors, although */
+    }                     /* they share the number range of the warnings */
     if (number == 111 || number == 237)
       fprintf(stderr,"%s(%d) : ",filename,lastline);
     else if (firstline>=0)

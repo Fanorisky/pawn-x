@@ -210,7 +210,8 @@ static char *warnmsg[] = {
 /*249*/  "check failed: %s\n",
 /*250*/  "variable \"%s\" used in loop condition not modified in loop body\n",
 /*251*/  "none of the variables used in loop condition are modified in loop body\n",
-/*252*/  "variable has its value modified but never used: \"%s\"\n"
+/*252*/  "variable has its value modified but never used: \"%s\"\n",
+/*253*/  "\"___\" used in a function without variable arguments (\"...\")\n"
 };
 
 static char *noticemsg[] = {
@@ -267,8 +268,10 @@ SC_FUNC int error(long number,...)
   if ((errflag || sc_status!=statWRITE) && (number<100 || number>=200))
     return 0;
 
-  /* also check for disabled warnings */
-  if (number>=200) {
+  /* also check for disabled warnings (errors cannot be disabled; error
+   * numbers 253 and up share the number range of the warnings)
+   */
+  if (number>=200 && number<253) {
     int index=(number-200)/8;
     int mask=1 << ((number-200)%8);
     if ((warnstack.disable[index] & mask)!=0)
@@ -286,7 +289,11 @@ SC_FUNC int error(long number,...)
     msg=fatalmsg[number-100];
     pre=prefix[1];
     errnum++;           /* a fatal error also counts as an error */
-  } else if (errwarn) {
+  } else if (errwarn || number>=253) {
+    /* numbers 253 and up are errors in the number range that is reserved
+     * for warnings (the first free error number, 253, is above the last
+     * warning number, 252)
+     */
     assert(number>=200 && number<(200+arraysize(warnmsg)));
     msg=warnmsg[number-200];
     pre=prefix[0];
