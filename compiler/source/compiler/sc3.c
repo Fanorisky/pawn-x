@@ -95,14 +95,20 @@ static void (*op1[17])(void) = {
  *
  *  Recognizes the varargs-forwarding argument "___" or "___(skip)", which
  *  passes the variable arguments of the enclosing function on to the called
- *  function, optionally skipping the first "skip" arguments. On a match, the
- *  tokens are consumed, the skip count is stored in "*skip" (-1 when the
- *  token was a bare "___", so that the caller can distinguish it from an
- *  explicit "___(0)"; -2 when "___(" was not followed by a constant and a
- *  closing parenthesis --error 253 is then already reported) and the routine
- *  returns TRUE. On no match, the token(s) read are pushed back and the
- *  routine returns FALSE, so that the caller can process the argument in the
- *  normal way.
+ *  function, starting at argument index "skip" of the enclosing function.
+ *  On a match, the tokens are consumed, the skip value is stored in "*skip"
+ *  and the routine returns TRUE:
+ *    *skip >= 0    "___(skip)" with a single constant and a closing
+ *                  parenthesis: the absolute index (counted from the first
+ *                  argument) of the first forwarded argument
+ *    *skip == -1   a bare "___" without an explicit skip count; the caller
+ *                  derives the index from the named parameters of the
+ *                  enclosing function
+ *    *skip == -2   a malformed "___(" (not followed by a single constant and
+ *                  a closing parenthesis); error 253 was already reported
+ *                  and the tokens up to the matching ")" were consumed
+ *  On no match, the token(s) read are pushed back and the routine returns
+ *  FALSE, so that the caller can process the argument in the normal way.
  */
 static int matchfwdtoken(cell *skip)
 {
@@ -2626,6 +2632,23 @@ static int nesting=0;
           pushreg(sPRI);              /* store the function argument on the stack */
           markexpr(sPARM,NULL,0);     /* mark the end of a sub-expression */
           nest_stkusage++;
+        } else if (arg[argidx].ident!=iVARARGS) {
+          /* "___" is only valid at the position of the variable argument
+           * list of the called function; anywhere else (a named parameter,
+           * or behind the last parameter) the forwarded cells would be fed
+           * to a parameter of a fixed type, whose type check the forwarded
+           * arguments skip. Treat the argument as the value zero (like the
+           * "error 253" path above), so that the rest of the call is still
+           * compiled and further errors can be reported
+           */
+          error(254);
+          arglist[argpos]=ARG_DONE;
+          if (arg[argidx].ident!=0)
+            argidx++;
+          ldconst(0,sPRI);            /* the value of the argument: 0 */
+          pushreg(sPRI);              /* store the function argument on the stack */
+          markexpr(sPARM,NULL,0);     /* mark the end of a sub-expression */
+          nest_stkusage++;
         } else {
           /* "___": forward the variable arguments of the current function to
            * the called function; which cells to copy is decided at run time,
@@ -2640,8 +2663,6 @@ static int nesting=0;
             error(29);            /* negative skip count: assume zero */
             fwdskip=0;
           } /* if */
-          if (arg[argidx].ident==0)
-            error(202);           /* argument count mismatch */
           arglist[argpos]=ARG_DONE; /* types of forwarded arguments are not */
                                     /* checked (they were checked on entry) */
           /* the forwarded cells also fill the parameters of the called
@@ -2664,9 +2685,11 @@ static int nesting=0;
            * stack-usage statistics: "sMAXARGS" is the maximum number of
            * arguments that the compiler accepts, and the forwarded count
            * cannot exceed the number of arguments of the current function.
-           * A call may hold more than one "___"; every occurrence books its
-           * own margin, and the subtraction at the bottom of this routine
-           * removes them all again.
+           * A second "___" in the same call is rejected with error 58, but
+           * it still reaches this point (the error does not abort the
+           * argument); every occurrence books its own margin, and the
+           * subtraction at the bottom of this routine removes them all
+           * again.
            */
           fwdstk+=sMAXARGS;
           nest_stkusage+=sMAXARGS;

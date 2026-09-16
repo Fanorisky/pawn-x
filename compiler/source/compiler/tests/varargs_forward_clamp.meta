@@ -1,0 +1,14 @@
+{
+  # Final review F4 (2026-09-16): the negative clamp path (___(N) with N
+  # greater than the actual run-time argument count) at run time. The jsless
+  # clamp in the emitted copy loop forwards zero cells; a script callee with
+  # a numargs() printout observes this cleanly (a native callee would hit the
+  # amxcons printf argument-count abort instead). Wrapper passes 3 arguments
+  # and forwards from absolute index 5: Callee receives none of them.
+  'test_type': 'runtime',
+  'output': """
+clamp: numargs=0
+
+varargs_forward_clamp.amx returns 0
+"""
+}

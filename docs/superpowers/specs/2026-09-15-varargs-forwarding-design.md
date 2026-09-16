@@ -164,3 +164,56 @@ native `___` must produce identical output.
 3. No new opcodes: output runs on an unmodified open.mp server.
 4. `docs/experiments/001-varargs/RESULT.md` documents what was tried,
    what worked, what broke, and what is next.
+
+## Amendment 2026-09-16 (post-implementation corrections)
+
+Recorded after the whole-branch final review; the original text above is
+left as written. The authoritative implementation record is
+`experiments/001-varargs/RESULT.md`.
+
+1. **§4.1 src_off formula corrected.** `___(N)` is an *absolute,
+   0-based argument index* of the enclosing function (mirroring y_va's
+   `va_start<N>`), not a count of named parameters to skip. A bare `___`
+   is shorthand for "skip the enclosing function's named parameters"
+   (i.e. `___(named_params(F))`). The emitted source offset is
+   `src_off=(skip+3)*cell` — the `+3` covering the frame header, not
+   `named_params(F)`. The original `src_off=(skip+named_params(F)+3)*cell`
+   double-counts the named parameters for an explicit `___(N)`. Pinned by
+   `varargs_forward_skip` (under the original formula its first line
+   would read `skip: 1 2 5`; observed `skip: 1 2 3 4`).
+2. **§3 error case refined.** Error 253 fires only when `___` is
+   *unresolvable* as an ordinary symbol in a non-variadic function. A
+   script symbol named `___` (variable, constant, or function) referenced
+   in a non-variadic function keeps its ordinary meaning — the compat
+   gate (`findconst`/`findloc`/`findglb`) suppresses forwarding-token
+   recognition there. Consequence (accepted, rare): *inside* a variadic
+   function the forwarding token silently takes precedence over any
+   same-named symbol — `printf(fmat, ___(41))` inside a variadic
+   function forwards varargs instead of calling a user function `___`,
+   with no diagnostic. This technically narrows the absolute compat
+   gate, but the trigger requires a symbol named exactly `___`
+   referenced with a constant argument inside a variadic function's
+   argument list; y_va's `___` is a preprocessor macro and expands
+   before the parser sees the token, so there is no y_va interaction.
+3. **§4.4 lexer row corrected.** There is no new token and no
+   `sc_tokens`/`sc.h`/`sc2.c` change: recognition is a string match on
+   the symbol `"___"` in `callfunction()`'s argument loop (sc3.c
+   `matchfwdtoken()`). This is what makes the compat gate in item 2
+   possible.
+4. **Error-number policy.** Numbers 253-299 are errors in the number
+   range reserved for warnings (the first free error number, 253, is
+   above the last warning, 252). Future warnings must number below 253.
+   Third-party `pc_error` hosts print the wrong prefix ("warning 253")
+   unless they add the `number>=253` reclassification that the two
+   vendored hosts (sc1.c, libpawnc.c) carry.
+5. **§5 format row now exists** as `varargs_forward_format` (the
+   vendored `string.inc` `strformat` is used in place of the absent
+   `format()`; the forwarded native's return value is consumed).
+6. **§7.4 path corrected:** the result record is at
+   `experiments/001-varargs/RESULT.md` (not `docs/experiments/...`).
+7. **§3 position rule now enforced** as error 254 ("`___` used in a
+   position that does not accept variable arguments"): `___` in a
+   named (non-variadic) slot of the target call, or behind the target's
+   last parameter, is a compile error. The argument is compiled as the
+   value 0 so the rest of the call still parses. Pinned by
+   `varargs_forward_position`.

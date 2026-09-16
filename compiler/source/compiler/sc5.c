@@ -211,7 +211,8 @@ static char *warnmsg[] = {
 /*250*/  "variable \"%s\" used in loop condition not modified in loop body\n",
 /*251*/  "none of the variables used in loop condition are modified in loop body\n",
 /*252*/  "variable has its value modified but never used: \"%s\"\n",
-/*253*/  "\"___\" used in a function without variable arguments (\"...\")\n"
+/*253*/  "\"___\" used in a function without variable arguments (\"...\")\n",
+/*254*/  "\"___\" used in a position that does not accept variable arguments\n"
 };
 
 static char *noticemsg[] = {
@@ -364,7 +365,7 @@ SC_FUNC int error(long number,...)
     errorcount=0;
   lastline=fline;
   lastfile=fcurrent;
-  if (number<200 || errwarn)
+  if (number<200 || errwarn || number>=253)
     errorcount++;
   if (errorcount>=3)
     error(107);         /* too many error/warning messages on one line */
@@ -409,8 +410,9 @@ int pc_enablewarning(int number,warnmode enable)
   int index;
   unsigned char mask;
 
-  if (number<200)
-    return FALSE;       /* errors and fatal errors cannot be disabled */
+  if (number<200 || number>=253)
+    return FALSE;       /* errors cannot be disabled (numbers 253 and up are */
+                        /* errors in the number range of the warnings) */
   number-=200;
   if (number>=NUM_WARNINGS)
     return FALSE;

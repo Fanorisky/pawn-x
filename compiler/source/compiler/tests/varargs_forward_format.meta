@@ -1,0 +1,16 @@
+{
+  # Final review F1 (2026-09-16): the spec §5 format row, translated from
+  # y_va's y_va2_format test. The vendored includes have no format(); string.inc's
+  # strformat(dest[], size, bool:pack, const format[], ...) is the equivalent
+  # native. The wrapper mirrors y_va2_format's shape (dest, size, fmat named;
+  # ___(3) forwards from the first variable argument). The return value of the
+  # forwarded native is consumed -- the only way the fwdpopnative heap-temp
+  # preservation becomes observable; strformat returns 1 on success (probe- and
+  # baseline-verified: the non-forwarding call returns the same 1).
+  'test_type': 'runtime',
+  'output': """
+formatted[1]: Hello 99 001F woop
+
+varargs_forward_format.amx returns 0
+"""
+}

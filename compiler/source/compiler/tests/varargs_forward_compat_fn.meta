@@ -1,0 +1,17 @@
+{
+  # Final review F4 (2026-09-16): a user-defined function named "___" called
+  # from a non-variadic function keeps its ordinary meaning (final review
+  # probe p1; the existing compat test covers only a local variable). Both
+  # placements are pinned: a statement-level call, and a call nested inside
+  # another call's argument list -- the latter is where the forwarding token
+  # would otherwise hijack the symbol, were it not for the compat gate
+  # (findconst/findloc/findglb) in a function without a variable argument
+  # list. Inside a variadic function the token wins instead; that consequence
+  # is documented in the spec amendment (accepted, F3 in the final review).
+  'test_type': 'runtime',
+  'output': """
+compat fn: 42 8
+
+varargs_forward_compat_fn.amx returns 0
+"""
+}
