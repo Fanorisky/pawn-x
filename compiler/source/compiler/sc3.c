@@ -841,6 +841,53 @@ SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult)
   return lval.ident;
 }
 
+/*  parse_foreach_operand
+ *
+ *  Parses the "foreach" operand (the expression after the ':') and leaves the
+ *  address of the array it refers to in the primary register (PRI), exactly as
+ *  an array argument is materialized when it is passed to a function. This
+ *  accepts any array-reference expression: a bare array symbol, a subscripted
+ *  row of a multi-dimensional array ("sets[k]"), a reference-array parameter,
+ *  and so on. The expression is evaluated once, here, so a computed or
+ *  side-effecting index is not re-evaluated per iteration.
+ *
+ *  On success the operand's ident (iARRAY or iREFARRAY) is returned and, when
+ *  "lval" is not NULL, the parsed value structure is copied there. For a scalar
+ *  operand no usable address is produced and the scalar's (post-rvalue) ident
+ *  is returned instead, so the caller can report error 255.
+ */
+SC_FUNC int parse_foreach_operand(value *lval)
+{
+  int index,localstaging;
+  value lv={0};
+
+  localstaging=FALSE;
+  if (!staging) {
+    stgset(TRUE);               /* start stage-buffering */
+    localstaging=TRUE;
+    assert(stgidx==0);
+  } /* if */
+  index=stgidx;
+  errorset(sEXPRMARK,0);
+  if (hier14(&lv))
+    rvalue(&lv);                /* only a scalar lvalue reaches here; arrays are not lvalues */
+  if (lv.ident==iARRAY || lv.ident==iREFARRAY) {
+    /* the array's address is already in PRI: a bare symbol emitted
+     * address(sym,sPRI) in primary(), a subscripted row left the row's
+     * address in PRI while indexing (as when passing an array argument) */
+    if (lv.sym!=NULL)
+      markusage(lv.sym,uREAD);
+  } /* if */
+  errorset(sEXPRRELEASE,0);
+  if (localstaging) {
+    stgout(index);
+    stgset(FALSE);              /* stop staging */
+  } /* if */
+  if (lval!=NULL)
+    *lval=lv;
+  return lv.ident;
+}
+
 SC_FUNC int sc_getstateid(constvalue **automaton,constvalue **state)
 {
   char name[sNAMEMAX+1];
