@@ -412,6 +412,7 @@ enum {
   tCONTINUE,
   tDEFAULT,
   tDEFINED,
+  tFOREACH,
   tDO,
   tELSE,
   t__EMIT,
