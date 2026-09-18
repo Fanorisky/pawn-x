@@ -772,7 +772,7 @@ SC_FUNC int check_userop(void (*oper)(void),int tag1,int tag2,int numparam,
 SC_FUNC int matchtag(int formaltag,int actualtag,int allowcoerce);
 SC_FUNC int checktag(int tags[],int numtags,int exprtag);
 SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult);
-SC_FUNC int parse_foreach_operand(value *lval);
+SC_FUNC int parse_foreach_operand(value *lval,cell *heapsize);
 SC_FUNC int sc_getstateid(constvalue **automaton,constvalue **state);
 SC_FUNC cell array_totalsize(symbol *sym);
 
