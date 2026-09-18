@@ -212,7 +212,8 @@ static char *warnmsg[] = {
 /*251*/  "none of the variables used in loop condition are modified in loop body\n",
 /*252*/  "variable has its value modified but never used: \"%s\"\n",
 /*253*/  "\"___\" used in a function without variable arguments (\"...\")\n",
-/*254*/  "\"___\" used in a position that does not accept variable arguments\n"
+/*254*/  "\"___\" used in a position that does not accept variable arguments\n",
+/*255*/  "%s\n"
 };
 
 static char *noticemsg[] = {

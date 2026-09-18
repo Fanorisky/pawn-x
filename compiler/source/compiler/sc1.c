@@ -132,6 +132,7 @@ static int doif(void);
 static int dowhile(void);
 static int dodo(void);
 static int dofor(void);
+static int doforeach(void);
 static int doswitch(void);
 static void docase(int isdefault);
 static int dogoto(void);
@@ -5775,6 +5776,9 @@ static void statement(int *lastindent,int allow_decl)
   case tFOR:
     lastst=dofor();
     break;
+  case tFOREACH:
+    lastst=doforeach();
+    break;
   case tSWITCH:
     lastst=doswitch();
     break;
@@ -6316,6 +6320,215 @@ static int dofor(void)
   pc_numloopvars=save_numloopvars;
   endlessloop=save_endlessloop;
   return index;
+}
+
+/*  doforeach
+ *
+ *  Native compact-set iteration statement:
+ *      foreach ( [ new ] <var> : <array> ) <body>
+ *  <array> is an ordinary script array used as a sorted set (see the
+ *  <foreach> header): array[0] holds the count of in-use values, and
+ *  array[1..count] the distinct values in ascending order. The generated
+ *  code walks an indexed loop k=1..count, binding the loop variable to
+ *  array[k] on each pass (the value, not the index).
+ *
+ *  Only existing AMX opcodes are emitted, so the output runs on an
+ *  unmodified host. "break"/"continue" reuse the loop machinery
+ *  (addwhile/readwhile) exactly as "for" does.
+ */
+static int doforeach(void)
+{
+  int wq[wqSIZE];
+  cell save_decl;
+  int save_nestlevel,save_endlessloop;
+  int *ptr;
+  int isnew,hascolon,validarray;
+  int lbl_cond;
+  int tok;
+  cell val;
+  char *str;
+  char varname[sNAMEMAX+1];
+  symbol *loopsym,*arraysym;
+  cell iaddr,kaddr,cntaddr;
+  int dim[sDIMEN_MAX],idxtag[sDIMEN_MAX];
+
+  save_decl=declared;
+  save_nestlevel=pc_nestlevel;
+  save_endlessloop=endlessloop;
+  endlessloop=0;
+
+  addwhile(wq);
+  needtoken('(');
+  pc_nestlevel++;       /* the loop variable is at a nesting level of its own */
+
+  /* --- the loop variable: "[new] <var>" --- */
+  isnew=matchtoken(tNEW);
+  hascolon=FALSE;
+  varname[0]='\0';
+  tok=lex(&val,&str);
+  if (tok==tLABEL) {
+    /* "<var>:" with no space before the colon lexes as a single token,
+     * and the colon is already consumed */
+    assert(strlen(str)<=sNAMEMAX);
+    strcpy(varname,str);
+    hascolon=TRUE;
+  } else if (tok==tSYMBOL) {
+    assert(strlen(str)<=sNAMEMAX);
+    strcpy(varname,str);
+  } else {
+    error(255,"\"foreach\" syntax requires \": <array>\" after the loop variable");
+  } /* if */
+  if (!hascolon && !matchtoken(':'))
+    error(255,"\"foreach\" syntax requires \": <array>\" after the loop variable");
+
+  /* bind or declare the loop variable (always a scalar) */
+  loopsym=NULL;
+  if (isnew) {
+    if (findloc(varname)!=NULL && findloc(varname)->compound==pc_nestlevel)
+      error(21,varname);        /* symbol already defined */
+    declared+=1;                /* the variable is put on the stack */
+    iaddr=-declared*(cell)sizeof(cell);
+    loopsym=addvariable(varname,iaddr,iVARIABLE,sLOCAL,0,dim,0,idxtag,pc_nestlevel);
+    modstk(-(int)sizeof(cell));
+    assert(curfunc!=NULL);
+    if (curfunc->x.stacksize<declared+1)
+      curfunc->x.stacksize=declared+1;
+  } else {
+    loopsym=findloc(varname);
+    if (loopsym==NULL)
+      loopsym=findglb(varname,sGLOBAL);
+    if (loopsym==NULL || (loopsym->ident!=iVARIABLE && loopsym->ident!=iREFERENCE)) {
+      error(17,varname[0]!='\0' ? varname : "-");   /* undefined symbol */
+      /* fabricate a local so the body still resolves and codegen stays valid */
+      declared+=1;
+      iaddr=-declared*(cell)sizeof(cell);
+      loopsym=addvariable(varname[0]!='\0' ? varname : "-foreach",iaddr,iVARIABLE,sLOCAL,0,dim,0,idxtag,pc_nestlevel);
+      modstk(-(int)sizeof(cell));
+      assert(curfunc!=NULL);
+      if (curfunc->x.stacksize<declared+1)
+        curfunc->x.stacksize=declared+1;
+    } else {
+      iaddr=loopsym->addr;
+    } /* if */
+  } /* if */
+  loopsym->usage|=uDEFINE|uWRITTEN|uREAD;
+
+  /* --- the array to iterate over --- */
+  validarray=FALSE;
+  arraysym=NULL;
+  tok=lex(&val,&str);
+  if (tok==tSYMBOL) {
+    arraysym=findloc(str);
+    if (arraysym==NULL)
+      arraysym=findglb(str,sGLOBAL);
+    if (arraysym==NULL) {
+      error(17,str);            /* undefined symbol */
+    } else if (arraysym->ident!=iARRAY && arraysym->ident!=iREFARRAY) {
+      error(255,"\"foreach\" iterates over an array or iterator, not a value");
+    } else {
+      validarray=TRUE;
+      markusage(arraysym,uREAD);
+    } /* if */
+  } else {
+    error(255,"\"foreach\" iterates over an array or iterator, not a value");
+  } /* if */
+  needtoken(')');
+
+  /* hidden loop-scoped cells: the running index k and the snapshot count */
+  declared+=1;
+  kaddr=-declared*(cell)sizeof(cell);
+  modstk(-(int)sizeof(cell));
+  declared+=1;
+  cntaddr=-declared*(cell)sizeof(cell);
+  modstk(-(int)sizeof(cell));
+  assert(curfunc!=NULL);
+  if (curfunc->x.stacksize<declared+1)
+    curfunc->x.stacksize=declared+1;
+
+  /* "break"/"continue" must skip only the body's own locals, not the loop
+   * variable or the hidden index/count cells (mirrors dofor's adjustment) */
+  ptr=readwhile();
+  assert(ptr!=NULL);
+  ptr[wqBRK]=(int)declared;
+  ptr[wqCONT]=(int)declared;
+  ptr[wqLVL]=pc_nestlevel+1;
+
+  lbl_cond=getlabel();
+  setline(TRUE);
+
+  /* cnt = array[0] (the item count), or 0 when the operand was invalid */
+  if (validarray) {
+    address(arraysym,sALT);     /* ALT = base address of the array */
+    ldconst(0,sPRI);            /* PRI = index 0 */
+    stgwrite("\tlidx\n");       /* PRI = [ALT + 0*cell] = array[0] = count */
+    code_idx+=opcodes(1);
+  } else {
+    ldconst(0,sPRI);            /* degenerate loop: iterate nothing */
+  } /* if */
+  stgwrite("\tstor.s.pri ");    /* cnt = PRI */
+  outval(cntaddr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  ldconst(1,sPRI);              /* k = 1 (values live in array[1..count]) */
+  stgwrite("\tstor.s.pri ");
+  outval(kaddr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+
+  setlabel(lbl_cond);
+  /* if (k > cnt) leave the loop */
+  stgwrite("\tload.s.pri ");
+  outval(kaddr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.s.alt ");
+  outval(cntaddr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tsgrtr\n");        /* PRI = (k > cnt) ? 1 : 0 */
+  code_idx+=opcodes(1);
+  jmp_ne0(wq[wqEXIT]);
+
+  /* bind the loop variable to array[k] (the value) */
+  if (validarray) {
+    address(arraysym,sALT);     /* ALT = base address of the array */
+    stgwrite("\tload.s.pri ");
+    outval(kaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tlidx\n");       /* PRI = [ALT + k*cell] = array[k] */
+    code_idx+=opcodes(1);
+  } else {
+    ldconst(0,sPRI);
+  } /* if */
+  if (loopsym->vclass==sLOCAL)
+    stgwrite("\tstor.s.pri ");
+  else
+    stgwrite("\tstor.pri ");
+  outval(iaddr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+
+  statement(NULL,FALSE);        /* the loop body; "i" is live here */
+
+  setlabel(wq[wqLOOP]);         /* "continue" lands here: k++ */
+  stgwrite("\tload.s.pri ");
+  outval(kaddr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tinc.pri\n");
+  code_idx+=opcodes(1);
+  stgwrite("\tstor.s.pri ");
+  outval(kaddr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  jumplabel(lbl_cond);
+  setlabel(wq[wqEXIT]);
+  delwhile();
+
+  /* clean up the loop variable and the hidden index/count cells */
+  if (declared>save_decl) {
+    destructsymbols(&loctab,pc_nestlevel);
+    modstk((int)(declared-save_decl)*sizeof(cell));
+    testsymbols(&loctab,pc_nestlevel,FALSE,TRUE); /* look for unused block locals */
+    declared=save_decl;
+    delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
+  } /* if */
+  pc_nestlevel=save_nestlevel;
+  endlessloop=save_endlessloop;
+  return tFOREACH;
 }
 
 /* The switch statement is incompatible with its C sibling:
