@@ -120,7 +120,11 @@ Known limitations (accepted, documented honestly):
   codegen-correct but currently unexercised by a `.pwn` test.
 - **Count is snapshotted at loop entry** (standard `foreach` semantics):
   adds/removes during the loop are not re-read. `foreach_remove_during`
-  pins this behavior.
+  pins the remove+break behavior; `foreach_remove_nobreak` pins the
+  ACTUAL remove-without-break behavior — a mid-walk `Iter_Remove` shifts
+  the tail left, so one value is skipped and another emitted twice.
+  Mutating the set mid-walk without breaking is unsupported and now
+  documented by that test.
 - **Not a YSI drop-in.** The compact sorted-run layout is deliberately
   not YSI's circular linked-list, so existing YSI iterator code is not
   binary-compatible — semantic replacement, not layout replacement.
@@ -133,8 +137,10 @@ Known limitations (accepted, documented honestly):
   compiler-tracked capacity) to close the V1 unguarded-add gap.
 - **Tests for the local `iARRAY` and by-ref `iREFARRAY` foreach paths**
   to cover the codegen that is correct-by-construction but untested.
-- **Runtime remove-during-loop coverage without `break`**, if the
-  snapshot semantics are ever revisited.
+- **`continue` is now tested** (`foreach_continue` — over {1,2,3},
+  `continue` on 2 prints 1 then 3), and **remove-without-break behavior is
+  now pinned** by `foreach_remove_nobreak`, closing the two spec §5
+  coverage gaps a fresh review flagged.
 - **Upstream PR readiness:** split the keyword+codegen and the natives
   for the open.mp compiler fork; the reference-based API and the
   no-new-opcode walk keep the host-side surface minimal.

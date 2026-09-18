@@ -142,7 +142,7 @@ static cell AMX_NATIVE_CALL iter_count(AMX *amx,const cell *params)
   return arr[0];
 }
 
-/* the native table; registered by pawnrun/pawndbg via amx_Register. */
+/* the native table; registered by pawnruns (the test runner) via amx_Register. */
 const AMX_NATIVE_INFO iter_Natives[] = {
   { "Iter_Init",     iter_init },
   { "Iter_Add",      iter_add },

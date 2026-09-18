@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+val 1
+
+val 3
+
+done
+
+foreach_continue.amx returns 0
+"""
+}
