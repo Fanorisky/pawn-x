@@ -177,6 +177,7 @@ if(BUILD_TESTING)
     ../amx/amxaux.h
     ../amx/amxcons.c
     ../amx/amxcore.c
+    ../amx/itercore.c
     ../amx/amxstring.c
   )
   if(UNIX)
