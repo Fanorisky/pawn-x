@@ -30,10 +30,11 @@
  *    I5 rmtail     remove shifts the tail left, count--
  *
  *  Range limitation (V1): the native cannot know the array's capacity
- *  (arrays are passed by reference without a size parameter), so values
- *  are accepted up to cellmax. `Iter_Add` guards the value region against
- *  the count cell and returns 0 if the set is full. Follow-up: a compiler
- *  extension could pass the array size to bound-check fully.
+ *  (arrays are passed by reference without a size parameter), so it does
+ *  NOT bound-check inserts. The caller must size the array for the number
+ *  of values it will hold; a `new X[cap]` set holds up to cap-1 values
+ *  (slot 0 is the count). Follow-up: a compiler extension could pass the
+ *  array size so `Iter_Add` can reject a full set.
  */
 
 #include "amx.h"
@@ -67,29 +68,31 @@ static cell AMX_NATIVE_CALL iter_init(AMX *amx,const cell *params)
   return 0;
 }
 
-/* Iter_Add(array[], value) - insert, returns 1 if added, 0 if already
- * present. Fails (returns 0) if the value region would exceed the
- * array's usable size. */
+/* Iter_Add(array[], value) - insert, returns 1 if added, 0 if the value
+ * was already present or negative. V1 does NOT bound-check against the
+ * array capacity (see the range limitation in the file header): the
+ * caller must size the array for the number of values it will hold. */
 static cell AMX_NATIVE_CALL iter_add(AMX *amx,const cell *params)
 {
   cell *arr;
   cell value;
-  int count,pos;
+  int count,pos,i;
 
   amx_GetAddr(amx,params[1],&arr);
   value=params[2];
+  if (value<0)
+    return 0;               /* negative values are rejected */
   count=(int)arr[0];
   pos=compact_search(arr,(int)value);
   if (pos<=count && arr[pos]==value)
     return 0;               /* already present (I2) */
-  if (count+1>0 && value<0)
-    return 0;               /* negative values are rejected */
-  /* shift [pos..count-1] right by one, insert at pos (I4) */
-  while (pos>1) {
-    arr[pos]=arr[pos-1];
-    pos--;
+  /* shift the tail [pos..count] up by one slot, then insert at pos (I4) */
+  i=count;
+  while (i>=pos) {
+    arr[i+1]=arr[i];
+    i--;
   }
-  arr[1]=value;
+  arr[pos]=value;
   arr[0]=count+1;          /* count++ (I3) */
   return 1;
 }
