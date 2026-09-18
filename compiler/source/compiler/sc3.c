@@ -856,9 +856,10 @@ SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult)
  *  operand no usable address is produced and the scalar's (post-rvalue) ident
  *  is returned instead, so the caller can report error 255.
  */
-SC_FUNC int parse_foreach_operand(value *lval)
+SC_FUNC int parse_foreach_operand(value *lval,cell *heapsize)
 {
   int index,localstaging;
+  cell locheap;
   value lv={0};
 
   localstaging=FALSE;
@@ -868,6 +869,7 @@ SC_FUNC int parse_foreach_operand(value *lval)
     assert(stgidx==0);
   } /* if */
   index=stgidx;
+  locheap=decl_heap;
   errorset(sEXPRMARK,0);
   if (hier14(&lv))
     rvalue(&lv);                /* only a scalar lvalue reaches here; arrays are not lvalues */
@@ -883,6 +885,20 @@ SC_FUNC int parse_foreach_operand(value *lval)
     stgout(index);
     stgset(FALSE);              /* stop staging */
   } /* if */
+  /* The operand may leave a temporary array on the heap (e.g. an
+   * array-returning function used directly as the operand). Its address is
+   * cached and read across the WHOLE loop, so the heap block must NOT be
+   * released here -- unlike expression(), which frees right away. Report how
+   * many cells were allocated so the caller can emit the matching "modheap"
+   * at loop exit (where the block is finally dead). The compile-time counter
+   * is balanced back here (as expression() does): decl_heap only drives the
+   * emission of balanced heap adjustments, and body expressions manage their
+   * own heap relative to it, so leaving it balanced keeps that bookkeeping
+   * correct while the runtime block lives on until loop exit. */
+  assert(decl_heap>=locheap);
+  if (heapsize!=NULL)
+    *heapsize=decl_heap-locheap;
+  decl_heap=locheap;
   if (lval!=NULL)
     *lval=lv;
   return lv.ident;

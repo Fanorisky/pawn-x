@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+2
+
+5
+
+8
+
+done
+
+foreach_heap_operand.amx returns 0
+"""
+}

@@ -6349,7 +6349,7 @@ static int doforeach(void)
   char *str;
   char varname[sNAMEMAX+1];
   symbol *loopsym;
-  cell iaddr,kaddr,cntaddr,baseaddr;
+  cell iaddr,kaddr,cntaddr,baseaddr,operand_heap;
   int dim[sDIMEN_MAX],idxtag[sDIMEN_MAX];
 
   save_decl=declared;
@@ -6419,7 +6419,8 @@ static int doforeach(void)
    * its address (currently in PRI) is cached in "baseaddr" below, so a computed
    * or side-effecting operand is not re-evaluated per iteration. --- */
   validarray=FALSE;
-  oident=parse_foreach_operand(NULL);
+  operand_heap=0;
+  oident=parse_foreach_operand(NULL,&operand_heap);
   if (oident==iARRAY || oident==iREFARRAY) {
     validarray=TRUE;            /* the row's base address is now in PRI */
   } else {
@@ -6536,6 +6537,11 @@ static int doforeach(void)
     declared=save_decl;
     delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
   } /* if */
+  /* release any heap the operand left behind. The temporary (e.g. an array
+   * returned by a function used as the operand) was kept alive for the whole
+   * loop, so it is freed here at loop exit -- where "break" also lands. */
+  if (operand_heap>0)
+    modheap(-(int)operand_heap*(int)sizeof(cell));
   pc_nestlevel=save_nestlevel;
   endlessloop=save_endlessloop;
   return tFOREACH;
