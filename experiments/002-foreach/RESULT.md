@@ -131,12 +131,54 @@ Known limitations (accepted, documented honestly):
 - **Deferred (YAGNI, spec §6):** `Iter_Free`, multi-dimensional
   iterators, `Iter_Random*`, user-defined `iterfunc` filter functions.
 
+## Extension: multi-set via any array-reference operand (2026-09-18)
+
+`foreach` now accepts ANY expression that resolves to an array reference,
+not just a bare array symbol. This gives **multi-set iteration for free**
+over 2D-array rows — no new natives, no YSI-style `Iterator:name<slots,size>`
+machinery:
+
+```pawn
+new sets[3][8];              // 3 independent compact sets, one contiguous alloc
+Iter_Add(sets[0], 42);
+Iter_Add(sets[2], 3);
+foreach (new i : sets[0]) { ... }   // iterate row 0 only
+new k = 2;
+foreach (new j : sets[k]) { ... }   // computed index, evaluated once at entry
+```
+
+- The `Iter_*` natives already operate on a row `sets[k]` (passed by
+  reference) — verified before any compiler change. Only the `foreach`
+  parser+codegen needed extending.
+- The operand address is evaluated **once** before the loop and cached in
+  a hidden loop-scoped cell; the count read and each value read reload from
+  that cell (no per-iteration re-evaluation of a computed index).
+- A scalar operand (e.g. `sets[0][1]`, a single cell) is rejected with
+  error 255 (`foreach_reject_scalar`).
+- Heap-allocating operands work: `foreach (i : GetSet())` where `GetSet`
+  returns an array — the operand's heap temporary is freed at loop exit
+  (also on `break`), verified net-zero over 100 passes
+  (`foreach_heap_operand`).
+- Cheaper and broader than YSI's multi-dimensional iterators: real Pawn 2D
+  arrays, standard indexing, arbitrary slot count/size per declaration,
+  no macro layer, no runtime bookkeeping.
+
+**Known limitation (deferred):** an early `return` directly out of a
+`foreach` body whose operand allocated heap skips the loop-exit `modheap`
+and leaks that temporary on that path only (OP_RETN does not reset HEA).
+Strictly better than pre-fix (which leaked on all paths); the correct fix
+hooks the function's return-path heap cleanup — a broader change deferred
+as a follow-up.
+
 ## What is next
 
+- **Early-return heap cleanup** for heap-operand `foreach` (the deferred
+  limitation above).
 - **Capacity bound-check** in `Iter_Add` (size-aware API or
   compiler-tracked capacity) to close the V1 unguarded-add gap.
 - **Tests for the local `iARRAY` and by-ref `iREFARRAY` foreach paths**
-  to cover the codegen that is correct-by-construction but untested.
+  (the multi-set extension now exercises subscripted `iREFARRAY` rows,
+  partially closing this).
 - **`continue` is now tested** (`foreach_continue` — over {1,2,3},
   `continue` on 2 prints 1 then 3), and **remove-without-break behavior is
   now pinned** by `foreach_remove_nobreak`, closing the two spec §5
