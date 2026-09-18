@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+val 1
+
+val 2
+
+val 4
+
+val 4
+
+count=3
+
+foreach_remove_nobreak.amx returns 0
+"""
+}
