@@ -6344,12 +6344,12 @@ static int doforeach(void)
   int *ptr;
   int isnew,hascolon,validarray;
   int lbl_cond;
-  int tok;
+  int tok,oident;
   cell val;
   char *str;
   char varname[sNAMEMAX+1];
-  symbol *loopsym,*arraysym;
-  cell iaddr,kaddr,cntaddr;
+  symbol *loopsym;
+  cell iaddr,kaddr,cntaddr,baseaddr;
   int dim[sDIMEN_MAX],idxtag[sDIMEN_MAX];
 
   save_decl=declared;
@@ -6413,28 +6413,26 @@ static int doforeach(void)
   } /* if */
   loopsym->usage|=uDEFINE|uWRITTEN|uREAD;
 
-  /* --- the array to iterate over --- */
+  /* --- the array to iterate over: any expression that resolves to an array
+   * reference (a bare symbol, a subscripted row of a multi-dimensional array,
+   * a reference-array parameter, ...). It is evaluated exactly ONCE here, and
+   * its address (currently in PRI) is cached in "baseaddr" below, so a computed
+   * or side-effecting operand is not re-evaluated per iteration. --- */
   validarray=FALSE;
-  arraysym=NULL;
-  tok=lex(&val,&str);
-  if (tok==tSYMBOL) {
-    arraysym=findloc(str);
-    if (arraysym==NULL)
-      arraysym=findglb(str,sGLOBAL);
-    if (arraysym==NULL) {
-      error(17,str);            /* undefined symbol */
-    } else if (arraysym->ident!=iARRAY && arraysym->ident!=iREFARRAY) {
-      error(255,"\"foreach\" iterates over an array or iterator, not a value");
-    } else {
-      validarray=TRUE;
-      markusage(arraysym,uREAD);
-    } /* if */
+  oident=parse_foreach_operand(NULL);
+  if (oident==iARRAY || oident==iREFARRAY) {
+    validarray=TRUE;            /* the row's base address is now in PRI */
   } else {
     error(255,"\"foreach\" iterates over an array or iterator, not a value");
   } /* if */
   needtoken(')');
 
-  /* hidden loop-scoped cells: the running index k and the snapshot count */
+  /* hidden loop-scoped cells: the cached operand address (row base), the
+   * running index k and the snapshot count. "modstk" only adjusts STK, so the
+   * operand address computed above stays intact in PRI. */
+  declared+=1;
+  baseaddr=-declared*(cell)sizeof(cell);
+  modstk(-(int)sizeof(cell));
   declared+=1;
   kaddr=-declared*(cell)sizeof(cell);
   modstk(-(int)sizeof(cell));
@@ -6444,6 +6442,14 @@ static int doforeach(void)
   assert(curfunc!=NULL);
   if (curfunc->x.stacksize<declared+1)
     curfunc->x.stacksize=declared+1;
+
+  /* cache the operand address (still in PRI) into "baseaddr"; every count and
+   * value read below loads it back into ALT rather than recomputing it */
+  if (validarray) {
+    stgwrite("\tstor.s.pri ");
+    outval(baseaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+  } /* if */
 
   /* "break"/"continue" must skip only the body's own locals, not the loop
    * variable or the hidden index/count cells (mirrors dofor's adjustment) */
@@ -6458,7 +6464,9 @@ static int doforeach(void)
 
   /* cnt = array[0] (the item count), or 0 when the operand was invalid */
   if (validarray) {
-    address(arraysym,sALT);     /* ALT = base address of the array */
+    stgwrite("\tload.s.alt ");  /* ALT = cached base address of the array/row */
+    outval(baseaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
     ldconst(0,sPRI);            /* PRI = index 0 */
     stgwrite("\tlidx\n");       /* PRI = [ALT + 0*cell] = array[0] = count */
     code_idx+=opcodes(1);
@@ -6487,7 +6495,9 @@ static int doforeach(void)
 
   /* bind the loop variable to array[k] (the value) */
   if (validarray) {
-    address(arraysym,sALT);     /* ALT = base address of the array */
+    stgwrite("\tload.s.alt ");  /* ALT = cached base address of the array/row */
+    outval(baseaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
     stgwrite("\tload.s.pri ");
     outval(kaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
