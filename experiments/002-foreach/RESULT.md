@@ -186,3 +186,26 @@ as a follow-up.
 - **Upstream PR readiness:** split the keyword+codegen and the natives
   for the open.mp compiler fork; the reference-based API and the
   no-new-opcode walk keep the host-side surface minimal.
+
+## Benchmark: native vs YSI on real open.mp (2026-09-19)
+
+Like-for-like iteration benchmark on omp-server v1.5.8.3079, `GetTickCount()`
+around 80M iterations, both sides identical work. Full methodology, toolchain,
+and YSI-compile patches: `experiments/002-foreach/bench/README.md`.
+
+| walk (80M iterations, -d0, min of 3) | time |
+|---|---|
+| YSI `foreach` (index-set linked list) | 404 ms |
+| native `foreach` — indexed `lidx` (initial) | 679 ms |
+| native `foreach` — pointer walk (optimized) | **518 ms** |
+
+- Optimization `perf: foreach walks a pointer` rewrote the walk to `load.i` +
+  `jsgeq` (no `lidx`, no per-iteration base reload): **679 → 518 ms, ~1.24×**.
+- Native is now ~1.28× slower than YSI on the walk (was ~1.68×). Residual gap
+  is inherent: our **value-set** needs `value = *p` per step, while YSI's
+  **index-set** has value==position (no fetch). Where native should win —
+  `setadd`/`sethas` as compiled C vs YSI's interpreted bytecode — is unmeasured
+  on the server (the `set*` natives aren't registered there; would need an
+  open.mp component to benchmark fairly).
+- **AMX size:** native gamemode 940 B vs YSI 69.4 KB (~74×) — YSI's figure is
+  its whole framework, which you must include to use its `foreach`.
