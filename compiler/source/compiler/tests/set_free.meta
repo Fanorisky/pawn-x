@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+empty=0
+
+gap=2
+
+dense=4
+
+set_free.amx returns 0
+"""
+}

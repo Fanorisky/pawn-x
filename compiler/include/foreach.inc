@@ -27,3 +27,5 @@ native setadd(const array[], value);
 native setremove(const array[], value);
 native sethas(const array[], value);
 native setlen(const array[]);
+native setfree(const array[]);     // smallest non-negative integer not in the set
+native setrandom(const array[]);   // a random member, or -1 if empty
