@@ -14,18 +14,18 @@ main()
 	setadd(sets[2], 3);
 	setadd(sets[2], 9);
 	/* iterate a subscripted row (the "wild" operand) */
-	foreach (new i : sets[0])
+	set_foreach (new i : sets[0])
 	{
 		printf("a %d\n", i);
 	}
 	/* a computed index also works, evaluated once at loop entry */
 	new k = 1 + 1;
-	foreach (new j : sets[k])
+	set_foreach (new j : sets[k])
 	{
 		printf("b %d\n", j);
 	}
 	/* empty row: body never runs */
-	foreach (new m : sets[1])
+	set_foreach (new m : sets[1])
 	{
 		printf("c %d\n", m);
 	}
