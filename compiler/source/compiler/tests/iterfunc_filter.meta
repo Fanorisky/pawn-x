@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+v 0
+
+v 3
+
+v 6
+
+v 9
+
+done
+
+iterfunc_filter.amx returns 0
+"""
+}

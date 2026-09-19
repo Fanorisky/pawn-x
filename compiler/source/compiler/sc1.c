@@ -1871,14 +1871,27 @@ static void parse(void)
       break;
     case tITERFUNC:
       /* "iterfunc" prefixes an ordinary function declaration and flags its
-       * symbol as a lazy generator (uITERFUNC). The function is parsed exactly
-       * like any other; only set_foreach treats a call to it specially. */
+       * symbol as a lazy generator (uITERFUNC). It may be followed by a normal
+       * class specifier ("iterfunc stock/static/public Name(...)"), which is
+       * honored as usual; the function is otherwise parsed like any other, and
+       * only set_foreach treats a call to it specially. */
       pc_iterfunc=TRUE;
-      if (!newfunc(NULL,-1,FALSE,FALSE,FALSE)) {
-        error(10);              /* illegal function or declaration */
-        lexclr(TRUE);           /* drop the rest of the line */
-        litidx=0;               /* drop the literal queue too */
-      } /* if */
+      tok=lex(&val,&str);
+      switch (tok) {
+      case tSTOCK:
+      case tSTATIC:
+      case tPUBLIC:
+        if (getclassspec(tok,&fpublic,&fstatic,&fstock,&fconst))
+          declfuncvar(fpublic,fstatic,fstock,fconst);
+        break;
+      default:
+        lexpush();              /* no class specifier -- hand the name to newfunc */
+        if (!newfunc(NULL,-1,FALSE,FALSE,FALSE)) {
+          error(10);            /* illegal function or declaration */
+          lexclr(TRUE);         /* drop the rest of the line */
+          litidx=0;             /* drop the literal queue too */
+        } /* if */
+      } /* switch */
       pc_iterfunc=FALSE;
       break;
     case t__STATIC_ASSERT:
