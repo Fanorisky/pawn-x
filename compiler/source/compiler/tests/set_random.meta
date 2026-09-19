@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+empty=-1
+
+single=5
+
+allmembers=1
+
+set_random.amx returns 0
+"""
+}

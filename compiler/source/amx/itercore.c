@@ -142,6 +142,46 @@ static cell AMX_NATIVE_CALL iter_count(AMX *amx,const cell *params)
   return arr[0];
 }
 
+/* setfree(array[]) - returns the smallest non-negative integer NOT in the set
+ * (an id-allocation helper). Values are sorted ascending in arr[1..count], so
+ * the first index k where arr[k] differs from its expected value k-1 is the
+ * gap; if the run is dense (0..count-1) the answer is count. */
+static cell AMX_NATIVE_CALL iter_free(AMX *amx,const cell *params)
+{
+  cell *arr;
+  int count,k;
+  cell expected;
+
+  amx_GetAddr(amx,params[1],&arr);
+  count=(int)arr[0];
+  expected=0;
+  for (k=1; k<=count; k++) {
+    if (arr[k]!=expected)
+      break;                  /* found the first gap */
+    expected++;
+  }
+  return expected;
+}
+
+/* setrandom(array[]) - returns a uniformly chosen in-use value, or -1 if the
+ * set is empty. Uses a small self-contained xorshift PRNG so it does not
+ * depend on the host's rand() state. */
+static cell AMX_NATIVE_CALL iter_random(AMX *amx,const cell *params)
+{
+  static unsigned long seed=2463534242UL;   /* xorshift32 seed */
+  cell *arr;
+  int count;
+
+  amx_GetAddr(amx,params[1],&arr);
+  count=(int)arr[0];
+  if (count<=0)
+    return -1;                /* empty set */
+  seed^=seed<<13;
+  seed^=seed>>17;
+  seed^=seed<<5;
+  return arr[1+(int)(seed%(unsigned long)count)];
+}
+
 /* the native table; registered by pawnruns (the test runner) via amx_Register. */
 const AMX_NATIVE_INFO iter_Natives[] = {
   { "setinit",   iter_init },
@@ -149,5 +189,7 @@ const AMX_NATIVE_INFO iter_Natives[] = {
   { "setremove", iter_remove },
   { "sethas",    iter_contains },
   { "setlen",    iter_count },
+  { "setfree",   iter_free },
+  { "setrandom", iter_random },
   { NULL, NULL }     /* terminator */
 };
