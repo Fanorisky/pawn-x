@@ -1,0 +1,22 @@
+{
+  'test_type': 'runtime',
+  'output': """
+v 1
+
+v 2
+
+v 4
+
+v 8
+
+v 16
+
+v 32
+
+v 64
+
+done
+
+gen_powers.amx returns 0
+"""
+}
