@@ -144,10 +144,10 @@ static cell AMX_NATIVE_CALL iter_count(AMX *amx,const cell *params)
 
 /* the native table; registered by pawnruns (the test runner) via amx_Register. */
 const AMX_NATIVE_INFO iter_Natives[] = {
-  { "setinit",     iter_init },
-  { "setadd",      iter_add },
-  { "setremove",   iter_remove },
-  { "sethas", iter_contains },
+  { "setinit",   iter_init },
+  { "setadd",    iter_add },
+  { "setremove", iter_remove },
+  { "sethas",    iter_contains },
   { "setlen",    iter_count },
   { NULL, NULL }     /* terminator */
 };
