@@ -6342,7 +6342,7 @@ static int doforeach(void)
   cell save_decl;
   int save_nestlevel,save_endlessloop;
   int *ptr;
-  int isnew,hascolon,validarray;
+  int isnew,hascolon,validarray,reverse;
   int lbl_cond;
   int tok,oident;
   cell val;
@@ -6420,13 +6420,26 @@ static int doforeach(void)
    * or side-effecting operand is not re-evaluated per iteration. --- */
   validarray=FALSE;
   operand_heap=0;
+  /* optional "Reverse(<operand>)" wrapper: iterate the set descending. This is
+   * also the safe way to remove the current element mid-walk, since remove
+   * shifts the tail (higher values) left -- already-visited in a reverse walk. */
+  reverse=FALSE;
+  if (matchtoken(tSYMBOL)) {
+    tokeninfo(&val,&str);
+    if (strcmp(str,"Reverse")==0 && matchtoken('('))
+      reverse=TRUE;
+    else
+      lexpush();                /* not "Reverse(" -- hand the symbol to the operand parser */
+  } /* if */
   oident=parse_foreach_operand(NULL,&operand_heap);
   if (oident==iARRAY || oident==iREFARRAY) {
     validarray=TRUE;            /* the row's base address is now in PRI */
   } else {
     error(255,"\"set_foreach\" iterates over an array or iterator, not a value");
   } /* if */
-  needtoken(')');
+  if (reverse)
+    needtoken(')');             /* close "Reverse(" */
+  needtoken(')');               /* close "set_foreach(" */
 
   /* hidden loop-scoped cells: the cached operand address (row base), the
    * running index k and the snapshot count. "modstk" only adjusts STK, so the
@@ -6463,37 +6476,64 @@ static int doforeach(void)
   lbl_cond=getlabel();
   setline(TRUE);
 
-  /* Pointer walk: instead of an index "k" reloaded and index-scaled every
-   * iteration, keep a live pointer "p" (in kaddr) and a one-past-last pointer
-   * "pend" (in cntaddr). The set is compact -- array[0]=count, values in
-   * array[1..count] contiguously -- so p runs from &array[1] to &array[count+1]. */
+  /* Pointer walk: keep a live pointer "p" (in kaddr) and a bound pointer
+   * (in cntaddr). The set is compact -- array[0]=count, values in
+   * array[1..count] contiguously. Ascending: p runs &array[1]..&array[count+1),
+   * bound = "pend" = &array[count+1], exit when p >= pend. Reverse: p runs
+   * &array[count]..&array[1], bound = "pstop" = &array[0] = base, exit when
+   * p <= pstop. Both leave p in PRI so the condition can skip reloading it. */
   if (validarray) {
-    /* pend = base + (count+1)*cell */
-    stgwrite("\tload.s.alt ");  /* ALT = cached base address of the array/row */
-    outval(baseaddr,TRUE);
-    code_idx+=opcodes(1)+opargs(1);
-    ldconst(0,sPRI);            /* PRI = index 0 */
-    stgwrite("\tlidx\n");       /* PRI = [ALT + 0*cell] = array[0] = count */
-    code_idx+=opcodes(1);
-    addconst(1);                /* PRI = count+1 */
-    stgwrite("\tload.s.alt ");  /* ALT = base address again */
-    outval(baseaddr,TRUE);
-    code_idx+=opcodes(1)+opargs(1);
-    stgwrite("\tidxaddr\n");    /* PRI = ALT + (count+1)*cell = &array[count+1] = pend */
-    code_idx+=opcodes(1);
-    stgwrite("\tstor.s.pri ");  /* pend = PRI */
-    outval(cntaddr,TRUE);
-    code_idx+=opcodes(1)+opargs(1);
-    /* p = &array[1] = base + cell */
-    stgwrite("\tload.s.pri ");
-    outval(baseaddr,TRUE);
-    code_idx+=opcodes(1)+opargs(1);
-    addconst((int)sizeof(cell)); /* PRI = base + cell = &array[1] */
-    stgwrite("\tstor.s.pri ");  /* p = PRI */
-    outval(kaddr,TRUE);
-    code_idx+=opcodes(1)+opargs(1);
+    if (reverse) {
+      /* pstop = base (&array[0]) */
+      stgwrite("\tload.s.pri ");
+      outval(baseaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tstor.s.pri ");  /* pstop = base */
+      outval(cntaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      /* p = base + count*cell = &array[count] */
+      stgwrite("\tload.s.alt ");  /* ALT = base */
+      outval(baseaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      ldconst(0,sPRI);            /* PRI = index 0 */
+      stgwrite("\tlidx\n");       /* PRI = array[0] = count */
+      code_idx+=opcodes(1);
+      stgwrite("\tload.s.alt ");  /* ALT = base */
+      outval(baseaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tidxaddr\n");    /* PRI = base + count*cell = &array[count] */
+      code_idx+=opcodes(1);
+      stgwrite("\tstor.s.pri ");  /* p = PRI */
+      outval(kaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } else {
+      /* pend = base + (count+1)*cell */
+      stgwrite("\tload.s.alt ");  /* ALT = cached base address of the array/row */
+      outval(baseaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      ldconst(0,sPRI);            /* PRI = index 0 */
+      stgwrite("\tlidx\n");       /* PRI = [ALT + 0*cell] = array[0] = count */
+      code_idx+=opcodes(1);
+      addconst(1);                /* PRI = count+1 */
+      stgwrite("\tload.s.alt ");  /* ALT = base address again */
+      outval(baseaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tidxaddr\n");    /* PRI = ALT + (count+1)*cell = &array[count+1] = pend */
+      code_idx+=opcodes(1);
+      stgwrite("\tstor.s.pri ");  /* pend = PRI */
+      outval(cntaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      /* p = &array[1] = base + cell */
+      stgwrite("\tload.s.pri ");
+      outval(baseaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      addconst((int)sizeof(cell)); /* PRI = base + cell = &array[1] */
+      stgwrite("\tstor.s.pri ");  /* p = PRI */
+      outval(kaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* if */
   } else {
-    /* degenerate loop: p == pend == 0 so the condition exits immediately */
+    /* degenerate loop: p == bound == 0 so the condition exits immediately */
     ldconst(0,sPRI);
     stgwrite("\tstor.s.pri ");
     outval(kaddr,TRUE);
@@ -6508,10 +6548,11 @@ static int doforeach(void)
    * p in PRI (its last op is "stor.s.pri p", which preserves PRI), and the
    * increment block below ends the same way before jumping back here. So the
    * per-iteration "load.s.pri p" is elided -- only "pend" is (re)loaded. */
-  stgwrite("\tload.s.alt ");    /* ALT = pend (PRI still holds p) */
+  stgwrite("\tload.s.alt ");    /* ALT = bound pointer (PRI still holds p) */
   outval(cntaddr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tjsgeq ");         /* if (p >= pend) jump exit (PRI/ALT preserved) */
+  /* ascending: exit when p >= pend; reverse: exit when p <= pstop */
+  stgwrite(reverse ? "\tjsleq " : "\tjsgeq ");
   outval(wq[wqEXIT],TRUE);
   code_idx+=opcodes(1)+opargs(1);
 
@@ -6527,11 +6568,11 @@ static int doforeach(void)
 
   statement(NULL,FALSE);        /* the loop body; "i" is live here */
 
-  setlabel(wq[wqLOOP]);         /* "continue" lands here: p += cell */
+  setlabel(wq[wqLOOP]);         /* "continue" lands here: advance p */
   stgwrite("\tload.s.pri ");
   outval(kaddr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
-  addconst((int)sizeof(cell));  /* p += cell */
+  addconst(reverse ? -(int)sizeof(cell) : (int)sizeof(cell));  /* reverse: p -= cell, else p += cell */
   stgwrite("\tstor.s.pri ");
   outval(kaddr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
