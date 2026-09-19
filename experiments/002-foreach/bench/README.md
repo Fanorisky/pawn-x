@@ -204,3 +204,27 @@ interpreted linked-list walk — but the magnitude is an order of magnitude smal
 than the ascending best case suggested. The *direction* (native wins add) holds;
 the headline multiple does not. `has` is unchanged by ordering (native 92 ms vs
 YSI 97 ms, still a tie), as expected — membership doesn't depend on insert order.
+
+### Walk codegen squeeze (elide per-iteration `load.s.pri p`)
+
+`p` was loaded from stack twice per iteration (once at the condition, once at
+the increment). Since the increment ends with `stor.s.pri p` (which leaves `p`
+in PRI) and every entry to the condition label comes from either the increment
+or the initialiser (also ending `stor.s.pri p`), the condition's `load.s.pri p`
+is redundant and was elided — 12 → 11 opcodes per iteration (disasm-confirmed).
+
+| walk (80M, -d0, min of 3) | time |
+|---|---|
+| YSI `foreach` | 404 ms |
+| native — pointer walk | 518 ms |
+| native — pointer walk + p-load elided | **506 ms** |
+
+Honest read: the win is ~2% (518→506), within run-to-run noise. The elided load
+is real but the residual gap to YSI is **not** codegen waste — it is architectural
+(value-set needs `load.i` per step; YSI's index-set fuses value+advance in one
+`lidx`) and interpreter-dispatch-bound (body clobbers PRI/ALT, forcing `p`/`pend`
+stack round-trips). Closing it further needs a dedicated iteration opcode (loses
+stock-server portability) or an index-set data model (loses the value-set
+memory/arbitrary-value advantages). Not pursued: native already wins add (~6.5×
+randomized) and footprint (~74×); the walk gap is an accepted architectural
+trade-off.

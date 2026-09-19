@@ -6504,11 +6504,11 @@ static int doforeach(void)
   } /* if */
 
   setlabel(lbl_cond);
-  /* if (p >= pend) leave the loop -- fused compare+jump, keeps PRI = p */
-  stgwrite("\tload.s.pri ");    /* PRI = p */
-  outval(kaddr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tload.s.alt ");    /* ALT = pend */
+  /* PRI already holds p on every entry to this label: the initialiser leaves
+   * p in PRI (its last op is "stor.s.pri p", which preserves PRI), and the
+   * increment block below ends the same way before jumping back here. So the
+   * per-iteration "load.s.pri p" is elided -- only "pend" is (re)loaded. */
+  stgwrite("\tload.s.alt ");    /* ALT = pend (PRI still holds p) */
   outval(cntaddr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
   stgwrite("\tjsgeq ");         /* if (p >= pend) jump exit (PRI/ALT preserved) */
