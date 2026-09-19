@@ -164,3 +164,39 @@ Net: native wins the mutation-heavy `add` decisively (with the ordering caveat),
 and membership is a wash. Combined with the iteration result above (native walk
 ~1.28× slower than YSI), neither side dominates across the board — each data
 model wins the operation that suits its shape.
+
+### Randomized insertion order
+
+The ascending benchmark above is the *best* case for the native compact sorted
+set and the *worst* case for YSI, so the 73× add gap flatters native twice over.
+To test the "add" win honestly, `bench_native_ops_rand.pwn` /
+`bench_ysi_ops_rand.pwn` replace the ascending insert with a scrambled
+permutation — `(i * 137) % 400` (137 is coprime to 400, so it yields the distinct
+values `0..399` in random-ish order). Same deterministic sequence on both sides,
+everything else identical (`ADDR=4000`, `N=400` → 1.6M inserts). This forces the
+native `setadd` to do real tail-shifts (`memmove`) instead of always appending,
+and makes YSI's `Iter_Add` land at varied list positions instead of always the
+tail.
+
+| add — 1.6M inserts | native (C plugin) | YSI y_iterate | native/YSI |
+|---|---|---|---|
+| ascending `0..N-1` | **33 ms** | 2415 ms | 73× faster |
+| randomized `(i*137)%N` | **213 ms** | 1389 ms | ~6.5× faster |
+
+Randomization moves *both* sides, in opposite directions:
+
+- **Native gets ~6.5× slower** (33 → 213 ms). Ascending inserts append with zero
+  `memmove`; a scrambled order makes most `setadd`s shift a tail of the array, so
+  the C code now pays real O(n) data movement per insert.
+- **YSI gets ~1.7× *faster*** (2415 → 1389 ms). This is the honest surprise:
+  ascending insertion is YSI's *worst* case, not a neutral one. Its sorted
+  index-set linked list walks from the head to find the insertion point, so
+  appending an ever-larger value each time is a full-length walk every insert.
+  Random values land nearer the middle on average, roughly halving the walk.
+
+So the original 73× was inflated from both ends. On a fair, order-neutral
+workload native still wins add clearly (~6.5×) — compiled C tail-shifts beat an
+interpreted linked-list walk — but the magnitude is an order of magnitude smaller
+than the ascending best case suggested. The *direction* (native wins add) holds;
+the headline multiple does not. `has` is unchanged by ordering (native 92 ms vs
+YSI 97 ms, still a tie), as expected — membership doesn't depend on insert order.
