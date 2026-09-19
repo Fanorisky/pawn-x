@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+done
+
+iterfunc_empty.amx returns 0
+"""
+}

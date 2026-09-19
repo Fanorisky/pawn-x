@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+v 0
+
+v 1
+
+v 2
+
+done
+
+iterfunc_break.amx returns 0
+"""
+}
