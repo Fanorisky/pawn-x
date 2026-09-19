@@ -1778,6 +1778,11 @@ static int getclassspec(int initialtok,int *fpublic,int *fstatic,int *fstock,int
   return err==0;
 }
 
+/* set while parsing a function that was prefixed with the "iterfunc" keyword,
+ * so newfunc() can tag its symbol with uITERFUNC (a lazy generator that
+ * set_foreach drives with a call-loop; see doforeach) */
+static int pc_iterfunc=FALSE;
+
 /*  parse       - process all input text
  *
  *  At this level, only static declarations and function definitions are legal.
@@ -1863,6 +1868,18 @@ static void parse(void)
       break;
     case tFORWARD:
       funcstub(FALSE);
+      break;
+    case tITERFUNC:
+      /* "iterfunc" prefixes an ordinary function declaration and flags its
+       * symbol as a lazy generator (uITERFUNC). The function is parsed exactly
+       * like any other; only set_foreach treats a call to it specially. */
+      pc_iterfunc=TRUE;
+      if (!newfunc(NULL,-1,FALSE,FALSE,FALSE)) {
+        error(10);              /* illegal function or declaration */
+        lexclr(TRUE);           /* drop the rest of the line */
+        litidx=0;               /* drop the literal queue too */
+      } /* if */
+      pc_iterfunc=FALSE;
       break;
     case t__STATIC_ASSERT:
     case t__STATIC_CHECK: {
@@ -4025,6 +4042,8 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
   sym=fetchfunc(symbolname,tag);/* get a pointer to the function entry */
   if (sym==NULL || (sym->usage & uNATIVE)!=0)
     return TRUE;                /* it was recognized as a function declaration, but not as a valid one */
+  if (pc_iterfunc)
+    sym->usage|=uITERFUNC;      /* declared with the "iterfunc" keyword: a lazy generator */
   if (fpublic && opertok==0)
     sym->usage|=uPUBLIC;
   if (fstatic)
@@ -6351,6 +6370,9 @@ static int doforeach(void)
   symbol *loopsym;
   cell iaddr,kaddr,cntaddr,baseaddr,operand_heap;
   int dim[sDIMEN_MAX],idxtag[sDIMEN_MAX];
+  symbol *gensym,*cand;         /* generator (iterfunc) support */
+  cell curaddr,argaddr[sMAXARGS],iterstop;
+  int nuser,ai,argident;
 
   save_decl=declared;
   save_nestlevel=pc_nestlevel;
@@ -6431,6 +6453,151 @@ static int doforeach(void)
     else
       lexpush();                /* not "Reverse(" -- hand the symbol to the operand parser */
   } /* if */
+
+  /* generator detection: is the operand a call to an "iterfunc" symbol? If so,
+   * emit a call-loop instead of an array walk. The two paths stay fully
+   * separate -- the generator path never touches parse_foreach_operand (there
+   * is no backing array to snapshot or pointer-walk). */
+  gensym=NULL;
+  if (matchtoken(tSYMBOL)) {
+    tokeninfo(&val,&str);
+    cand=findloc(str);
+    if (cand==NULL)
+      cand=findglb(str,sGLOBAL);
+    if (cand!=NULL && cand->ident==iFUNCTN && (cand->usage & uITERFUNC)!=0 && matchtoken('('))
+      gensym=cand;              /* "Name(" of a generator: '(' consumed */
+    else
+      lexpush();                /* not a generator call -- hand the symbol to the operand parser */
+  } /* if */
+
+  if (gensym!=NULL) {
+    /* --- GENERATOR PATH: set_foreach (new i : Gen(a,b,...)) ---
+     * Gen is "iterfunc Gen(cur, x, y)": called with the running state "cur" it
+     * returns the next value, or ITER_STOP (== cellmin) to end. The first call
+     * receives cur == ITER_STOP (the seed). The extra args are evaluated once
+     * and cached; only "cur" varies per call. Only existing AMX opcodes are
+     * emitted (call/push/const.alt/jeq/...), so the output runs on an
+     * unmodified host, exactly like the array walk. */
+    iterstop=(cell)((ucell)1 << (PAWN_CELL_SIZE-1));  /* ITER_STOP == cellmin */
+
+    if (reverse)
+      error(255,"\"set_foreach\" cannot reverse a generator (iterfunc); a generator defines its own order");
+    /* register the call so the generator is not stripped and, when it is defined
+     * before this loop, is still emitted in the writing pass (builds the same
+     * caller->callee reference an ordinary call would) */
+    if (sc_status!=statSKIP)
+      markusage(gensym,uREAD);
+
+    /* hidden "cur" cell (the running state), initialised to ITER_STOP so the
+     * first call receives the seed. modstk only moves STK, so PRI stays free. */
+    declared+=1;
+    curaddr=-declared*(cell)sizeof(cell);
+    modstk(-(int)sizeof(cell));
+    assert(curfunc!=NULL);
+    if (curfunc->x.stacksize<declared+1)
+      curfunc->x.stacksize=declared+1;
+    ldconst(iterstop,sPRI);
+    stgwrite("\tstor.s.pri ");
+    outval(curaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+
+    /* evaluate the extra args ONCE (they are loop-invariant) and cache each in
+     * a hidden cell; the cached values are passed unchanged on every call. */
+    nuser=0;
+    if (!matchtoken(')')) {
+      do {
+        if (nuser>=sMAXARGS-1) {
+          error(45);            /* too many function arguments */
+          break;
+        } /* if */
+        argident=expression(&val,NULL,NULL,FALSE);   /* leaves the value in PRI */
+        if (argident==iARRAY || argident==iREFARRAY)
+          error(35,nuser+2);    /* argument type mismatch: arrays are not supported here */
+        else if (argident==iCONSTEXPR)
+          ldconst(val,sPRI);    /* a constant is not auto-loaded -- force it into PRI */
+        declared+=1;
+        argaddr[nuser]=-declared*(cell)sizeof(cell);
+        modstk(-(int)sizeof(cell));
+        if (curfunc->x.stacksize<declared+1)
+          curfunc->x.stacksize=declared+1;
+        stgwrite("\tstor.s.pri ");
+        outval(argaddr[nuser],TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+        nuser++;
+      } while (matchtoken(','));
+      needtoken(')');           /* close "Gen(" */
+    } /* if */
+    if (reverse)
+      needtoken(')');           /* close the (rejected) "Reverse(" wrapper */
+    needtoken(')');             /* close "set_foreach(" */
+
+    /* "break"/"continue" clean the body's own locals down to here; the loop
+     * variable, "cur" and the cached args are the loop-scoped hidden cells
+     * (mirrors dofor's / the array path's adjustment). */
+    ptr=readwhile();
+    assert(ptr!=NULL);
+    ptr[wqBRK]=(int)declared;
+    ptr[wqCONT]=(int)declared;
+    ptr[wqLVL]=pc_nestlevel+1;
+
+    lbl_cond=getlabel();
+    setline(TRUE);
+    setlabel(lbl_cond);
+    /* call Gen(cur, arg1, ..., argN): push args in reversed parameter order
+     * (last param first), "cur" last, then the byte count, then call. The
+     * callee's "retn" pops the arguments, so STK is restored on return and PRI
+     * holds the next value. */
+    for (ai=nuser-1; ai>=0; ai--) {
+      stgwrite("\tpush.s ");
+      outval(argaddr[ai],TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* for */
+    stgwrite("\tpush.s ");      /* "cur" is the first parameter -- pushed last */
+    outval(curaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    pushval((cell)(nuser+1)*sizeof(cell));
+    ffcall(gensym,NULL,nuser+1);
+
+    /* if (PRI == ITER_STOP) goto exit */
+    stgwrite("\tconst.alt ");
+    outval(iterstop,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tjeq ");
+    outval(wq[wqEXIT],TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+
+    /* cur = the returned next value (still in PRI) */
+    stgwrite("\tstor.s.pri ");
+    outval(curaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    /* bind the loop variable to the returned value */
+    if (loopsym->vclass==sLOCAL)
+      stgwrite("\tstor.s.pri ");
+    else
+      stgwrite("\tstor.pri ");
+    outval(iaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+
+    statement(NULL,FALSE);      /* the loop body; "i" is live here */
+
+    setlabel(wq[wqLOOP]);       /* "continue" lands here: cur is already updated */
+    jumplabel(lbl_cond);        /* re-call the generator for the next value */
+    setlabel(wq[wqEXIT]);
+    delwhile();
+
+    /* clean up the loop variable and the hidden cur/arg cells */
+    if (declared>save_decl) {
+      destructsymbols(&loctab,pc_nestlevel);
+      modstk((int)(declared-save_decl)*sizeof(cell));
+      testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);   /* look for unused block locals */
+      declared=save_decl;
+      delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
+    } /* if */
+    pc_nestlevel=save_nestlevel;
+    endlessloop=save_endlessloop;
+    return tFOREACH;
+  } /* if generator */
+
   oident=parse_foreach_operand(NULL,&operand_heap);
   if (oident==iARRAY || oident==iREFARRAY) {
     validarray=TRUE;            /* the row's base address is now in PRI */

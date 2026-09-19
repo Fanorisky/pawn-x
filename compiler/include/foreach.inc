@@ -29,3 +29,10 @@ native sethas(const array[], value);
 native setlen(const array[]);
 native setfree(const array[]);     // smallest non-negative integer not in the set
 native setrandom(const array[]);   // a random member, or -1 if empty
+
+/**
+ * Lazy generators (`iterfunc`): a function called once per iteration that
+ * returns the next value, or ITER_STOP to end. The first call receives
+ * cur == ITER_STOP (the seed). `set_foreach (new i : Gen(args))` drives it.
+ */
+const ITER_STOP = cellmin;
