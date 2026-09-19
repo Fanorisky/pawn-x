@@ -1,0 +1,18 @@
+{
+  'test_type': 'runtime',
+  'output': """
+v 5
+
+v 4
+
+v 3
+
+v 2
+
+v 1
+
+count=3
+
+foreach_reverse_saferemove.amx returns 0
+"""
+}

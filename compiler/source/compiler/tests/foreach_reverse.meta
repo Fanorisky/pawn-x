@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+v 3
+
+v 2
+
+v 1
+
+done
+
+foreach_reverse.amx returns 0
+"""
+}
