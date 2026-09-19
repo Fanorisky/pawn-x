@@ -29,8 +29,12 @@ keyword, which collides with YSI's `foreach` macro:
   commit (no pawn-x features, `sNAMEMAX`=31, which YSI requires):
   ```
   git worktree add /tmp/pawn-stock 461814d
-  cmake -S compiler/source/compiler -B /tmp/pawn-stock/build-stock \
-    -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-m32" && cmake --build ...
+  # NOTE: use the worktree's OWN source path (absolute). A relative
+  # `-S compiler/source/compiler` run from the repo root resolves to the
+  # MODIFIED compiler, which reserves `foreach` as a keyword and fails YSI
+  # with `error 020: invalid symbol name "foreach"` (y_iterate.inc:173).
+  cmake -S /tmp/pawn-stock/compiler/source/compiler -B /tmp/pawn-stock/build-stock \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-m32" && cmake --build /tmp/pawn-stock/build-stock -j$(nproc)
   /tmp/pawn-stock/build-stock/pawncc -d0 -Z+ \
     -i openmp/Server/qawno/include -i deps/amx_assembly -i ysi-5 \
     openmp/Server/gamemodes/bench_ysi.pwn -o .../bench_ysi
