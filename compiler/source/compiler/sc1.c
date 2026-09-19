@@ -6376,10 +6376,10 @@ static int doforeach(void)
     assert(strlen(str)<=sNAMEMAX);
     strcpy(varname,str);
   } else {
-    error(255,"\"foreach\" syntax requires \": <array>\" after the loop variable");
+    error(255,"\"set_foreach\" syntax requires \": <array>\" after the loop variable");
   } /* if */
   if (!hascolon && !matchtoken(':'))
-    error(255,"\"foreach\" syntax requires \": <array>\" after the loop variable");
+    error(255,"\"set_foreach\" syntax requires \": <array>\" after the loop variable");
 
   /* bind or declare the loop variable (always a scalar) */
   loopsym=NULL;
@@ -6424,7 +6424,7 @@ static int doforeach(void)
   if (oident==iARRAY || oident==iREFARRAY) {
     validarray=TRUE;            /* the row's base address is now in PRI */
   } else {
-    error(255,"\"foreach\" iterates over an array or iterator, not a value");
+    error(255,"\"set_foreach\" iterates over an array or iterator, not a value");
   } /* if */
   needtoken(')');
 

@@ -19,7 +19,7 @@ main()
 	setadd(data, 2);
 	setadd(data, 3);
 	setadd(data, 4);
-	foreach (new i : data)
+	set_foreach (new i : data)
 	{
 		if (i == 2)
 			setremove(data, 2);

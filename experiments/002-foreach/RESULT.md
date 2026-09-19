@@ -209,3 +209,14 @@ and YSI-compile patches: `experiments/002-foreach/bench/README.md`.
   open.mp component to benchmark fairly).
 - **AMX size:** native gamemode 940 B vs YSI 69.4 KB (~74×) — YSI's figure is
   its whole framework, which you must include to use its `foreach`.
+
+## Keyword renamed: `foreach` → `set_foreach` (2026-09-19)
+
+The native loop keyword is now **`set_foreach`**, not `foreach`. Reason:
+`foreach` collided with YSI's `foreach` macro — our compiler reserved it as a
+keyword, so YSI could not compile with our `pawncc` (`error 020: invalid symbol
+name "foreach"`). Renaming frees `foreach` for YSI, so **both coexist in one
+script / one compiler**: `set_foreach (new i : data)` for the native compact set
+alongside YSI's `foreach`. Proven: a script using `set_foreach` and defining a
+`foreach` macro + a `foreach` variable compiles and runs. All `set*` natives and
+tests updated; suite still 115 PASSED / 2 FAILED (known baselines).
