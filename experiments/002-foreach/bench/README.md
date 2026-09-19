@@ -98,3 +98,69 @@ Where native is expected to win (unmeasured on the server — the `set*` natives
 aren't registered there): `setadd`/`sethas` run as compiled C, versus YSI's
 `Iter_Add`/membership in interpreted Pawn bytecode. Measuring that fairly on the
 server would need shipping `set*` as an open.mp component/legacy plugin.
+
+## Add/contains benchmark (via legacy plugin)
+
+The follow-up above is now measured. The `set*` natives are registered on the
+real omp-server through a small open.mp **legacy plugin** (`iterset.so`), so
+`setadd`/`sethas` run as compiled C against YSI's `Iter_Add`/`Iter_Contains`
+(interpreted bytecode), same server, same workload.
+
+### The plugin
+
+`iterset.c` (kept alongside this README; built into `deps/iterset/iterset.so`,
+gitignored) is a 32-bit `.so` implementing the open.mp legacy-plugin ABI
+(`Supports` → `0x00010200`, `Load` grabs `amx_GetAddr`/`amx_Register` from the
+exports table at `ppData[16]` indices 13/33, `AmxLoad` calls `amx_Register`).
+The five natives are the compact-set logic copied **verbatim** from
+`compiler/source/amx/itercore.c`, with each `amx_GetAddr` routed through the
+pointer handed to `Load` (so the plugin links no amx.c). Build:
+```
+gcc -m32 -shared -fPIC -DLINUX \
+  -Icompiler/source/amx -Icompiler/source/linux \
+  deps/iterset/iterset.c -o deps/iterset/iterset.so
+```
+Deploy: copy to `openmp/Server/plugins/iterset.so`, set `config.json`
+`pawn.legacy_plugins` to `["iterset"]`. Probe (`plugin_probe.pwn`, our pawncc +
+`<foreach>`) confirmed it loads and resolves: `PROBE len=2 has7=1 has9=0`.
+
+### Workload
+
+Symmetric on both sides (`bench_native_ops.pwn` = our pawncc + `<foreach>`
+natives; `bench_ysi_ops.pwn` = stock pawncc + YSI, same flags/patches as above):
+- **add**: `ADDR=4000` rounds of `(reset + add 0..N-1)`, `N=400` →
+  1,600,000 add ops. `setinit`+`setadd` vs `Iter_Clear`+`Iter_Add`.
+- **has**: `HASR=4,000,000` membership queries, value cycling `0..N-1` (all
+  present). `sethas` vs `Iter_Contains`.
+
+### Results (min of 3, -d0)
+
+| op (server) | native (C plugin) | YSI y_iterate |
+|---|---|---|
+| add — 1.6M inserts | **33 ms** | 2415 ms |
+| has — 4M queries | **86 ms** | 93 ms |
+
+### Honest conclusion
+
+- **add**: native is ~73× faster (33 vs 2415 ms) — but read this with the
+  workload in mind. Inserting `0..N-1` in ascending order is the **best case for
+  the compact sorted set**: every `setadd` binary-searches to the end and
+  appends with zero tail-shift (O(log n), no memmove). YSI's index-set keeps a
+  sorted linked list, and ascending inserts are not similarly free for it. The
+  C-vs-bytecode gap is real and large, but this particular ordering flatters the
+  compact set; a randomized insertion order (which forces tail-shifts on the
+  native side) would narrow it. The direction (native wins add) is robust; the
+  73× magnitude is workload-specific.
+- **has**: essentially a **tie** (86 vs 93 ms). This is the surprise. Native
+  `sethas` is compiled C but O(log n) binary search *and* pays the AMX
+  native-call boundary (param marshalling) on every one of the 4M calls
+  (~21 ns/call). YSI `Iter_Contains` on an index-set is O(1) (the value *is* the
+  slot) and inlines as bytecode with no call boundary. The C speed advantage and
+  the native-call overhead roughly cancel, so "compiled C beats interpreted
+  Pawn" does **not** hold for membership here — the data model and the call
+  boundary matter more than C-vs-bytecode.
+
+Net: native wins the mutation-heavy `add` decisively (with the ordering caveat),
+and membership is a wash. Combined with the iteration result above (native walk
+~1.28× slower than YSI), neither side dominates across the board — each data
+model wins the operation that suits its shape.
