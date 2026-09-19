@@ -6463,50 +6463,61 @@ static int doforeach(void)
   lbl_cond=getlabel();
   setline(TRUE);
 
-  /* cnt = array[0] (the item count), or 0 when the operand was invalid */
+  /* Pointer walk: instead of an index "k" reloaded and index-scaled every
+   * iteration, keep a live pointer "p" (in kaddr) and a one-past-last pointer
+   * "pend" (in cntaddr). The set is compact -- array[0]=count, values in
+   * array[1..count] contiguously -- so p runs from &array[1] to &array[count+1]. */
   if (validarray) {
+    /* pend = base + (count+1)*cell */
     stgwrite("\tload.s.alt ");  /* ALT = cached base address of the array/row */
     outval(baseaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
     ldconst(0,sPRI);            /* PRI = index 0 */
     stgwrite("\tlidx\n");       /* PRI = [ALT + 0*cell] = array[0] = count */
     code_idx+=opcodes(1);
-  } else {
-    ldconst(0,sPRI);            /* degenerate loop: iterate nothing */
-  } /* if */
-  stgwrite("\tstor.s.pri ");    /* cnt = PRI */
-  outval(cntaddr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  ldconst(1,sPRI);              /* k = 1 (values live in array[1..count]) */
-  stgwrite("\tstor.s.pri ");
-  outval(kaddr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-
-  setlabel(lbl_cond);
-  /* if (k > cnt) leave the loop */
-  stgwrite("\tload.s.pri ");
-  outval(kaddr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tload.s.alt ");
-  outval(cntaddr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tsgrtr\n");        /* PRI = (k > cnt) ? 1 : 0 */
-  code_idx+=opcodes(1);
-  jmp_ne0(wq[wqEXIT]);
-
-  /* bind the loop variable to array[k] (the value) */
-  if (validarray) {
-    stgwrite("\tload.s.alt ");  /* ALT = cached base address of the array/row */
+    addconst(1);                /* PRI = count+1 */
+    stgwrite("\tload.s.alt ");  /* ALT = base address again */
     outval(baseaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tidxaddr\n");    /* PRI = ALT + (count+1)*cell = &array[count+1] = pend */
+    code_idx+=opcodes(1);
+    stgwrite("\tstor.s.pri ");  /* pend = PRI */
+    outval(cntaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    /* p = &array[1] = base + cell */
     stgwrite("\tload.s.pri ");
+    outval(baseaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    addconst((int)sizeof(cell)); /* PRI = base + cell = &array[1] */
+    stgwrite("\tstor.s.pri ");  /* p = PRI */
     outval(kaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
-    stgwrite("\tlidx\n");       /* PRI = [ALT + k*cell] = array[k] */
-    code_idx+=opcodes(1);
   } else {
+    /* degenerate loop: p == pend == 0 so the condition exits immediately */
     ldconst(0,sPRI);
+    stgwrite("\tstor.s.pri ");
+    outval(kaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tstor.s.pri ");
+    outval(cntaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
   } /* if */
+
+  setlabel(lbl_cond);
+  /* if (p >= pend) leave the loop -- fused compare+jump, keeps PRI = p */
+  stgwrite("\tload.s.pri ");    /* PRI = p */
+  outval(kaddr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.s.alt ");    /* ALT = pend */
+  outval(cntaddr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tjsgeq ");         /* if (p >= pend) jump exit (PRI/ALT preserved) */
+  outval(wq[wqEXIT],TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+
+  /* bind the loop variable to *p (the value); PRI still holds p */
+  stgwrite("\tload.i\n");       /* PRI = [p] = array value */
+  code_idx+=opcodes(1);
   if (loopsym->vclass==sLOCAL)
     stgwrite("\tstor.s.pri ");
   else
@@ -6516,12 +6527,11 @@ static int doforeach(void)
 
   statement(NULL,FALSE);        /* the loop body; "i" is live here */
 
-  setlabel(wq[wqLOOP]);         /* "continue" lands here: k++ */
+  setlabel(wq[wqLOOP]);         /* "continue" lands here: p += cell */
   stgwrite("\tload.s.pri ");
   outval(kaddr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tinc.pri\n");
-  code_idx+=opcodes(1);
+  addconst((int)sizeof(cell));  /* p += cell */
   stgwrite("\tstor.s.pri ");
   outval(kaddr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
