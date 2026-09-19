@@ -1,4 +1,4 @@
-/*  Iter_* compact-set natives (pawn-x experiment 002)
+/*  Compact-set natives (setinit/setadd/setremove/sethas/setlen) (pawn-x experiment 002)
  *
  *  Copyright (c) ITB CompuPhase, 1997-2016
  *  Modified for pawn-x (https://github.com/Fanorisky/pawn-x)
@@ -34,7 +34,7 @@
  *  NOT bound-check inserts. The caller must size the array for the number
  *  of values it will hold; a `new X[cap]` set holds up to cap-1 values
  *  (slot 0 is the count). Follow-up: a compiler extension could pass the
- *  array size so `Iter_Add` can reject a full set.
+ *  array size so `setadd` can reject a full set.
  */
 
 #include "amx.h"
@@ -58,7 +58,7 @@ static int compact_search(cell *arr,int value)
   return lo;
 }
 
-/* Iter_Init(array[]) - reset the set to empty */
+/* setinit(array[]) - reset the set to empty */
 static cell AMX_NATIVE_CALL iter_init(AMX *amx,const cell *params)
 {
   cell *arr;
@@ -68,7 +68,7 @@ static cell AMX_NATIVE_CALL iter_init(AMX *amx,const cell *params)
   return 0;
 }
 
-/* Iter_Add(array[], value) - insert, returns 1 if added, 0 if the value
+/* setadd(array[], value) - insert, returns 1 if added, 0 if the value
  * was already present or negative. V1 does NOT bound-check against the
  * array capacity (see the range limitation in the file header): the
  * caller must size the array for the number of values it will hold. */
@@ -97,7 +97,7 @@ static cell AMX_NATIVE_CALL iter_add(AMX *amx,const cell *params)
   return 1;
 }
 
-/* Iter_Remove(array[], value) - remove, returns 1 if removed, 0 if absent */
+/* setremove(array[], value) - remove, returns 1 if removed, 0 if absent */
 static cell AMX_NATIVE_CALL iter_remove(AMX *amx,const cell *params)
 {
   cell *arr;
@@ -119,7 +119,7 @@ static cell AMX_NATIVE_CALL iter_remove(AMX *amx,const cell *params)
   return 1;
 }
 
-/* Iter_Contains(array[], value) - returns 1 if present, 0 otherwise */
+/* sethas(array[], value) - returns 1 if present, 0 otherwise */
 static cell AMX_NATIVE_CALL iter_contains(AMX *amx,const cell *params)
 {
   cell *arr;
@@ -133,7 +133,7 @@ static cell AMX_NATIVE_CALL iter_contains(AMX *amx,const cell *params)
   return (pos<=count && arr[pos]==value) ? 1 : 0;
 }
 
-/* Iter_Count(array[]) - returns the number of in-use items */
+/* setlen(array[]) - returns the number of in-use items */
 static cell AMX_NATIVE_CALL iter_count(AMX *amx,const cell *params)
 {
   cell *arr;
@@ -144,10 +144,10 @@ static cell AMX_NATIVE_CALL iter_count(AMX *amx,const cell *params)
 
 /* the native table; registered by pawnruns (the test runner) via amx_Register. */
 const AMX_NATIVE_INFO iter_Natives[] = {
-  { "Iter_Init",     iter_init },
-  { "Iter_Add",      iter_add },
-  { "Iter_Remove",   iter_remove },
-  { "Iter_Contains", iter_contains },
-  { "Iter_Count",    iter_count },
+  { "setinit",     iter_init },
+  { "setadd",      iter_add },
+  { "setremove",   iter_remove },
+  { "sethas", iter_contains },
+  { "setlen",    iter_count },
   { NULL, NULL }     /* terminator */
 };

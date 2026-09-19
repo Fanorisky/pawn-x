@@ -9,20 +9,20 @@
  *  sorted set of distinct non-negative values:
  *
  *    new data[cap];
- *    Iter_Init(data);
- *    Iter_Add(data, 7);
+ *    setinit(data);
+ *    setadd(data, 7);
  *    foreach (new i : data)
  *    {
  *        printf("value %d\n", i);   // prints each value once, ascending
  *    }
  *
  *  Layout: data[0] holds the count, data[1..count] the sorted values.
- *  `foreach` is a keyword; `Iter_*` are natives.
+ *  `foreach` is a keyword; `set*` (setinit/setadd/setremove/sethas/setlen) are natives.
  * </library>
  */
 
-native Iter_Init(const array[]);
-native Iter_Add(const array[], value);
-native Iter_Remove(const array[], value);
-native Iter_Contains(const array[], value);
-native Iter_Count(const array[]);
+native setinit(const array[]);
+native setadd(const array[], value);
+native setremove(const array[], value);
+native sethas(const array[], value);
+native setlen(const array[]);

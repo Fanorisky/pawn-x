@@ -5,14 +5,14 @@ new sets[3][8];   // 3 independent compact sets sharing one 2D array
 
 main()
 {
-	Iter_Init(sets[0]);
-	Iter_Init(sets[1]);
-	Iter_Init(sets[2]);
-	Iter_Add(sets[0], 42);
-	Iter_Add(sets[0], 7);
-	Iter_Add(sets[2], 5);
-	Iter_Add(sets[2], 3);
-	Iter_Add(sets[2], 9);
+	setinit(sets[0]);
+	setinit(sets[1]);
+	setinit(sets[2]);
+	setadd(sets[0], 42);
+	setadd(sets[0], 7);
+	setadd(sets[2], 5);
+	setadd(sets[2], 3);
+	setadd(sets[2], 9);
 	/* iterate a subscripted row (the "wild" operand) */
 	foreach (new i : sets[0])
 	{
