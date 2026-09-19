@@ -12,10 +12,10 @@ GetSet()
 
 main()
 {
-	Iter_Init(gset);
-	Iter_Add(gset, 5);
-	Iter_Add(gset, 2);
-	Iter_Add(gset, 8);
+	setinit(gset);
+	setadd(gset, 5);
+	setadd(gset, 2);
+	setadd(gset, 8);
 	/* iterate the array-returning function directly, many times: if the
 	 * per-loop temporary leaked the heap would march up and eventually
 	 * collide with the stack; stable output across passes proves it is freed */

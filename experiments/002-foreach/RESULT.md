@@ -11,7 +11,7 @@ Moving YSI `y_foreach` / `y_iterate` from a macro-and-linked-list script
 layer into the compiler: a real `foreach` loop keyword with codegen, a
 compiler-managed compact-set data layout, and native `Iter_*` functions
 that maintain that layout. Replaces YSI's circular sorted linked-list
-(`F@`/`Y_FOREACH_` obfuscated macros) and its `Iter_Add/Remove/Contains`
+(`F@`/`Y_FOREACH_` obfuscated macros) and its `setadd/Remove/Contains`
 stock functions.
 
 Four pieces were built across the feature commits (`ee8a84e` probe,
@@ -25,12 +25,12 @@ keyword+codegen):
    in the sorted run.
 
 2. **Five natives** in `compiler/source/amx/itercore.c`:
-   `Iter_Init/Add/Remove/Contains/Count`. All are **reference-based** —
+   `setinit/Add/Remove/Contains/Count`. All are **reference-based** —
    they take the array by reference (`const array[]`), not by name,
    because public arrays are forbidden (error 056), so a name-based API
-   was infeasible. `Iter_Add` binary-inserts at the sorted position and
-   shifts the tail; `Iter_Remove` shifts the tail left; `Iter_Contains`
-   scans the run; `Iter_Count` returns `array[0]`.
+   was infeasible. `setadd` binary-inserts at the sorted position and
+   shifts the tail; `setremove` shifts the tail left; `sethas`
+   scans the run; `setlen` returns `array[0]`.
 
 3. **`foreach` keyword** → `doforeach()` in `sc1.c` (declared line 135,
    dispatched at `tFOREACH` line 5779, defined line 6339). It emits an
@@ -93,12 +93,12 @@ The `<foreach>` header (`compiler/include/foreach.inc`) exposes the five
 
 ## What broke
 
-- **Name-based API was infeasible.** The spec sketched `Iter_Add(MySet, v)`
+- **Name-based API was infeasible.** The spec sketched `setadd(MySet, v)`
   passing the set by name; public arrays are forbidden (error 056), so the
   API was reworked to reference-based (`const array[]`). Contract tests
   were updated accordingly (`6137c13`).
 
-- **`Iter_Add` initially overwrote slot 1** instead of inserting at the
+- **`setadd` initially overwrote slot 1** instead of inserting at the
   sorted position, breaking the ascending/distinct invariant; fixed in
   `7a8dc1e` (binary-insert + tail shift), which also reconciled the
   capacity docs.
@@ -112,7 +112,7 @@ The `<foreach>` header (`compiler/include/foreach.inc`) exposes the five
 
 Known limitations (accepted, documented honestly):
 
-- **No capacity bound-check in `Iter_Add`** (V1): arrays are passed by
+- **No capacity bound-check in `setadd`** (V1): arrays are passed by
   reference without a size, so an add past capacity is unguarded. A
   size-carrying API or a compiler-tracked capacity is the fix.
 - **Only the global-array `foreach` path is suite-tested.** The
@@ -121,7 +121,7 @@ Known limitations (accepted, documented honestly):
 - **Count is snapshotted at loop entry** (standard `foreach` semantics):
   adds/removes during the loop are not re-read. `foreach_remove_during`
   pins the remove+break behavior; `foreach_remove_nobreak` pins the
-  ACTUAL remove-without-break behavior — a mid-walk `Iter_Remove` shifts
+  ACTUAL remove-without-break behavior — a mid-walk `setremove` shifts
   the tail left, so one value is skipped and another emitted twice.
   Mutating the set mid-walk without breaking is unsupported and now
   documented by that test.
@@ -140,8 +140,8 @@ machinery:
 
 ```pawn
 new sets[3][8];              // 3 independent compact sets, one contiguous alloc
-Iter_Add(sets[0], 42);
-Iter_Add(sets[2], 3);
+setadd(sets[0], 42);
+setadd(sets[2], 3);
 foreach (new i : sets[0]) { ... }   // iterate row 0 only
 new k = 2;
 foreach (new j : sets[k]) { ... }   // computed index, evaluated once at entry
@@ -174,7 +174,7 @@ as a follow-up.
 
 - **Early-return heap cleanup** for heap-operand `foreach` (the deferred
   limitation above).
-- **Capacity bound-check** in `Iter_Add` (size-aware API or
+- **Capacity bound-check** in `setadd` (size-aware API or
   compiler-tracked capacity) to close the V1 unguarded-add gap.
 - **Tests for the local `iARRAY` and by-ref `iREFARRAY` foreach paths**
   (the multi-set extension now exercises subscripted `iREFARRAY` rows,

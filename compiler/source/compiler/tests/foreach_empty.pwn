@@ -5,7 +5,7 @@ new data[8];
 
 main()
 {
-	Iter_Init(data);
+	setinit(data);
 	foreach (new i : data)
 	{
 		printf("val %d\n", i);

@@ -58,15 +58,15 @@ hr_remove(value)
 main()
 {
 	// Same add/remove sequence applied to BOTH sets.
-	Iter_Init(nat);
-	Iter_Add(nat, 20);
-	Iter_Add(nat, 7);
-	Iter_Add(nat, 30);
-	Iter_Add(nat, 7);			// duplicate -> no growth
-	Iter_Add(nat, 3);
-	Iter_Remove(nat, 20);		// remove present
-	Iter_Add(nat, 15);
-	Iter_Remove(nat, 999);		// remove absent -> no-op
+	setinit(nat);
+	setadd(nat, 20);
+	setadd(nat, 7);
+	setadd(nat, 30);
+	setadd(nat, 7);			// duplicate -> no growth
+	setadd(nat, 3);
+	setremove(nat, 20);		// remove present
+	setadd(nat, 15);
+	setremove(nat, 999);		// remove absent -> no-op
 
 	hr_add(20);
 	hr_add(7);
@@ -124,5 +124,5 @@ main()
 		i++;
 	}
 	printf("MATCH=%d\n", ok);
-	printf("native count=%d handroll count=%d\n", Iter_Count(nat), hr_count);
+	printf("native count=%d handroll count=%d\n", setlen(nat), hr_count);
 }
