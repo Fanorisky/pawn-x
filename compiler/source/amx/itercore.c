@@ -184,7 +184,7 @@ static cell AMX_NATIVE_CALL iter_random(AMX *amx,const cell *params)
 
 /* setget(array[], index) - returns the value at 0-based ordinal `index` in
  * ascending order (index 0 is the smallest member), or -1 if index is out of
- * [0, count). O(1) random access the walk-based set_foreach does not give. */
+ * [0, count). O(1) random access the walk-based foreach does not give. */
 static cell AMX_NATIVE_CALL iter_get(AMX *amx,const cell *params)
 {
   cell *arr;

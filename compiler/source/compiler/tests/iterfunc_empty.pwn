@@ -12,7 +12,7 @@ iterfunc Range(cur, lo, hi)
 
 main()
 {
-	set_foreach (new i : Range(5, 5))   // empty: lo >= hi -> body never runs
+	foreach (new i : Range(5, 5))   // empty: lo >= hi -> body never runs
 	{
 		printf("v %d\n", i);
 	}

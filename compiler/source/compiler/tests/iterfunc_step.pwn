@@ -21,7 +21,7 @@ main()
 {
 	// the step arg is a function call: it must be evaluated ONCE (cached),
 	// not once per iteration
-	set_foreach (new i : RangeStep(0, 10, step_arg()))   // 0 2 4 6 8
+	foreach (new i : RangeStep(0, 10, step_arg()))   // 0 2 4 6 8
 	{
 		printf("v %d\n", i);
 	}

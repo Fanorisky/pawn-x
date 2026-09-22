@@ -1,6 +1,6 @@
 {
   'test_type': 'output_check',
   'errors': """
-foreach_reject_scalar.pwn(11) : error 255: "set_foreach" iterates over an array or iterator, not a value
+foreach_reject_scalar.pwn(11) : error 255: "foreach" iterates over an array or iterator, not a value
 """
 }

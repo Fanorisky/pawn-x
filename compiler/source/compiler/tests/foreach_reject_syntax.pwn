@@ -7,7 +7,7 @@ main()
 {
 	setinit(data);
 	setadd(data, 1);
-	set_foreach (new i data)
+	foreach (new i data)
 	{
 		printf("%d\n", i);
 	}

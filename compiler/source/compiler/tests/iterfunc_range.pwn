@@ -12,7 +12,7 @@ iterfunc Range(cur, lo, hi)
 
 main()
 {
-	set_foreach (new i : Range(0, 5))
+	foreach (new i : Range(0, 5))
 	{
 		printf("v %d\n", i);
 	}

@@ -18,12 +18,12 @@ main()
 	setadd(active, v1);
 	setadd(active, v2);
 
-	// nested set_foreach: for each active vehicle walk its player set,
+	// nested foreach: for each active vehicle walk its player set,
 	// the inner operand indexed by the OUTER loop variable
-	set_foreach (new v : active)
+	foreach (new v : active)
 	{
 		printf("veh %d len %d\n", v, setlen(veh[v]));
-		set_foreach (new p : veh[v])
+		foreach (new p : veh[v])
 			printf("  p %d\n", p);
 	}
 
