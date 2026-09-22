@@ -3,6 +3,13 @@
 #endif
 #define _INC_foreach
 
+// pawn-x reserves `foreach` as a compiler KEYWORD, so it cannot coexist with
+// YSI's `foreach` macro. If YSI's iterator lib was included first, stop now with
+// a clear message instead of a cryptic keyword clash deeper in the build.
+#if defined _inc_y_iterate || defined FOREACH_VERSION || defined _Y_ITERATE_LOCAL_VERSION
+	#error pawn-x <foreach> conflicts with YSI y_iterate/y_foreach: pawn-x reserves `foreach` as a native keyword. Include one or the other, not both (pawn-x is a standalone replacement for YSI's iterators).
+#endif
+
 /**
  * <library name="foreach">
  *  Native compact-set iteration. A script global array is used as a

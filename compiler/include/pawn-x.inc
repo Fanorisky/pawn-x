@@ -3,6 +3,17 @@
 #endif
 #define _INC_pawn_x
 
+// pawn-x is a standalone REPLACEMENT for YSI's script-side layer, not a
+// co-resident: it reserves `foreach`/`hook` as compiler keywords and provides
+// its own varargs/iterator/hook stack. Detect a YSI include and stop early with
+// a clear message (the per-feature includes below also guard themselves).
+#if defined YSI_VERSION || defined _INC_y_va || defined _inc_y_iterate || defined _INC_y_hooks
+	#error pawn-x cannot be used alongside YSI: it replaces YSI's y_va / y_iterate / y_hooks and reserves `foreach` and `hook` as native keywords. Remove the YSI includes, or the pawn-x ones — do not mix them.
+#endif
+
+// marker other code can test for (e.g. `#if defined _PAWN_X`)
+#define _PAWN_X
+
 /**
  * <library name="pawn-x">
  *  Umbrella include for the pawn-x native language features — one include for
