@@ -213,7 +213,8 @@ static char *warnmsg[] = {
 /*252*/  "variable has its value modified but never used: \"%s\"\n",
 /*253*/  "\"___\" used in a function without variable arguments (\"...\")\n",
 /*254*/  "\"___\" used in a position that does not accept variable arguments\n",
-/*255*/  "%s\n"
+/*255*/  "%s\n",
+/*256*/  "hooks for callback \"%s\" must all have the same argument signature\n"
 };
 
 static char *noticemsg[] = {
