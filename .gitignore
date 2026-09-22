@@ -4,6 +4,7 @@ openmp/
 
 # Build artifacts
 build/
+dist/
 *.o
 *.a
 *.so
