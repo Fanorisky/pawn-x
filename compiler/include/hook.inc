@@ -3,6 +3,12 @@
 #endif
 #define _INC_hook
 
+// pawn-x reserves `hook` as a compiler KEYWORD, so it cannot coexist with YSI's
+// `hook` macro. If YSI y_hooks was included first, fail early and clearly.
+#if defined _INC_y_hooks || defined Y_HOOKS_CONTINUE_RETURN_1
+	#error pawn-x <hook> conflicts with YSI y_hooks: pawn-x reserves `hook` as a native keyword. Include one or the other, not both (pawn-x is a standalone replacement for YSI's hooks).
+#endif
+
 /**
  * <library name="hook">
  *  Native single-unit multi-hook support (pawn-x experiment 004).
