@@ -1,0 +1,20 @@
+{
+  'test_type': 'runtime',
+  'output': """
+veh 1 len 3
+
+  p 2
+
+  p 5
+
+  p 9
+
+veh 2 len 1
+
+  p 7
+
+after len1=2 len2=1 has9=1
+
+set_multidim.amx returns 0
+"""
+}

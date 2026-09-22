@@ -115,3 +115,28 @@ compiles and runs (test `varargs_forward_format`), and a function can format
 into a local buffer and return it. `va_return` exists in YSI only because stock
 Pawn cannot forward `...`; with `___` it is unnecessary. No new native needed —
 exp 001 fully supersedes y_va.
+
+### Multi-dimensional / nested sets — already closed by construction
+The last `y_iterate` gap (its `Iterator:Name[OUTER]<INNER>` — one independent
+set per outer key, e.g. players-per-vehicle) needs **no new code**. The
+compact-set model plus `parse_foreach_operand` (exp 002, sc3.c) already accept a
+subscripted row:
+
+```pawn
+new veh[3][8];              // 3 independent sets, up to 7 members each
+setadd(veh[v], playerid);   // row address decays like any array arg
+set_foreach (new p : veh[v]) { ... }   // runtime-indexed row operand
+```
+
+Verified by test `set_multidim`: **nested** `set_foreach` (outer over a key
+set, inner over a row indexed by the outer loop variable), runtime (non-const)
+row indices, and cross-row independence (removing from one row leaves the others
+intact). Passing `grid[k]` to every `set*` native works because the natives take
+a plain array reference and `parse_foreach_operand` leaves the row's address in
+PRI exactly as an array argument is materialized. This closes the last
+pure-compiler gap against `y_iterate`.
+
+**All four native features now match-or-beat their YSI counterpart on the
+compile-time side**; the only remaining YSI capabilities are genuinely
+runtime-only (hook add/remove/replace, timers) and belong to the companion
+plugin pillar, not the compiler.
