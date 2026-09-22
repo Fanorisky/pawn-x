@@ -92,10 +92,16 @@ Per the user's choice this is done the **portable** way (works on SA-MP
 - **`dynhook_intercept(const callback[])`** marks a callback name. On `AmxLoad`
   the plugin builds a per-AMX public-index → name table (`amx_NumPublics` +
   `amx_GetPublic`), so `Exec_hook` can map an incoming call index back to a name.
-- On a marked call: capture the args (`paramcount` cells at `STK`), run the
-  original body unchanged, then dispatch the runtime chain with the same args
-  (fresh push+exec per handler). All internal dispatch uses the subhook
+- On a marked call: capture the args (`paramcount` cells at `STK`), then run the
+  runtime chain as a **PRE-hook** — handlers in registration order, BEFORE the
+  original — honouring the same chain control as the compiler `hook`
+  (`HOOK_CONTINUE` 1/0 → next handler; `HOOK_STOP` -1 → cancel, callback returns
+  0; `HOOK_STOP_1` -2 → cancel, returns 1). If no handler stops, the original
+  body runs last with its args intact. All internal dispatch uses the subhook
   **trampoline** (never re-entering the hook); a guard covers nested host calls.
+  Stack discipline is verified against `amx.c:1982` (`reset_stk += paramcount*cell`):
+  on a stop we emulate amx_Exec's cleanup ourselves (`STK = S + n*cell`,
+  `paramcount = 0`, `*retval` = the stop value) so the VM stack stays consistent.
 
 ### Live proof (`dyntest_b.pwn`, on the real server)
 
@@ -104,12 +110,12 @@ Loading plugin: dynhook
 [B] fire#1 no handlers -> original only
   OnThing.original a=1
 [B] fire#2 +ExtraA +ExtraB -> original + both (OnThing wired nothing)
-  OnThing.original a=2
-  ExtraA a=2                   <- handlers fire TRANSPARENTLY; OnThing wired nothing
+  ExtraA a=2                   <- handlers fire TRANSPARENTLY (pre), OnThing wired nothing
   ExtraB a=2
+  OnThing.original a=2
 [B] fire#3 removed ExtraA -> original + ExtraB
-  OnThing.original a=3
-  ExtraB a=3                   <- runtime REMOVE took effect
+  ExtraB a=3
+  OnThing.original a=3         <- runtime REMOVE took effect (ExtraA gone)
 [DONE] dynB
 ```
 
@@ -117,12 +123,29 @@ Loading plugin: dynhook
 fire when it runs, and `dynhook_remove` takes effect between calls — full
 transparent interception, portable across both hosts, no bytecode rewriting.
 
-### Honest limits of Phase B v1
+### Pre-hook + cancel/replace (`dyntest_c.pwn`)
 
-- **Post-hook only**: handlers run *after* the original and cannot suppress it
-  (no pre-hook chain-`STOP` yet). This is deliberate — it avoids live AMX-stack
-  surgery (re-pushing over the host's frame + `paramcount` juggling), the part
-  that most easily corrupts the VM. Pre-hook + stop-control is a v2 refinement.
+Handlers run before the original and can cancel it via chain control:
+
+```
+[C] t0 no handlers -> original only
+  ORIGINAL OnAct a=1
+[C] t1 PreLog (pre) then original
+  pre PreLog a=2
+  ORIGINAL OnAct a=2           <- PreLog returned HOOK_CONTINUE, original still runs
+[C] t2 PreLog, then Veto cancels -> original NOT run
+  pre PreLog a=3
+  pre Veto a=3 CANCEL          <- Veto returned HOOK_STOP
+[C] returned 0 (expect 0 from HOOK_STOP)   <- original suppressed, callback returned 0
+[DONE] dynC
+```
+
+`HOOK_STOP` cancels the original and sets the callback's return value — the
+"replace" half of `DEFINE_HOOK_REPLACEMENT`, at runtime, verified live with no
+VM corruption (the stop path does the amx_Exec stack cleanup by hand).
+
+### Scope notes
+
 - Handlers resolve in the **same AMX** that fired the callback (the common
   case; the host already dispatches callbacks to every script anyway).
 - `subhook` inline-hooks `amx_Exec` process-wide; coexisting with other plugins
@@ -142,7 +165,8 @@ The whole pawn-x stack now runs on **both** hosts from one build.
 
 ## Files
 `dynhook.cpp` (Phase A + B, tracked), `dyntest.pwn` (Phase A proof),
-`dyntest_b.pwn` (Phase B proof), `compiler/include/dynhook.inc`. Built `.so`
+`dyntest_b.pwn` (Phase B transparent-interception proof), `dyntest_c.pwn`
+(pre-hook + cancel/replace proof), `compiler/include/dynhook.inc`. Built `.so`
 lives under gitignored `openmp/Server/plugins/`; `deps/subhook/` is likewise
 gitignored (clone a mirror). Rebuild:
 ```

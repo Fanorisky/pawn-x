@@ -16,10 +16,11 @@ disable admin logging, all at runtime.
   interception).
 - `compare2_ysi.pwn` — stock pawncc + YSI 5. Uses `hook OnEvent(a)` bodies.
 
-## Observable result: identical handler-firing sequence
+## Observable result: same handler SET fires per tick
 
-Both print the **same handlers per tick** (verified by diffing the indented
-handler lines):
+Both fire the **same handlers each tick** (the runtime chain is a PRE-hook, so
+native runs the added handlers just before `base`; YSI runs `base` first because
+it is the first compiled `hook` body — order differs, membership is identical):
 
 | tick | handlers that fire |
 |---|---|
