@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+P100 7
+
+P10 7
+
+P0a 7
+
+P0b 7
+
+Pneg 7
+
+hook_priority.amx returns 0
+"""
+}

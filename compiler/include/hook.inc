@@ -38,6 +38,14 @@
  *  calls the hidden per-hook functions with plain push/call/branch. No runtime
  *  bytecode scanning, no new opcodes. Cross-.amx hook chaining is out of scope
  *  (the host already dispatches callbacks to every script).
+ *
+ *  Ordering: hooks run in source order by default. Prefix a priority to override
+ *  it without relying on include order:
+ *
+ *    hook:100 OnPlayerConnect(playerid) { ... }   // runs earlier
+ *    hook:-10 OnPlayerConnect(playerid) { ... }    // runs later
+ *
+ *  Higher priority runs first; equal priority (default 0) keeps source order.
  * </library>
  */
 

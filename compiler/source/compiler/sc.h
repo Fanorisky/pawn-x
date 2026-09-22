@@ -173,6 +173,7 @@ typedef struct s_hookgroup {
   int argcount;                 /* argument count of the first hook (shared signature) */
   int tag;                      /* result tag of the first hook (dispatcher's tag) */
   symbol **hooks;               /* ordered hidden-hook symbols (source order) */
+  int *prio;                    /* parallel priority per hook (higher runs first; default 0) */
 } hookgroup;
 
 
