@@ -1792,7 +1792,7 @@ static int pc_iterfunc=FALSE;
  * current parse pass, plus the routines that register a hook and synthesise the
  * dispatchers at end-of-parse. See the hookgroup comment in sc.h. */
 static hookgroup *hook_registry=NULL;
-static void hook_register(const char *callback,symbol *hidden,int argcount,int tag);
+static void hook_register(const char *callback,symbol *hidden,int argcount,int tag,int prio);
 static void dohook(void);
 
 /*  parse       - process all input text
@@ -1955,6 +1955,7 @@ static void hook_reset(void)
   for (grp=hook_registry; grp!=NULL; grp=next) {
     next=grp->next;
     free(grp->hooks);
+    free(grp->prio);
     free(grp);
   } /* for */
   hook_registry=NULL;
@@ -1983,7 +1984,7 @@ static int hook_argshape_match(arginfo *a,arginfo *b)
 /*  hook_register - record a hidden hook function for callback "callback", in
  *  source order. The first hook of a callback fixes the shared signature; a
  *  later hook whose argument list differs in count or shape is an error (256). */
-static void hook_register(const char *callback,symbol *hidden,int argcount,int tag)
+static void hook_register(const char *callback,symbol *hidden,int argcount,int tag,int prio)
 {
   hookgroup *grp=hook_find(callback);
   if (grp==NULL) {
@@ -1999,7 +2000,10 @@ static void hook_register(const char *callback,symbol *hidden,int argcount,int t
     grp->tag=tag;
     grp->capacity=4;
     grp->hooks=(symbol**)malloc(grp->capacity*sizeof(symbol*));
-    if (grp->hooks==NULL) {
+    grp->prio=(int*)malloc(grp->capacity*sizeof(int));
+    if (grp->hooks==NULL || grp->prio==NULL) {
+      free(grp->hooks);
+      free(grp->prio);
       free(grp);
       error(103);               /* insufficient memory */
       return;
@@ -2014,15 +2018,21 @@ static void hook_register(const char *callback,symbol *hidden,int argcount,int t
       error(256,callback);      /* hooks for one callback must share a signature */
     if (grp->count>=grp->capacity) {
       symbol **grown;
+      int *grownp;
       grp->capacity*=2;
       grown=(symbol**)realloc(grp->hooks,grp->capacity*sizeof(symbol*));
-      if (grown==NULL) {
+      grownp=(int*)realloc(grp->prio,grp->capacity*sizeof(int));
+      if (grown!=NULL)
+        grp->hooks=grown;
+      if (grownp!=NULL)
+        grp->prio=grownp;
+      if (grown==NULL || grownp==NULL) {
         error(103);             /* insufficient memory */
         return;
       } /* if */
-      grp->hooks=grown;
     } /* if */
   } /* if */
+  grp->prio[grp->count]=prio;
   grp->hooks[grp->count++]=hidden;
 }
 
@@ -2041,9 +2051,25 @@ static void dohook(void)
                                  * length check below; seq may be many digits */
   cell val;
   char *str;
-  int tok,seq,argcount;
+  int tok,seq,argcount,prio;
   symbol *hsym;
   hookgroup *grp;
+
+  /* optional priority: "hook:N Name(...)" or "hook:-N Name(...)". Higher N runs
+   * earlier in the chain; equal priority keeps source order; default is 0. This
+   * lets independent includes order their hooks without relying on include order
+   * (pawn-x's answer to YSI's PRE_HOOK/CHAIN_ORDER, with no bytecode scan). */
+  prio=0;
+  if (matchtoken(':')) {
+    int neg=matchtoken('-');
+    tok=lex(&val,&str);
+    if (tok!=tNUMBER) {
+      error(1,"-integer-",str);   /* expected a priority number after "hook:" */
+      lexclr(TRUE);
+      return;
+    } /* if */
+    prio= neg ? -(int)val : (int)val;
+  } /* if */
 
   tok=lex(&val,&str);
   if (tok!=tSYMBOL) {
@@ -2090,7 +2116,7 @@ static void dohook(void)
   argcount=0;
   while (hsym->dim.arglist[argcount].ident!=0)
     argcount++;
-  hook_register(callback,hsym,argcount,hsym->tag);
+  hook_register(callback,hsym,argcount,hsym->tag,prio);
 }
 
 /*  hook_free_arglist - deep-free an argument list previously built by
@@ -2198,6 +2224,21 @@ static void hook_emit_dispatchers(void)
     disp=fetchfunc(grp->name,grp->tag);
     if (disp==NULL)
       continue;
+    /* order the chain by priority (higher first), stable so equal priorities
+     * keep source order. Done identically in both passes -> the dispatcher emits
+     * its calls in the same order each pass, so addresses stay consistent. */
+    for (i=1; i<grp->count; i++) {
+      symbol *hs=grp->hooks[i];
+      int hp=grp->prio[i];
+      int j=i-1;
+      while (j>=0 && grp->prio[j]<hp) {   /* strict < keeps equal-priority order */
+        grp->hooks[j+1]=grp->hooks[j];
+        grp->prio[j+1]=grp->prio[j];
+        j--;
+      } /* while */
+      grp->hooks[j+1]=hs;
+      grp->prio[j+1]=hp;
+    } /* for */
     /* the dispatcher is the public implementation of the callback */
     disp->usage|=uPUBLIC|uDEFINE|uPROTOTYPED;
     if (grp->tag!=0)
