@@ -209,10 +209,22 @@ static cell AMX_NATIVE_CALL n_intercept(AMX *amx, const cell *params)
 }
 
 /* The amx_Exec inline hook. Every public the host runs passes through here.
- * If the called public is a marked interception target, we run the original and
- * then dispatch the runtime chain with the same arguments (post-hook). All of
- * our own dispatch goes through the trampoline (g_Exec), never re-entering this
- * hook; a guard covers any nested host call a handler might trigger. */
+ * For a marked interception target we run the runtime chain as a PRE-hook — in
+ * registration order, BEFORE the original — so a handler can cancel or replace
+ * the original via chain control (same constants as the compiler `hook`):
+ *   HOOK_CONTINUE (1) / HOOK_CONTINUE_0 (0) -> run the next handler,
+ *   HOOK_STOP (-1) -> stop, callback returns 0, original is NOT run,
+ *   HOOK_STOP_1 (-2) -> stop, callback returns 1, original is NOT run.
+ * If no handler stops, the original body runs last with its args intact. All of
+ * our own dispatch uses the trampoline (g_Exec), never re-entering this hook; a
+ * guard covers any nested host call a handler might trigger.
+ *
+ * Stack discipline (verified against amx.c:1982 `reset_stk += paramcount*cell`):
+ * amx_Exec restores STK to entry_stk + n*cell on return. We capture the n args
+ * at entry (STK = S), dispatch each handler with a fresh push (paramcount reset,
+ * handler exec restores STK to S), then either let the original run (paramcount
+ * = n, args still at S) or, on stop, emulate amx_Exec's cleanup ourselves
+ * (STK = S + n*cell, paramcount = 0, *retval = stop value). */
 static int AMXAPI Exec_hook(AMX *amx, cell *retval, int index)
 {
   if (g_inDispatch || index < 0)          /* AMX_EXEC_MAIN/CONT + our own dispatch */
@@ -225,35 +237,50 @@ static int AMXAPI Exec_hook(AMX *amx, cell *retval, int index)
   if (name.empty() || g_intercept.find(name) == g_intercept.end())
     return g_Exec(amx, retval, index);
 
-  /* capture the arguments BEFORE the original runs (paramcount cells at STK) */
+  std::map<std::string, std::vector<std::string> >::iterator ci = g_chains.find(name);
+  if (ci == g_chains.end() || ci->second.empty())
+    return g_Exec(amx, retval, index);   /* intercepted but no handlers: passthrough */
+
+  /* capture the args (paramcount cells at STK = S), BEFORE running anything */
   int n = amx->paramcount;
+  cell S = amx->stk;
   std::vector<cell> saved(n > 0 ? n : 0);
   AMX_HEADER *hdr = (AMX_HEADER *)amx->base;
   unsigned char *data = amx->data ? amx->data : amx->base + (uintptr_t)hdr->dat;
   for (int i = 0; i < n; i++)
-    saved[i] = *(cell *)(data + (uintptr_t)amx->stk + (uintptr_t)i * sizeof(cell));
+    saved[i] = *(cell *)(data + (uintptr_t)S + (uintptr_t)i * sizeof(cell));
 
-  /* run the original callback body unchanged */
-  int err = g_Exec(amx, retval, index);
-
-  /* then fire the runtime chain with the same args (snapshot so a handler may
-   * add/remove/replace safely); each handler is a fresh, clean push+exec */
-  std::map<std::string, std::vector<std::string> >::iterator ci = g_chains.find(name);
-  if (ci != g_chains.end() && !ci->second.empty()) {
-    std::vector<std::string> chain = ci->second;
-    g_inDispatch++;
-    for (size_t h = 0; h < chain.size(); h++) {
-      int hi = -1;
-      if (g_FindPublic(amx, chain[h].c_str(), &hi) != 0)
-        continue;
-      for (int i = n - 1; i >= 0; i--)     /* push reverse -> declared order */
-        g_Push(amx, saved[i]);
-      cell r = 0;
-      g_Exec(amx, &r, hi);
-    }
-    g_inDispatch--;
+  /* PRE-hook: run handlers in order, honouring chain control */
+  bool stopped = false;
+  cell stopret = 0;
+  std::vector<std::string> chain = ci->second;   /* snapshot */
+  g_inDispatch++;
+  for (size_t h = 0; h < chain.size() && !stopped; h++) {
+    int hi = -1;
+    if (g_FindPublic(amx, chain[h].c_str(), &hi) != 0)
+      continue;
+    amx->paramcount = 0;
+    for (int i = n - 1; i >= 0; i--)             /* push reverse -> declared order */
+      g_Push(amx, saved[i]);
+    cell r = 0;
+    g_Exec(amx, &r, hi);                          /* restores STK to S, paramcount 0 */
+    if (r == -1) { stopped = true; stopret = 0; }        /* HOOK_STOP */
+    else if (r == -2) { stopped = true; stopret = 1; }   /* HOOK_STOP_1 */
   }
-  return err;
+  g_inDispatch--;
+
+  if (stopped) {
+    /* suppress the original; emulate amx_Exec's stack cleanup (amx.c:1982) */
+    amx->stk = S + (cell)((uintptr_t)n * sizeof(cell));
+    amx->paramcount = 0;
+    if (retval) *retval = stopret;
+    return AMX_ERR_NONE;
+  }
+
+  /* no stop: run the original with its original args (still at S) */
+  amx->stk = S;
+  amx->paramcount = n;
+  return g_Exec(amx, retval, index);
 }
 
 static const AMX_NATIVE_INFO dynhook_Natives[] = {
