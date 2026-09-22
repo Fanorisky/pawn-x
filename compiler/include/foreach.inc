@@ -18,7 +18,8 @@
  *
  *  Layout: data[0] holds the count, data[1..count] the sorted values.
  *  `set_foreach` is a keyword (named to coexist with YSI's `foreach` macro);
- *  `set*` (setinit/setadd/setremove/sethas/setlen) are natives.
+ *  `set*` (setinit/setadd/setremove/sethas/setlen/setfree/setrandom/setget/
+ *  setalloc) are natives.
  * </library>
  */
 
@@ -29,6 +30,8 @@ native sethas(const array[], value);
 native setlen(const array[]);
 native setfree(const array[]);     // smallest non-negative integer not in the set
 native setrandom(const array[]);   // a random member, or -1 if empty
+native setget(const array[], index);   // value at 0-based ascending position, or -1
+native setalloc(const array[]);    // allocate + return the smallest free id
 
 /**
  * Lazy generators (`iterfunc`): a function called once per iteration that
