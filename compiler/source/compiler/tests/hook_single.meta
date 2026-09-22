@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+sum 9
+
+done
+
+hook_single.amx returns 0
+"""
+}
