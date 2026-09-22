@@ -25,3 +25,13 @@ native dynhook_replace(const event[], const oldpub[], const newpub[]);
 native dynhook_clear(const event[]);
 native dynhook_count(const event[]);
 native dynhook_call(const event[], const fmt[], ...);
+
+/**
+ * Phase B: mark a callback so its runtime chain fires TRANSPARENTLY whenever
+ * the host runs that public (no explicit dynhook_call needed). Add handlers
+ * with dynhook_add(callback, handler) as usual.
+ *
+ *   dynhook_intercept("OnPlayerConnect");
+ *   dynhook_add("OnPlayerConnect", "MyConnectHandler");   // fires automatically
+ */
+native dynhook_intercept(const callback[]);
