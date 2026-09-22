@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+A 2
+
+B 2
+
+r=0
+
+hook_continue0.amx returns 0
+"""
+}

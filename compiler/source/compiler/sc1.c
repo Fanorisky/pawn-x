@@ -76,6 +76,8 @@
 #include "version.h"
 
 static void resetglobals(void);
+static void hook_reset(void);
+static void hook_emit_dispatchers(void);
 static void initglobals(void);
 static char *get_extension(char *filename);
 static void setopt(int argc,char **argv,char *oname,char *ename,char *pname,
@@ -672,6 +674,7 @@ int pc_compile(int argc, char *argv[])
     warnstack_init();
     preprocess();                       /* fetch first line */
     parse();                            /* process all input */
+    hook_emit_dispatchers();            /* synthesise native-hook dispatchers (addressing pass) */
     warnstack_cleanup();
     sc_parsenum++;
   } while (sc_reparse);
@@ -764,6 +767,7 @@ int pc_compile(int argc, char *argv[])
   warnstack_init();
   preprocess();                         /* fetch first line */
   parse();                              /* process all input */
+  hook_emit_dispatchers();              /* synthesise native-hook dispatchers (code-emission pass) */
   warnstack_cleanup();
   if (sc_listing)
     goto cleanup;
@@ -981,6 +985,7 @@ static void resetglobals(void)
   pc_loopcond=0;
   emit_flags=0;
   emit_stgbuf_idx=-1;
+  hook_reset();         /* clear the per-pass native-hook registry */
 }
 
 static void initglobals(void)
@@ -1783,6 +1788,13 @@ static int getclassspec(int initialtok,int *fpublic,int *fstatic,int *fstock,int
  * set_foreach drives with a call-loop; see doforeach) */
 static int pc_iterfunc=FALSE;
 
+/* native "hook" support (experiment 004): registry of hooked callbacks for the
+ * current parse pass, plus the routines that register a hook and synthesise the
+ * dispatchers at end-of-parse. See the hookgroup comment in sc.h. */
+static hookgroup *hook_registry=NULL;
+static void hook_register(const char *callback,symbol *hidden,int argcount,int tag);
+static void dohook(void);
+
 /*  parse       - process all input text
  *
  *  At this level, only static declarations and function definitions are legal.
@@ -1894,6 +1906,15 @@ static void parse(void)
       } /* switch */
       pc_iterfunc=FALSE;
       break;
+    case tHOOK:
+      /* "hook Name(args) body": one of possibly several handlers for callback
+       * "Name" in this compilation unit. Each body compiles to a hidden
+       * ordinary function ("_hook.Name.<seq>"); the dispatcher public "Name"
+       * that chains them is synthesised at end-of-parse (hook_emit_dispatchers).
+       * No class specifier is accepted (like the tests): "Name" is an ordinary
+       * identifier. */
+      dohook();
+      break;
     case t__STATIC_ASSERT:
     case t__STATIC_CHECK: {
       int use_warning=(tok==t__STATIC_CHECK);
@@ -1916,6 +1937,304 @@ static void parse(void)
     } /* switch */
   } /* while */
 }
+
+/*  hook_find    - locate the registry group for a hooked callback (or NULL) */
+static hookgroup *hook_find(const char *callback)
+{
+  hookgroup *grp;
+  for (grp=hook_registry; grp!=NULL; grp=grp->next)
+    if (strcmp(grp->name,callback)==0)
+      return grp;
+  return NULL;
+}
+
+/*  hook_reset   - free the per-pass hook registry (called from resetglobals) */
+static void hook_reset(void)
+{
+  hookgroup *grp,*next;
+  for (grp=hook_registry; grp!=NULL; grp=next) {
+    next=grp->next;
+    free(grp->hooks);
+    free(grp);
+  } /* for */
+  hook_registry=NULL;
+}
+
+/*  hook_register - record a hidden hook function for callback "callback", in
+ *  source order. The first hook of a callback fixes the shared signature; a
+ *  later hook with a different argument count is an error (256). */
+static void hook_register(const char *callback,symbol *hidden,int argcount,int tag)
+{
+  hookgroup *grp=hook_find(callback);
+  if (grp==NULL) {
+    grp=(hookgroup*)malloc(sizeof(hookgroup));
+    if (grp==NULL) {
+      error(103);               /* insufficient memory */
+      return;
+    } /* if */
+    memset(grp,0,sizeof(hookgroup));
+    assert(strlen(callback)<=sNAMEMAX);
+    strcpy(grp->name,callback);
+    grp->argcount=argcount;
+    grp->tag=tag;
+    grp->capacity=4;
+    grp->hooks=(symbol**)malloc(grp->capacity*sizeof(symbol*));
+    if (grp->hooks==NULL) {
+      free(grp);
+      error(103);               /* insufficient memory */
+      return;
+    } /* if */
+    grp->next=hook_registry;
+    hook_registry=grp;
+  } else {
+    if (argcount!=grp->argcount)
+      error(256,callback);      /* hooks for one callback must share a signature */
+    if (grp->count>=grp->capacity) {
+      symbol **grown;
+      grp->capacity*=2;
+      grown=(symbol**)realloc(grp->hooks,grp->capacity*sizeof(symbol*));
+      if (grown==NULL) {
+        error(103);             /* insufficient memory */
+        return;
+      } /* if */
+      grp->hooks=grown;
+    } /* if */
+  } /* if */
+  grp->hooks[grp->count++]=hidden;
+}
+
+/*  dohook       - parse a "hook Name(args) body" declaration
+ *
+ *  The body is compiled to a hidden ordinary function "_hook.Name.<seq>" (seq
+ *  in source order); the callback name is registered so the dispatcher public
+ *  "Name" can be synthesised at end-of-parse (hook_emit_dispatchers). Because
+ *  the hidden names differ, the normal duplicate-definition gate (error 021)
+ *  never fires for repeated hooks of one callback.
+ */
+static void dohook(void)
+{
+  char callback[sNAMEMAX+1];
+  char hidden[sNAMEMAX+1];
+  cell val;
+  char *str;
+  int tok,seq,argcount;
+  symbol *hsym;
+  hookgroup *grp;
+
+  tok=lex(&val,&str);
+  if (tok!=tSYMBOL) {
+    error(20,str);              /* invalid symbol name */
+    lexclr(TRUE);
+    return;
+  } /* if */
+  if (strlen(str)>sNAMEMAX-9) {
+    /* "_hook." (6) + "." (1) + up to 2 digits leaves room for a name of at
+     * most sNAMEMAX-9 characters; longer callback names cannot get a unique
+     * hidden name that fits the symbol-name limit */
+    error(200,str,sNAMEMAX-9);  /* symbol too long */
+    lexclr(TRUE);
+    return;
+  } /* if */
+  strcpy(callback,str);
+
+  grp=hook_find(callback);
+  seq= (grp!=NULL) ? grp->count : 0;
+  sprintf(hidden,"_hook.%s.%d",callback,seq);
+
+  /* pre-create the hidden symbol and mark it "read" so that, in the write
+   * pass, its body is not skipped as dead code before the dispatcher (emitted
+   * later) records the reference to it */
+  hsym=fetchfunc(hidden,0);
+  if (hsym!=NULL)
+    hsym->usage|=uREAD;
+
+  /* parse the body exactly like an ordinary function, but under the hidden
+   * name -- "hook" carries no class specifier, so the callback name is handed
+   * straight to newfunc() */
+  if (!newfunc(hidden,0,FALSE,FALSE,FALSE)) {
+    error(10);                  /* illegal function or declaration */
+    lexclr(TRUE);
+    litidx=0;
+    return;
+  } /* if */
+
+  /* re-fetch (newfunc may have created it if the pre-fetch failed) and register */
+  hsym=findglb(hidden,sGLOBAL);
+  if (hsym==NULL || hsym->ident!=iFUNCTN)
+    return;                     /* body was only a prototype or was rejected */
+  argcount=0;
+  while (hsym->dim.arglist[argcount].ident!=0)
+    argcount++;
+  hook_register(callback,hsym,argcount,hsym->tag);
+}
+
+/*  hook_free_arglist - deep-free an argument list previously built by
+ *  hook_clone_arglist (mirrors the arglist portion of free_symbol) */
+static void hook_free_arglist(arginfo *arglist)
+{
+  arginfo *arg;
+  if (arglist==NULL)
+    return;
+  for (arg=arglist; arg->ident!=0; arg++) {
+    if (arg->ident==iREFARRAY && arg->hasdefault)
+      free(arg->defvalue.array.data);
+    else if (arg->ident==iVARIABLE
+             && ((arg->hasdefault & uSIZEOF)!=0 || (arg->hasdefault & uTAGOF)!=0))
+      free(arg->defvalue.size.symname);
+    free(arg->tags);
+  } /* for */
+  free(arglist);
+}
+
+/*  hook_set_prototype - give the dispatcher "disp" the same argument signature
+ *  as the first hook "proto", so that direct calls to the dispatcher type-check
+ *  like an ordinary call. The list is deep-copied (each arg owns its tag list
+ *  and any default value), so the dispatcher owns it independently. */
+static void hook_set_prototype(symbol *disp,symbol *proto)
+{
+  int n,i;
+  arginfo *src,*dst;
+
+  n=0;
+  while (proto->dim.arglist[n].ident!=0)
+    n++;
+  dst=(arginfo*)malloc((n+1)*sizeof(arginfo));
+  if (dst==NULL) {
+    error(103);                 /* insufficient memory */
+    return;
+  } /* if */
+  for (i=0; i<n; i++) {
+    src=&proto->dim.arglist[i];
+    dst[i]=*src;                /* shallow copy of the fixed fields */
+    /* deep-copy the tag list (free_symbol frees it and asserts it is non-NULL) */
+    dst[i].tags=(int*)malloc((src->numtags>0 ? src->numtags : 1)*sizeof(int));
+    if (dst[i].tags==NULL) {
+      while (--i>=0)
+        free(dst[i].tags);
+      free(dst);
+      error(103);
+      return;
+    } /* if */
+    if (src->numtags>0)
+      memcpy(dst[i].tags,src->tags,src->numtags*sizeof(int));
+    /* deep-copy default array data / sizeof symbol name, if any */
+    if (src->ident==iREFARRAY && src->hasdefault && src->defvalue.array.data!=NULL) {
+      int sz=src->defvalue.array.size;
+      dst[i].defvalue.array.data=(cell*)malloc(sz*sizeof(cell));
+      if (dst[i].defvalue.array.data!=NULL)
+        memcpy(dst[i].defvalue.array.data,src->defvalue.array.data,sz*sizeof(cell));
+    } else if (src->ident==iVARIABLE
+               && ((src->hasdefault & uSIZEOF)!=0 || (src->hasdefault & uTAGOF)!=0)
+               && src->defvalue.size.symname!=NULL) {
+      dst[i].defvalue.size.symname=strdup(src->defvalue.size.symname);
+    } /* if */
+  } /* for */
+  memset(&dst[n],0,sizeof(arginfo)); /* terminator */
+  hook_free_arglist(disp->dim.arglist);
+  disp->dim.arglist=dst;
+}
+
+/*  hook_emit_dispatchers - synthesise the "public Name(args)" dispatcher for
+ *  every hooked callback, at end-of-parse.
+ *
+ *  This runs at the SAME point (right after parse()) in both the addressing
+ *  pass (statFIRST) and the code-emission pass (statWRITE), so each dispatcher
+ *  is emitted after all user code and gets a consistent address across passes,
+ *  exactly like every ordinary function. The generated code is plain:
+ *
+ *    proc
+ *    ; per hook, in source order:
+ *    push.s <argN-1> ... push.s <arg0>   ; forward the dispatcher's arguments
+ *    push.c <argbytes>
+ *    call .<hidden hook>                  ; result in PRI
+ *    move.alt                             ; ALT = result (preserved by eq.c.alt)
+ *    eq.c.alt -1 / jnz ret0               ; HOOK_STOP    -> return 0
+ *    eq.c.alt -2 / jnz ret1               ; HOOK_STOP_1  -> return 1
+ *    move.pri                             ; PRI = result (running chain value)
+ *    ; after the last hook:
+ *    retn                                 ; return the last chain value
+ *    ret0: zero.pri  / retn
+ *    ret1: const.pri 1 / retn
+ *
+ *  No new opcodes, no bytecode scanning: it is an ordinary public function.
+ */
+static void hook_emit_dispatchers(void)
+{
+  hookgroup *grp;
+  symbol *disp,*savedfunc;
+  int i,a,lbl_ret0,lbl_ret1;
+  cell argbytes;
+
+  if (hook_registry==NULL)
+    return;
+
+  savedfunc=curfunc;
+  for (grp=hook_registry; grp!=NULL; grp=grp->next) {
+    disp=fetchfunc(grp->name,grp->tag);
+    if (disp==NULL)
+      continue;
+    /* the dispatcher is the public implementation of the callback */
+    disp->usage|=uPUBLIC|uDEFINE|uPROTOTYPED;
+    if (grp->tag!=0)
+      disp->usage|=uRETVALUE;
+    disp->tag=grp->tag;
+    if (grp->count>0)
+      hook_set_prototype(disp,grp->hooks[0]); /* type-check direct calls */
+    disp->addr=code_idx;        /* address of the "proc" that follows */
+    curfunc=disp;
+
+    argbytes=(cell)grp->argcount*sizeof(cell);
+    begcseg();
+    startfunc(disp->name,TRUE); /* emit "proc" */
+
+    lbl_ret0=getlabel();
+    lbl_ret1=getlabel();
+
+    for (i=0; i<grp->count; i++) {
+      symbol *hook=grp->hooks[i];
+      /* forward the dispatcher's own arguments (reverse order) */
+      for (a=grp->argcount-1; a>=0; a--) {
+        stgwrite("\tpush.s ");
+        outval((a+3)*sizeof(cell),TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* for */
+      pushval(argbytes);        /* argument-count marker (in bytes) */
+      markusage(hook,uREAD);    /* the dispatcher refers to the hidden hook */
+      ffcall(hook,NULL,grp->argcount);  /* call; result in PRI */
+      /* preserve the result in ALT (eq.c.alt does not modify ALT) */
+      stgwrite("\tmove.alt\n");
+      code_idx+=opcodes(1);
+      /* HOOK_STOP (-1): return 0 */
+      stgwrite("\teq.c.alt ");
+      outval(-1,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      jmp_ne0(lbl_ret0);
+      /* HOOK_STOP_1 (-2): return 1 */
+      stgwrite("\teq.c.alt ");
+      outval(-2,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      jmp_ne0(lbl_ret1);
+      /* CONTINUE / CONTINUE_0: running chain value = result (in ALT) */
+      moveto1();                /* PRI = ALT = result */
+    } /* for */
+
+    /* fell through the whole chain: return the last chain value (in PRI) */
+    ffret(TRUE);
+    /* HOOK_STOP target: return 0 */
+    setlabel(lbl_ret0);
+    ldconst(0,sPRI);
+    ffret(TRUE);
+    /* HOOK_STOP_1 target: return 1 */
+    setlabel(lbl_ret1);
+    ldconst(1,sPRI);
+    ffret(TRUE);
+
+    endfunc();
+    disp->codeaddr=code_idx;
+  } /* for */
+  curfunc=savedfunc;
+}
+
 
 /*  dumplits
  *

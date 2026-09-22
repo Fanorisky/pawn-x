@@ -156,6 +156,25 @@ typedef struct s_symbol {
   char *documentation;  /* optional documentation string */
 } symbol;
 
+/*  Native "hook" support (experiment 004): a compilation unit may declare
+ *  several "hook Name(args)" bodies for one callback. Each body compiles to a
+ *  hidden ordinary function; at end-of-parse the compiler synthesises one
+ *  public "Name" dispatcher that calls the hidden hooks in source order,
+ *  applying the return-control protocol (HOOK_CONTINUE/STOP/...). The registry
+ *  below records, per callback, the ordered hidden-hook symbols and the shared
+ *  signature. It is rebuilt in each parse pass (cleared by resetglobals()) so
+ *  the dispatchers get consistent addresses across the addressing (statFIRST)
+ *  and code-emission (statWRITE) passes. */
+typedef struct s_hookgroup {
+  struct s_hookgroup *next;
+  char name[sNAMEMAX+1];        /* the hooked callback name (the dispatcher's name) */
+  int count;                    /* number of hooks recorded (also the next seq number) */
+  int capacity;                 /* allocated slots in "hooks" */
+  int argcount;                 /* argument count of the first hook (shared signature) */
+  int tag;                      /* result tag of the first hook (dispatcher's tag) */
+  symbol **hooks;               /* ordered hidden-hook symbols (source order) */
+} hookgroup;
+
 
 /*  Possible entries for "ident". These are used in the "symbol", "value"
  *  and arginfo structures. Not every constant is valid for every use.
@@ -425,6 +444,7 @@ enum {
   tFOR,
   tFORWARD,
   tGOTO,
+  tHOOK,
   tIF,
   tITERFUNC,
   t__NAMEOF,

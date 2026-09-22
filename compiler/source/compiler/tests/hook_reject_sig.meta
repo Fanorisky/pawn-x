@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+hook_reject_sig.pwn(14) : error 256: hooks for callback "OnFoo" must all have the same argument signature
+"""
+}
