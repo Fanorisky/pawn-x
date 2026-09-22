@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+A 3
+
+r=0
+
+hook_stop.amx returns 0
+"""
+}

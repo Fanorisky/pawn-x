@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+A 7
+
+B 7
+
+done
+
+hook_order.amx returns 0
+"""
+}
