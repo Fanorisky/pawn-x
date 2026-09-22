@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+hook_reject_shape.pwn(14) : error 256: hooks for callback "OnY" must all have the same argument signature
+"""
+}

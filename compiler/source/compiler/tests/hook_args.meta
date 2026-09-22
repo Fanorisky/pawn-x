@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+A x=15 a0=100
+
+B x=35 a1=20
+
+v=35
+
+hook_args.amx returns 0
+"""
+}

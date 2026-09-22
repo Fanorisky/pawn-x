@@ -1960,9 +1960,29 @@ static void hook_reset(void)
   hook_registry=NULL;
 }
 
+/*  hook_argshape_match - TRUE if two argument lists are structurally identical
+ *  (same count, and per position the same class -- iVARIABLE/iREFERENCE/
+ *  iREFARRAY/iVARARGS -- and the same array dimensions). Argument NAMES are
+ *  ignored (they are forwarded by position), but the shape must match so that
+ *  the dispatcher forwards each slot the way every hook expects it. */
+static int hook_argshape_match(arginfo *a,arginfo *b)
+{
+  int i,level;
+  for (i=0; a[i].ident!=0 && b[i].ident!=0; i++) {
+    if (a[i].ident!=b[i].ident)
+      return FALSE;
+    if (a[i].numdim!=b[i].numdim)
+      return FALSE;
+    for (level=0; level<a[i].numdim; level++)
+      if (a[i].dim[level]!=b[i].dim[level])
+        return FALSE;
+  } /* for */
+  return a[i].ident==b[i].ident;        /* both lists must end together */
+}
+
 /*  hook_register - record a hidden hook function for callback "callback", in
  *  source order. The first hook of a callback fixes the shared signature; a
- *  later hook with a different argument count is an error (256). */
+ *  later hook whose argument list differs in count or shape is an error (256). */
 static void hook_register(const char *callback,symbol *hidden,int argcount,int tag)
 {
   hookgroup *grp=hook_find(callback);
@@ -1987,7 +2007,10 @@ static void hook_register(const char *callback,symbol *hidden,int argcount,int t
     grp->next=hook_registry;
     hook_registry=grp;
   } else {
-    if (argcount!=grp->argcount)
+    /* compare against the first hook's full argument shape, not just the count,
+     * so a value/reference/array mismatch cannot slip through and misforward */
+    if (grp->count==0
+        || !hook_argshape_match(grp->hooks[0]->dim.arglist,hidden->dim.arglist))
       error(256,callback);      /* hooks for one callback must share a signature */
     if (grp->count>=grp->capacity) {
       symbol **grown;
@@ -2014,7 +2037,8 @@ static void hook_register(const char *callback,symbol *hidden,int argcount,int t
 static void dohook(void)
 {
   char callback[sNAMEMAX+1];
-  char hidden[sNAMEMAX+1];
+  char hidden[sNAMEMAX+32];     /* room for "_hook.<name>.<seq>" before the
+                                 * length check below; seq may be many digits */
   cell val;
   char *str;
   int tok,seq,argcount;
@@ -2027,19 +2051,20 @@ static void dohook(void)
     lexclr(TRUE);
     return;
   } /* if */
-  if (strlen(str)>sNAMEMAX-9) {
-    /* "_hook." (6) + "." (1) + up to 2 digits leaves room for a name of at
-     * most sNAMEMAX-9 characters; longer callback names cannot get a unique
-     * hidden name that fits the symbol-name limit */
-    error(200,str,sNAMEMAX-9);  /* symbol too long */
-    lexclr(TRUE);
-    return;
-  } /* if */
+  assert(strlen(str)<=sNAMEMAX);
   strcpy(callback,str);
 
   grp=hook_find(callback);
   seq= (grp!=NULL) ? grp->count : 0;
   sprintf(hidden,"_hook.%s.%d",callback,seq);
+  if (strlen(hidden)>sNAMEMAX) {
+    /* the hidden name "_hook.<callback>.<seq>" must fit the symbol-name limit;
+     * a callback name close to sNAMEMAX (or an astronomical hook count) does
+     * not leave room */
+    error(200,callback,sNAMEMAX);   /* symbol too long */
+    lexclr(TRUE);
+    return;
+  } /* if */
 
   /* pre-create the hidden symbol and mark it "read" so that, in the write
    * pass, its body is not skipped as dead code before the dispatcher (emitted
