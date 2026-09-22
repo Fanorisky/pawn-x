@@ -241,7 +241,7 @@ typedef struct s_hookgroup {
 #define uNODESTRUCT 0x200 /* "no destruct(or)", not "node struct" */
 /* symbol is referenced "globally", e.g. via "__emit" or "#emit" used outside functions */
 #define uGLOBALREF  0x400
-/* function is a lazy generator (declared "iterfunc"): set_foreach over a call
+/* function is a lazy generator (declared "iterfunc"): foreach over a call
  * to it emits a call-loop instead of an array walk (see doforeach) */
 #define uITERFUNC   0x800
 /* uRETNONE is not stored in the "usage" field of a symbol. It is

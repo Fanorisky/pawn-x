@@ -21,7 +21,7 @@ main()
 	 * collide with the stack; stable output across passes proves it is freed */
 	for (new pass = 0; pass < 100; pass++)
 	{
-		set_foreach (new i : GetSet())
+		foreach (new i : GetSet())
 		{
 			if (pass == 0)
 				printf("%d\n", i);

@@ -13,7 +13,7 @@ main()
 	setadd(data, 5);
 	/* removing the current element during a REVERSE walk is safe: remove
 	 * shifts the tail (higher values) left, and those are already visited. */
-	set_foreach (new i : Reverse(data))
+	foreach (new i : Reverse(data))
 	{
 		printf("v %d\n", i);
 		if (i % 2 == 0)

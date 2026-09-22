@@ -11,15 +11,18 @@
  *    new data[cap];
  *    setinit(data);
  *    setadd(data, 7);
- *    set_foreach (new i : data)
+ *    foreach (new i : data)
  *    {
  *        printf("value %d\n", i);   // prints each value once, ascending
  *    }
  *
  *  Layout: data[0] holds the count, data[1..count] the sorted values.
- *  `set_foreach` is a keyword (named to coexist with YSI's `foreach` macro);
- *  `set*` (setinit/setadd/setremove/sethas/setlen/setfree/setrandom/setget/
- *  setalloc) are natives.
+ *  `foreach` is a compiler keyword; `set*` (setinit/setadd/setremove/sethas/
+ *  setlen/setfree/setrandom/setget/setalloc) are natives.
+ *
+ *  Note: pawn-x reserves `foreach` as a keyword, so it is a standalone
+ *  REPLACEMENT for YSI's `foreach`, not a co-resident of it — do not include
+ *  YSI's y_iterate/y_foreach in the same script.
  * </library>
  */
 
@@ -36,6 +39,6 @@ native setalloc(const array[]);    // allocate + return the smallest free id
 /**
  * Lazy generators (`iterfunc`): a function called once per iteration that
  * returns the next value, or ITER_STOP to end. The first call receives
- * cur == ITER_STOP (the seed). `set_foreach (new i : Gen(args))` drives it.
+ * cur == ITER_STOP (the seed). `foreach (new i : Gen(args))` drives it.
  */
 const ITER_STOP = cellmin;

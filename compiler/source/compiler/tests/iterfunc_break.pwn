@@ -12,7 +12,7 @@ iterfunc Range(cur, lo, hi)
 
 main()
 {
-	set_foreach (new i : Range(0, 10))
+	foreach (new i : Range(0, 10))
 	{
 		if (i == 3)
 			break;

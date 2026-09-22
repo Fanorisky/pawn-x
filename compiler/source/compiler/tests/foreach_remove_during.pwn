@@ -9,7 +9,7 @@ main()
 	setadd(data, 1);
 	setadd(data, 2);
 	setadd(data, 3);
-	set_foreach (new i : data)
+	foreach (new i : data)
 	{
 		if (i == 2)
 		{

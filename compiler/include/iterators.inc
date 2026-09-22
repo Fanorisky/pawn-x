@@ -5,13 +5,13 @@
 
 /**
  * <library name="iterators">
- *  Ready-made lazy generators for `set_foreach`, built on the native
+ *  Ready-made lazy generators for `foreach`, built on the native
  *  `iterfunc` mechanism (see <foreach>). Each computes the next value from
  *  the current one, so nothing is stored:
  *
- *    set_foreach (new i : Range(0, 10))     { ... }   // 0..9
- *    set_foreach (new i : RangeStep(0, 10, 2)) { ... }// 0 2 4 6 8
- *    set_foreach (new i : Powers(2, 1000))  { ... }   // 1 2 4 ... < 1000
+ *    foreach (new i : Range(0, 10))     { ... }   // 0..9
+ *    foreach (new i : RangeStep(0, 10, 2)) { ... }// 0 2 4 6 8
+ *    foreach (new i : Powers(2, 1000))  { ... }   // 1 2 4 ... < 1000
  *
  *  The generator protocol: the first call receives cur == ITER_STOP (the
  *  seed) and returns the first value; each later call returns the next value,
@@ -19,7 +19,7 @@
  * </library>
  */
 
-#include <foreach>   // for ITER_STOP and the set_foreach keyword
+#include <foreach>   // for ITER_STOP and the foreach keyword
 
 /**
  * Range(lo, hi): yields lo, lo+1, ..., hi-1. Empty when lo >= hi.

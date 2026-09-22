@@ -1785,7 +1785,7 @@ static int getclassspec(int initialtok,int *fpublic,int *fstatic,int *fstock,int
 
 /* set while parsing a function that was prefixed with the "iterfunc" keyword,
  * so newfunc() can tag its symbol with uITERFUNC (a lazy generator that
- * set_foreach drives with a call-loop; see doforeach) */
+ * foreach drives with a call-loop; see doforeach) */
 static int pc_iterfunc=FALSE;
 
 /* native "hook" support (experiment 004): registry of hooked callbacks for the
@@ -1886,7 +1886,7 @@ static void parse(void)
        * symbol as a lazy generator (uITERFUNC). It may be followed by a normal
        * class specifier ("iterfunc stock/static/public Name(...)"), which is
        * honored as usual; the function is otherwise parsed like any other, and
-       * only set_foreach treats a call to it specially. */
+       * only foreach treats a call to it specially. */
       pc_iterfunc=TRUE;
       tok=lex(&val,&str);
       switch (tok) {
@@ -6755,10 +6755,10 @@ static int doforeach(void)
     assert(strlen(str)<=sNAMEMAX);
     strcpy(varname,str);
   } else {
-    error(255,"\"set_foreach\" syntax requires \": <array>\" after the loop variable");
+    error(255,"\"foreach\" syntax requires \": <array>\" after the loop variable");
   } /* if */
   if (!hascolon && !matchtoken(':'))
-    error(255,"\"set_foreach\" syntax requires \": <array>\" after the loop variable");
+    error(255,"\"foreach\" syntax requires \": <array>\" after the loop variable");
 
   /* bind or declare the loop variable (always a scalar) */
   loopsym=NULL;
@@ -6828,7 +6828,7 @@ static int doforeach(void)
   } /* if */
 
   if (gensym!=NULL) {
-    /* --- GENERATOR PATH: set_foreach (new i : Gen(a,b,...)) ---
+    /* --- GENERATOR PATH: foreach (new i : Gen(a,b,...)) ---
      * Gen is "iterfunc Gen(cur, x, y)": called with the running state "cur" it
      * returns the next value, or ITER_STOP (== cellmin) to end. The first call
      * receives cur == ITER_STOP (the seed). The extra args are evaluated once
@@ -6838,7 +6838,7 @@ static int doforeach(void)
     iterstop=(cell)((ucell)1 << (PAWN_CELL_SIZE-1));  /* ITER_STOP == cellmin */
 
     if (reverse)
-      error(255,"\"set_foreach\" cannot reverse a generator (iterfunc); a generator defines its own order");
+      error(255,"\"foreach\" cannot reverse a generator (iterfunc); a generator defines its own order");
     /* register the call so the generator is not stripped and, when it is defined
      * before this loop, is still emitted in the writing pass (builds the same
      * caller->callee reference an ordinary call would) */
@@ -6886,7 +6886,7 @@ static int doforeach(void)
     } /* if */
     if (reverse)
       needtoken(')');           /* close the (rejected) "Reverse(" wrapper */
-    needtoken(')');             /* close "set_foreach(" */
+    needtoken(')');             /* close "foreach(" */
 
     /* "break"/"continue" clean the body's own locals down to here; the loop
      * variable, "cur" and the cached args are the loop-scoped hidden cells
@@ -6959,11 +6959,11 @@ static int doforeach(void)
   if (oident==iARRAY || oident==iREFARRAY) {
     validarray=TRUE;            /* the row's base address is now in PRI */
   } else {
-    error(255,"\"set_foreach\" iterates over an array or iterator, not a value");
+    error(255,"\"foreach\" iterates over an array or iterator, not a value");
   } /* if */
   if (reverse)
     needtoken(')');             /* close "Reverse(" */
-  needtoken(')');               /* close "set_foreach(" */
+  needtoken(')');               /* close "foreach(" */
 
   /* hidden loop-scoped cells: the cached operand address (row base), the
    * running index k and the snapshot count. "modstk" only adjusts STK, so the

@@ -17,7 +17,7 @@ iterfunc stock Mult3(cur, lo, hi)
 
 main()
 {
-	set_foreach (new i : Mult3(0, 10))   // 0 3 6 9
+	foreach (new i : Mult3(0, 10))   // 0 3 6 9
 	{
 		printf("v %d\n", i);
 	}

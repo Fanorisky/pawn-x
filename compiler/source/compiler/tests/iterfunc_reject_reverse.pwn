@@ -12,7 +12,7 @@ iterfunc Range(cur, lo, hi)
 
 main()
 {
-	set_foreach (new i : Reverse(Range(0, 5)))   // reverse over a generator is undefined
+	foreach (new i : Reverse(Range(0, 5)))   // reverse over a generator is undefined
 	{
 		printf("%d\n", i);
 	}
