@@ -182,6 +182,53 @@ static cell AMX_NATIVE_CALL iter_random(AMX *amx,const cell *params)
   return arr[1+(int)(seed%(unsigned long)count)];
 }
 
+/* setget(array[], index) - returns the value at 0-based ordinal `index` in
+ * ascending order (index 0 is the smallest member), or -1 if index is out of
+ * [0, count). O(1) random access the walk-based set_foreach does not give. */
+static cell AMX_NATIVE_CALL iter_get(AMX *amx,const cell *params)
+{
+  cell *arr;
+  int count,idx;
+
+  amx_GetAddr(amx,params[1],&arr);
+  count=(int)arr[0];
+  idx=(int)params[2];
+  if (idx<0 || idx>=count)
+    return -1;                /* out of range */
+  return arr[1+idx];          /* values live at arr[1..count] */
+}
+
+/* setalloc(array[]) - allocate the smallest free non-negative id: find the
+ * first gap (as setfree does), insert it, and return it. Combines setfree +
+ * setadd for the common "grab an unused slot" pattern. Like setadd, V1 does
+ * NOT bound-check the array capacity (see the range limitation above). */
+static cell AMX_NATIVE_CALL iter_alloc(AMX *amx,const cell *params)
+{
+  cell *arr;
+  int count,k,i;
+  cell id;
+
+  amx_GetAddr(amx,params[1],&arr);
+  count=(int)arr[0];
+  /* the first slot k whose value != k-1 is the gap; the free id is that
+   * expected value, and it belongs at sorted position k (arr[k] > id). */
+  id=0;
+  for (k=1; k<=count; k++) {
+    if (arr[k]!=id)
+      break;
+    id++;
+  }
+  /* shift the tail [k..count] up by one, insert id at slot k (I4) */
+  i=count;
+  while (i>=k) {
+    arr[i+1]=arr[i];
+    i--;
+  }
+  arr[k]=id;
+  arr[0]=count+1;            /* count++ (I3) */
+  return id;
+}
+
 /* the native table; registered by pawnruns (the test runner) via amx_Register. */
 const AMX_NATIVE_INFO iter_Natives[] = {
   { "setinit",   iter_init },
@@ -191,5 +238,7 @@ const AMX_NATIVE_INFO iter_Natives[] = {
   { "setlen",    iter_count },
   { "setfree",   iter_free },
   { "setrandom", iter_random },
+  { "setget",    iter_get },
+  { "setalloc",  iter_alloc },
   { NULL, NULL }     /* terminator */
 };

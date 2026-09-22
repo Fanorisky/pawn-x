@@ -77,3 +77,41 @@ the fly (Range/step/filter/… ).
 - `yield`/coroutine-style generators (needs frame suspension — out of scope §6).
 - Multi-dimensional / by-reference generator state.
 - Fold the stray `warning 202` on a bad operand into just `error 255`.
+
+## Follow-up (2026-09-22): `setget` + `setalloc` — remaining `y_iterate` ops
+
+Two more natives, same file/pattern (`itercore.c` → `iter_Natives`, declared in
+`foreach.inc`), closing the last cheap gaps against `y_iterate`:
+
+- `setget(const array[], index)` — the value at 0-based **ascending** position
+  `index` (`index 0` is the smallest member), or `-1` if out of `[0, count)`.
+  O(1) random access the walk-based `set_foreach` does not give — adapts
+  `Iter_Get`. Test `set_get` (ordered access + out-of-range + negative → -1).
+- `setalloc(const array[])` — allocate the smallest free non-negative id:
+  finds the first gap (as `setfree` does), inserts it in sorted position, and
+  returns it. One call for the common "grab an unused slot" pattern; adapts
+  `Iter_Alloc` (= `setfree` + `setadd`). Test `set_alloc` (0,1,2 then reuse a
+  freed gap, length + ordering re-checked). Like `setadd`, does not
+  bound-check capacity (V1 range limitation).
+
+`Iter_Clear`/`Iter_FastClear` were **not** added: our model makes them
+identical to `setinit` (both just set `array[0] = 0`), so a separate native
+would be a pure alias.
+
+The open.mp companion plugin (`deps/iterset/iterset.c`, a local gitignored
+build dir mirroring `itercore.c`'s set logic through `g_GetAddr`) was brought to
+full parity in the same pass — it had only the original five ops, and now
+carries all nine (`setinit/setadd/setremove/sethas/setlen/setfree/setrandom/
+setget/setalloc`) so the native set runs identically on the real server.
+
+**Suite at close:** 138 PASSED / 2 FAILED (the same two pre-existing baselines;
+no regressions).
+
+### Note: the varargs "materialize" gap was already closed
+While scoping this, we re-checked y_va's second capability — build a formatted
+string from a variadic tail (`va_format`/`va_return`/`va_getstring`). This is
+**already covered by exp 001's `___`**: `strformat(dest, size, false, fmt, ___)`
+compiles and runs (test `varargs_forward_format`), and a function can format
+into a local buffer and return it. `va_return` exists in YSI only because stock
+Pawn cannot forward `...`; with `___` it is unnecessary. No new native needed —
+exp 001 fully supersedes y_va.

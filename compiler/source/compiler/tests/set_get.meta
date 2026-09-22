@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+g0=10
+
+g1=20
+
+g2=30
+
+oob=-1
+
+neg=-1
+
+set_get.amx returns 0
+"""
+}
