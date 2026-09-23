@@ -46,6 +46,15 @@
  *    hook:-10 OnPlayerConnect(playerid) { ... }    // runs later
  *
  *  Higher priority runs first; equal priority (default 0) keeps source order.
+ *
+ *  Default return: by default the callback returns the last hook's chain value.
+ *  To force a fall-through default (like YSI's HOOK_RET — e.g. a command
+ *  callback that must default to 0 unless a hook claims it), declare:
+ *
+ *    hook default OnPlayerCommandText = 0;
+ *
+ *  Then a hook returns HOOK_STOP_1 to claim it (return 1); if none do, the
+ *  chain falls through to the declared default instead of the CONTINUE value.
  * </library>
  */
 

@@ -1792,7 +1792,19 @@ static int pc_iterfunc=FALSE;
  * current parse pass, plus the routines that register a hook and synthesise the
  * dispatchers at end-of-parse. See the hookgroup comment in sc.h. */
 static hookgroup *hook_registry=NULL;
+/* per-callback default return value (YSI HOOK_RET analogue): a "hook default
+ * Name = N;" declaration makes the dispatcher return N on fall-through instead
+ * of the last chain value. Kept in a small separate list so it is independent
+ * of hookgroup lifecycle / declaration order. */
+typedef struct s_hookdefault {
+  struct s_hookdefault *next;
+  char name[sNAMEMAX+1];
+  cell value;
+} hookdefault;
+static hookdefault *hook_defaults=NULL;
 static void hook_register(const char *callback,symbol *hidden,int argcount,int tag,int prio);
+static void hook_set_default(const char *callback,cell value);
+static int hook_get_default(const char *callback,cell *value);
 static void dohook(void);
 
 /*  parse       - process all input text
@@ -1952,6 +1964,7 @@ static hookgroup *hook_find(const char *callback)
 static void hook_reset(void)
 {
   hookgroup *grp,*next;
+  hookdefault *hd,*hdnext;
   for (grp=hook_registry; grp!=NULL; grp=next) {
     next=grp->next;
     free(grp->hooks);
@@ -1959,6 +1972,49 @@ static void hook_reset(void)
     free(grp);
   } /* for */
   hook_registry=NULL;
+  for (hd=hook_defaults; hd!=NULL; hd=hdnext) {
+    hdnext=hd->next;
+    free(hd);
+  } /* for */
+  hook_defaults=NULL;
+}
+
+/*  hook_set_default - record "hook default <callback> = <value>" (updates the
+ *  entry if the callback already has one) */
+static void hook_set_default(const char *callback,cell value)
+{
+  hookdefault *hd;
+  for (hd=hook_defaults; hd!=NULL; hd=hd->next) {
+    if (strcmp(hd->name,callback)==0) {
+      hd->value=value;
+      return;
+    } /* if */
+  } /* for */
+  hd=(hookdefault*)malloc(sizeof(hookdefault));
+  if (hd==NULL) {
+    error(103);                 /* insufficient memory */
+    return;
+  } /* if */
+  assert(strlen(callback)<=sNAMEMAX);
+  strcpy(hd->name,callback);
+  hd->value=value;
+  hd->next=hook_defaults;
+  hook_defaults=hd;
+}
+
+/*  hook_get_default - TRUE (and fills *value) if the callback has a declared
+ *  default return */
+static int hook_get_default(const char *callback,cell *value)
+{
+  hookdefault *hd;
+  for (hd=hook_defaults; hd!=NULL; hd=hd->next) {
+    if (strcmp(hd->name,callback)==0) {
+      if (value!=NULL)
+        *value=hd->value;
+      return TRUE;
+    } /* if */
+  } /* for */
+  return FALSE;
 }
 
 /*  hook_argshape_match - TRUE if two argument lists are structurally identical
@@ -2054,6 +2110,33 @@ static void dohook(void)
   int tok,seq,argcount,prio;
   symbol *hsym;
   hookgroup *grp;
+
+  /* default-return declaration: "hook default <Callback> = <const>;" makes the
+   * dispatcher return <const> on fall-through (all hooks CONTINUE) instead of the
+   * last chain value — pawn-x's HOOK_RET analogue (e.g. OnPlayerCommandText = 0).
+   * A hook may still HOOK_STOP/HOOK_STOP_1 to force 0/1. */
+  if (matchtoken(tDEFAULT)) {
+    int neg;
+    cell dval;
+    if (!needtoken(tSYMBOL)) {
+      lexclr(TRUE);
+      return;
+    } /* if */
+    tokeninfo(&val,&str);
+    strcpy(callback,str);
+    needtoken('=');
+    neg=matchtoken('-');
+    tok=lex(&val,&str);
+    if (tok!=tNUMBER) {
+      error(1,"-integer-",str);   /* expected a constant after "hook default X =" */
+      lexclr(TRUE);
+      return;
+    } /* if */
+    dval= neg ? -val : val;
+    needtoken(';');
+    hook_set_default(callback,dval);
+    return;
+  } /* if */
 
   /* optional priority: "hook:N Name(...)" or "hook:-N Name(...)". Higher N runs
    * earlier in the chain; equal priority keeps source order; default is 0. This
@@ -2284,7 +2367,13 @@ static void hook_emit_dispatchers(void)
       moveto1();                /* PRI = ALT = result */
     } /* for */
 
-    /* fell through the whole chain: return the last chain value (in PRI) */
+    /* fell through the whole chain: return the declared default if any, else
+     * the last chain value (in PRI) */
+    {
+      cell defval;
+      if (hook_get_default(grp->name,&defval))
+        ldconst(defval,sPRI);   /* HOOK_RET analogue: forced fall-through return */
+    }
     ffret(TRUE);
     /* HOOK_STOP target: return 0 */
     setlabel(lbl_ret0);

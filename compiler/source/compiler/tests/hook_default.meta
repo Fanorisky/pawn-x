@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+handled=1
+
+unhandled=0
+
+hook_default.amx returns 0
+"""
+}
