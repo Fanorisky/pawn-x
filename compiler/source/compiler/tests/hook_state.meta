@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+only-running 1
+
+always 1
+
+always 2
+
+done
+
+hook_state.amx returns 0
+"""
+}
