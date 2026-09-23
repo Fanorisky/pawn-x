@@ -62,5 +62,36 @@ options, to decide with the user:
 Players need neither (their lifecycle is callback-driven), which is why the
 Player iterator ships now and the others wait on that decision.
 
+## Decision: wrapper includes (shipped) — `<vehicles>`, `<actors>`
+
+User chose the tracked-wrapper approach (not native interception). Shipped
+`compiler/include/vehicles.inc` and `actors.inc`: thin `stock` wrappers that
+add-to / remove-from a `Vehicle` / `Actor` set as they call the native.
+
+```pawn
+#include <vehicles>
+new v = Vehicle_Create(model, x, y, z, a, c1, c2, respawn);
+foreach (new id : Vehicle) { ... }
+Vehicle_Destroy(v);
+```
+
+### Live proof (`veh_test.pwn`, real omp-server + iterset)
+
+```
+[V] created 1 2 3 len=3
+[V] foreach:  1  2  3
+[V] after destroy 2, len=2 has=0
+  1  3
+[DONE] veh
+```
+
+`Actor_Create`/`Actor_Destroy` are the same pattern (compile-verified).
+
+**Documented limitation:** only entities created *through the wrapper* are
+tracked — a raw `CreateVehicle` or another script's vehicles are not in the set.
+True auto-tracking of every vehicle would need native-call interception in
+`dynhook` (deferred; the wrapper is the portable, no-surprises choice).
+
 ## Files
-`compiler/include/players.inc` (the iterator), `players_test.pwn` (live proof).
+`compiler/include/players.inc`, `vehicles.inc`, `actors.inc` (the iterators),
+`players_test.pwn`, `veh_test.pwn` (live proofs).
