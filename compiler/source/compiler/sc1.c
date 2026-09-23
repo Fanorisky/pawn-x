@@ -6858,8 +6858,8 @@ static int doforeach(void)
   cell iaddr,kaddr,cntaddr,baseaddr,operand_heap;
   int dim[sDIMEN_MAX],idxtag[sDIMEN_MAX];
   symbol *gensym,*cand;         /* generator (iterfunc) support */
-  cell curaddr,argaddr[sMAXARGS],iterstop;
-  int nuser,ai,argident;
+  cell curaddr,argaddr[sMAXARGS],iterstop,stateaddr;
+  int nuser,ai,argident,statebyref;
 
   save_decl=declared;
   save_nestlevel=pc_nestlevel;
@@ -6988,6 +6988,25 @@ static int doforeach(void)
     outval(curaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
 
+    /* stateful generator: if the generator's FIRST parameter is a reference
+     * (iterfunc Name(&state, cur, ...)), allocate a persistent hidden "state"
+     * cell (init 0) and pass its address by reference on every call. This lets
+     * a generator carry more than the last emitted value (e.g. Fibonacci, an
+     * internal counter) across iterations. YSI's "&iterstate" analogue. */
+    statebyref= (gensym->dim.arglist[0].ident==iREFERENCE);
+    stateaddr=0;
+    if (statebyref) {
+      declared+=1;
+      stateaddr=-declared*(cell)sizeof(cell);
+      modstk(-(int)sizeof(cell));
+      if (curfunc->x.stacksize<declared+1)
+        curfunc->x.stacksize=declared+1;
+      ldconst(0,sPRI);
+      stgwrite("\tstor.s.pri ");
+      outval(stateaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* if */
+
     /* evaluate the extra args ONCE (they are loop-invariant) and cache each in
      * a hidden cell; the cached values are passed unchanged on every call. */
     nuser=0;
@@ -7039,11 +7058,16 @@ static int doforeach(void)
       outval(argaddr[ai],TRUE);
       code_idx+=opcodes(1)+opargs(1);
     } /* for */
-    stgwrite("\tpush.s ");      /* "cur" is the first parameter -- pushed last */
+    stgwrite("\tpush.s ");      /* "cur": first param (or 2nd, after &state) */
     outval(curaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
-    pushval((cell)(nuser+1)*sizeof(cell));
-    ffcall(gensym,NULL,nuser+1);
+    if (statebyref) {
+      stgwrite("\tpush.adr ");   /* &state is parameter 0 -- pushed last */
+      outval(stateaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* if */
+    pushval((cell)(nuser+1+(statebyref?1:0))*sizeof(cell));
+    ffcall(gensym,NULL,nuser+1+(statebyref?1:0));
 
     /* if (PRI == ITER_STOP) goto exit */
     stgwrite("\tconst.alt ");
