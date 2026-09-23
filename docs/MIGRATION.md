@@ -47,6 +47,9 @@ bare `___` forwards all of them.
 | — (no scalar equivalent) | `setget(name, index)` |
 | `foreach (new v : Name)` | `foreach (new v : name)` |
 | `foreach (new v : Reverse(Name))` | `foreach (new v : Reverse(name))` |
+| `Iterator:Player` (auto-maintained) | `#include <players>` → `Player` |
+| `Iterator:Vehicle` / `Actor` | `#include <vehicles>` / `<actors>` → `Vehicle_Create`/`Actor_Create` wrappers |
+| custom `iterfunc` needing state (Fib) | `iterfunc Name(&acc, cur, ...)` (leading ref = persistent state) |
 
 Note the model difference: YSI is an **index-set** (values must be `< cap`);
 pawn-x is a **value-set** (sorted distinct values, any magnitude the array
@@ -63,6 +66,7 @@ iterated element is safe in `foreach` (it hangs under YSI on this stack).
 | `return Y_HOOKS_BREAK_RETURN_0` | `return HOOK_STOP` |
 | `return Y_HOOKS_BREAK_RETURN_1` | `return HOOK_STOP_1` |
 | `PRE_HOOK` / `CHAIN_ORDER` priority | `hook:N Name(args) { }` (higher N first) |
+| `HOOK_RET:OnPlayerCommandText(){return 0;}` | `hook default OnPlayerCommandText = 0;` |
 | *(no runtime equivalent)* | `dynhook_add/remove/replace` + `dynhook_intercept` |
 
 ## Gotchas
