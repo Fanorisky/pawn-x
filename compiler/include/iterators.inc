@@ -16,6 +16,11 @@
  *  The generator protocol: the first call receives cur == ITER_STOP (the
  *  seed) and returns the first value; each later call returns the next value,
  *  or ITER_STOP to end. Extra arguments are loop-invariant (evaluated once).
+ *
+ *  Stateful generators: a leading reference parameter (`iterfunc Name(&acc,
+ *  cur, ...)`) gets a persistent hidden cell (init 0) threaded across calls, so
+ *  the generator can carry more than the last emitted value (e.g. Fibonacci).
+ *  (`state` is a reserved word — name the reference something else.)
  * </library>
  */
 
@@ -63,4 +68,19 @@ iterfunc stock Powers(cur, base, limit)
 	if (cur <= (cellmax / base) && cur * base < limit)
 		return cur * base;
 	return ITER_STOP;
+}
+
+/**
+ * Fib(limit): yields the Fibonacci numbers 1, 1, 2, 3, ... while < limit.
+ * A stateful generator: the reference `acc` holds the value two positions back
+ * (which `cur` alone cannot carry) and persists across iterations.
+ */
+iterfunc stock Fib(&acc, cur, limit)
+{
+	if (cur == ITER_STOP) { acc = 0; return (1 < limit) ? 1 : ITER_STOP; }
+	new nxt = cur + acc;
+	if (nxt >= limit)
+		return ITER_STOP;
+	acc = cur;
+	return nxt;
 }
