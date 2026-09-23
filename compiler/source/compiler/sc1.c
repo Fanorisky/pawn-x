@@ -1802,7 +1802,7 @@ typedef struct s_hookdefault {
   cell value;
 } hookdefault;
 static hookdefault *hook_defaults=NULL;
-static void hook_register(const char *callback,symbol *hidden,int argcount,int tag,int prio);
+static void hook_register(const char *callback,symbol *hidden,int argcount,int tag,int prio,int hasstate,cell statevar,cell stateval);
 static void hook_set_default(const char *callback,cell value);
 static int hook_get_default(const char *callback,cell *value);
 static void dohook(void);
@@ -1967,8 +1967,7 @@ static void hook_reset(void)
   hookdefault *hd,*hdnext;
   for (grp=hook_registry; grp!=NULL; grp=next) {
     next=grp->next;
-    free(grp->hooks);
-    free(grp->prio);
+    free(grp->slots);
     free(grp);
   } /* for */
   hook_registry=NULL;
@@ -2040,7 +2039,7 @@ static int hook_argshape_match(arginfo *a,arginfo *b)
 /*  hook_register - record a hidden hook function for callback "callback", in
  *  source order. The first hook of a callback fixes the shared signature; a
  *  later hook whose argument list differs in count or shape is an error (256). */
-static void hook_register(const char *callback,symbol *hidden,int argcount,int tag,int prio)
+static void hook_register(const char *callback,symbol *hidden,int argcount,int tag,int prio,int hasstate,cell statevar,cell stateval)
 {
   hookgroup *grp=hook_find(callback);
   if (grp==NULL) {
@@ -2055,11 +2054,8 @@ static void hook_register(const char *callback,symbol *hidden,int argcount,int t
     grp->argcount=argcount;
     grp->tag=tag;
     grp->capacity=4;
-    grp->hooks=(symbol**)malloc(grp->capacity*sizeof(symbol*));
-    grp->prio=(int*)malloc(grp->capacity*sizeof(int));
-    if (grp->hooks==NULL || grp->prio==NULL) {
-      free(grp->hooks);
-      free(grp->prio);
+    grp->slots=(hookslot*)malloc(grp->capacity*sizeof(hookslot));
+    if (grp->slots==NULL) {
       free(grp);
       error(103);               /* insufficient memory */
       return;
@@ -2070,26 +2066,25 @@ static void hook_register(const char *callback,symbol *hidden,int argcount,int t
     /* compare against the first hook's full argument shape, not just the count,
      * so a value/reference/array mismatch cannot slip through and misforward */
     if (grp->count==0
-        || !hook_argshape_match(grp->hooks[0]->dim.arglist,hidden->dim.arglist))
+        || !hook_argshape_match(grp->slots[0].fn->dim.arglist,hidden->dim.arglist))
       error(256,callback);      /* hooks for one callback must share a signature */
     if (grp->count>=grp->capacity) {
-      symbol **grown;
-      int *grownp;
+      hookslot *grown;
       grp->capacity*=2;
-      grown=(symbol**)realloc(grp->hooks,grp->capacity*sizeof(symbol*));
-      grownp=(int*)realloc(grp->prio,grp->capacity*sizeof(int));
-      if (grown!=NULL)
-        grp->hooks=grown;
-      if (grownp!=NULL)
-        grp->prio=grownp;
-      if (grown==NULL || grownp==NULL) {
+      grown=(hookslot*)realloc(grp->slots,grp->capacity*sizeof(hookslot));
+      if (grown==NULL) {
         error(103);             /* insufficient memory */
         return;
       } /* if */
+      grp->slots=grown;
     } /* if */
   } /* if */
-  grp->prio[grp->count]=prio;
-  grp->hooks[grp->count++]=hidden;
+  grp->slots[grp->count].fn=hidden;
+  grp->slots[grp->count].prio=prio;
+  grp->slots[grp->count].hasstate=hasstate;
+  grp->slots[grp->count].statevar=statevar;
+  grp->slots[grp->count].stateval=stateval;
+  grp->count++;
 }
 
 /*  dohook       - parse a "hook Name(args) body" declaration
@@ -2107,7 +2102,8 @@ static void dohook(void)
                                  * length check below; seq may be many digits */
   cell val;
   char *str;
-  int tok,seq,argcount,prio;
+  int tok,seq,argcount,prio,hasstate;
+  cell statevar,stateval;
   symbol *hsym;
   hookgroup *grp;
 
@@ -2152,6 +2148,26 @@ static void dohook(void)
       return;
     } /* if */
     prio= neg ? -(int)val : (int)val;
+  } /* if */
+
+  /* optional state scope: "hook <state> Name(...)" or "hook <automaton:state> ..."
+   * makes this hook fire only while the automaton is in <state> (the dispatcher
+   * checks the automaton's state variable at runtime and skips the call
+   * otherwise). pawn-x's answer to YSI's state-scoped hooks; the state is placed
+   * before the name so it is parsed here, not by newfunc (which would otherwise
+   * make the hidden function itself state-conditioned). */
+  hasstate=0;
+  statevar=0;
+  stateval=0;
+  if (matchtoken('<')) {
+    constvalue *automaton,*state;
+    if (sc_getstateid(&automaton,&state)) {
+      assert(automaton!=NULL && state!=NULL);
+      statevar=automaton->value;   /* address of the automaton's state variable */
+      stateval=state->value;       /* the required state's index */
+      hasstate=1;
+    } /* if */
+    needtoken('>');
   } /* if */
 
   tok=lex(&val,&str);
@@ -2199,7 +2215,7 @@ static void dohook(void)
   argcount=0;
   while (hsym->dim.arglist[argcount].ident!=0)
     argcount++;
-  hook_register(callback,hsym,argcount,hsym->tag,prio);
+  hook_register(callback,hsym,argcount,hsym->tag,prio,hasstate,statevar,stateval);
 }
 
 /*  hook_free_arglist - deep-free an argument list previously built by
@@ -2297,7 +2313,7 @@ static void hook_emit_dispatchers(void)
   hookgroup *grp;
   symbol *disp,*savedfunc;
   int i,a,lbl_ret0,lbl_ret1;
-  cell argbytes;
+  cell argbytes,chainaddr;
 
   if (hook_registry==NULL)
     return;
@@ -2311,16 +2327,13 @@ static void hook_emit_dispatchers(void)
      * keep source order. Done identically in both passes -> the dispatcher emits
      * its calls in the same order each pass, so addresses stay consistent. */
     for (i=1; i<grp->count; i++) {
-      symbol *hs=grp->hooks[i];
-      int hp=grp->prio[i];
+      hookslot hs=grp->slots[i];
       int j=i-1;
-      while (j>=0 && grp->prio[j]<hp) {   /* strict < keeps equal-priority order */
-        grp->hooks[j+1]=grp->hooks[j];
-        grp->prio[j+1]=grp->prio[j];
+      while (j>=0 && grp->slots[j].prio<hs.prio) {   /* strict < keeps equal-priority order */
+        grp->slots[j+1]=grp->slots[j];
         j--;
       } /* while */
-      grp->hooks[j+1]=hs;
-      grp->prio[j+1]=hp;
+      grp->slots[j+1]=hs;
     } /* for */
     /* the dispatcher is the public implementation of the callback */
     disp->usage|=uPUBLIC|uDEFINE|uPROTOTYPED;
@@ -2328,7 +2341,7 @@ static void hook_emit_dispatchers(void)
       disp->usage|=uRETVALUE;
     disp->tag=grp->tag;
     if (grp->count>0)
-      hook_set_prototype(disp,grp->hooks[0]); /* type-check direct calls */
+      hook_set_prototype(disp,grp->slots[0].fn); /* type-check direct calls */
     disp->addr=code_idx;        /* address of the "proc" that follows */
     curfunc=disp;
 
@@ -2336,11 +2349,31 @@ static void hook_emit_dispatchers(void)
     begcseg();
     startfunc(disp->name,TRUE); /* emit "proc" */
 
+    /* one hidden local holds the running chain value; a state-scoped hook that
+     * is skipped leaves it untouched, and the state test is free to clobber PRI. */
+    chainaddr=-(cell)sizeof(cell);
+    modstk(-(int)sizeof(cell));
+    if (disp->x.stacksize<grp->argcount+4)
+      disp->x.stacksize=grp->argcount+4;
+    ldconst(0,sPRI);
+    stgwrite("\tstor.s.pri ");
+    outval(chainaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+
     lbl_ret0=getlabel();
     lbl_ret1=getlabel();
 
     for (i=0; i<grp->count; i++) {
-      symbol *hook=grp->hooks[i];
+      symbol *hook=grp->slots[i].fn;
+      int lbl_skip=-1;
+      /* state gate: run this hook only while the automaton is in its state */
+      if (grp->slots[i].hasstate) {
+        lbl_skip=getlabel();
+        loadreg(grp->slots[i].statevar,sALT);   /* ALT = current state */
+        ldconst(grp->slots[i].stateval,sPRI);   /* PRI = required state */
+        ob_eq();                                 /* PRI = (current == required) */
+        jmp_eq0(lbl_skip);                       /* not in state -> skip the call */
+      } /* if */
       /* forward the dispatcher's own arguments (reverse order) */
       for (a=grp->argcount-1; a>=0; a--) {
         stgwrite("\tpush.s ");
@@ -2363,25 +2396,39 @@ static void hook_emit_dispatchers(void)
       outval(-2,TRUE);
       code_idx+=opcodes(1)+opargs(1);
       jmp_ne0(lbl_ret1);
-      /* CONTINUE / CONTINUE_0: running chain value = result (in ALT) */
+      /* CONTINUE / CONTINUE_0: running chain value = result; stash it so a later
+       * skipped hook cannot lose it */
       moveto1();                /* PRI = ALT = result */
+      stgwrite("\tstor.s.pri ");
+      outval(chainaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      if (lbl_skip>=0)
+        setlabel(lbl_skip);     /* skipped hooks land here, chain value intact */
     } /* for */
 
-    /* fell through the whole chain: return the declared default if any, else
-     * the last chain value (in PRI) */
+    /* fell through the whole chain: return the declared default if any, else the
+     * running chain value (from the hidden local) */
     {
       cell defval;
-      if (hook_get_default(grp->name,&defval))
+      if (hook_get_default(grp->name,&defval)) {
         ldconst(defval,sPRI);   /* HOOK_RET analogue: forced fall-through return */
+      } else {
+        stgwrite("\tload.s.pri ");
+        outval(chainaddr,TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* if */
     }
+    modstk((int)sizeof(cell));  /* release the hidden chain-value local before retn */
     ffret(TRUE);
     /* HOOK_STOP target: return 0 */
     setlabel(lbl_ret0);
     ldconst(0,sPRI);
+    modstk((int)sizeof(cell));
     ffret(TRUE);
     /* HOOK_STOP_1 target: return 1 */
     setlabel(lbl_ret1);
     ldconst(1,sPRI);
+    modstk((int)sizeof(cell));
     ffret(TRUE);
 
     endfunc();

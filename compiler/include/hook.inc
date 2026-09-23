@@ -55,6 +55,17 @@
  *
  *  Then a hook returns HOOK_STOP_1 to claim it (return 1); if none do, the
  *  chain falls through to the declared default instead of the CONTINUE value.
+ *
+ *  State-scoped hooks: prefix a Pawn automaton state so a hook fires only in
+ *  that state (the dispatcher checks the automaton's state variable and skips
+ *  the hook otherwise):
+ *
+ *    hook <running> OnPlayerText(playerid, text[]) { ... }   // only while "running"
+ *    hook <ClientState:auth> OnPlayerText(playerid, text[]) { ... }  // named automaton
+ *
+ *  The automaton must be genuinely used elsewhere (a state-conditioned function
+ *  or state variable), as in normal Pawn. `hook:N` priority and `<state>` may be
+ *  combined: `hook:100 <running> OnFoo(a)`.
  * </library>
  */
 

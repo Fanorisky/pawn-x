@@ -165,15 +165,21 @@ typedef struct s_symbol {
  *  signature. It is rebuilt in each parse pass (cleared by resetglobals()) so
  *  the dispatchers get consistent addresses across the addressing (statFIRST)
  *  and code-emission (statWRITE) passes. */
+typedef struct s_hookslot {     /* one hook body in a callback's chain */
+  symbol *fn;                   /* the hidden hook function (_hook.Name.<seq>) */
+  int prio;                     /* chain priority (higher runs first; default 0) */
+  int hasstate;                 /* 1 if this hook is state-scoped ("hook <s> Name") */
+  cell statevar;                /* address of the automaton's state variable */
+  cell stateval;                /* the required state's index */
+} hookslot;
 typedef struct s_hookgroup {
   struct s_hookgroup *next;
   char name[sNAMEMAX+1];        /* the hooked callback name (the dispatcher's name) */
   int count;                    /* number of hooks recorded (also the next seq number) */
-  int capacity;                 /* allocated slots in "hooks" */
+  int capacity;                 /* allocated slots in "slots" */
   int argcount;                 /* argument count of the first hook (shared signature) */
   int tag;                      /* result tag of the first hook (dispatcher's tag) */
-  symbol **hooks;               /* ordered hidden-hook symbols (source order) */
-  int *prio;                    /* parallel priority per hook (higher runs first; default 0) */
+  hookslot *slots;              /* ordered hook slots (source order, then priority-sorted) */
 } hookgroup;
 
 
