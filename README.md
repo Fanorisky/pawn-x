@@ -78,16 +78,27 @@ new grid[MAX_VEH][CAP];                 // multi-dimensional = plain 2D array
 foreach (new p : grid[vid]) { }
 ```
 
-**Generators (`iterfunc`)** — lazy, zero-alloc; `<iterators>` ships Range/RangeStep/Powers:
+**Generators (`iterfunc`)** — lazy, zero-alloc; `<iterators>` ships Range/RangeStep/Powers/Fib:
 ```pawn
 iterfunc stock Count(cur, lo, hi) { if (cur==ITER_STOP) return lo<hi?lo:ITER_STOP; return cur+1<hi?cur+1:ITER_STOP; }
 foreach (new i : Count(0, 10)) { }
+iterfunc stock Fib(&acc, cur, lim) { ... }   // leading &ref = persistent state (Fibonacci etc.)
 ```
 
-**Hooks (`hook`)** — many handlers per callback, source order, optional priority:
+**Entity iterators** — ready-made connected-players / tracked-vehicle sets:
+```pawn
+#include <players>                          // Player: auto-tracked via connect/disconnect hooks
+foreach (new id : Player) { }
+#include <vehicles>                          // Vehicle: tracked via Vehicle_Create/Vehicle_Destroy
+new v = Vehicle_Create(model, x,y,z, a, c1,c2, respawn);
+foreach (new id : Vehicle) { }               // (<actors> is the same pattern)
+```
+
+**Hooks (`hook`)** — many handlers per callback, source order, optional priority + default return:
 ```pawn
 hook OnFoo(a)     { ...; return HOOK_CONTINUE; }   // 1 run next / 0 = HOOK_CONTINUE_0
 hook:100 OnFoo(a) { ...; return HOOK_STOP;     }   // higher priority first; -1 cancels, returns 0
+hook default OnPlayerCommandText = 0;              // fall-through default (like YSI HOOK_RET)
 ```
 
 **Runtime hooks (`dynhook`, needs the companion plugin)**:
