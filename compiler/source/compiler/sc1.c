@@ -2483,12 +2483,13 @@ static void hook_emit_dispatchers(void)
  *  frame so that the value is returned to "foreach" just as the generator's
  *  own "retn" would have done.
  *
- *  Not supported yet (v1): a generator body may not declare locals, and may not
- *  take arguments -- both are lifted into the state block by a later step of
- *  experiment 009. Until then a generator with a local misbehaves (its frame is
- *  discarded across the suspend, so the block-exit stack adjustment no longer
- *  matches the allocation that the resume skipped), which is why "yield" is
- *  only exercised by generators whose body holds nothing but the yields.
+ *  A generator's scalar locals are "lifted" into the state block (see declloc()
+ *  and rvalue()/store() in sc4.c), so they survive across a suspend; they do not
+ *  occupy the stack frame, which is discarded on suspend and rebuilt on resume.
+ *
+ *  Not supported yet: array/string locals (only scalars fit a block slot -- they
+ *  are rejected in declloc), and user arguments (a later step of experiment 009
+ *  copies them into their slots on the first call).
  */
 
 /*  the sentinel that ends a generator's sequence: cellmin, the same value the
@@ -2618,6 +2619,7 @@ static void generator_emit_prologue(void)
 
   declared+=1;
   localsbase=-declared*(cell)sizeof(cell);
+  pc_genlocalsbase=localsbase; /* lifted-local access indexes off this cell */
   modstk(-(int)sizeof(cell));
   assert(curfunc!=NULL);
   if (curfunc->x.stacksize<declared+1)
@@ -3279,7 +3281,35 @@ static int declloc(int fstatic)
         litadd(0);
       sym=addvariable(name,(cur_lit+glb_declared)*sizeof(cell),ident,sSTATIC,
                       tag,dim,numdim,idxtag,pc_nestlevel);
+    } else if (pc_generator && ident==iVARIABLE) {
+      /* a scalar local of a coroutine generator is "lifted" into the state
+       * block instead of being allocated on the stack, so its value survives
+       * across a "yield" suspend (the stack frame is discarded on suspend and
+       * rebuilt on resume). It gets the next free block slot; "addr" is the
+       * slot's byte offset within the block (slot 0 is B[1], as B[0] is the
+       * continuation cell). "declared"/the stack are left untouched, so the
+       * frame stays balanced across the suspend. Access is emitted against the
+       * hidden "localsbase" cell (see rvalue()/store() in sc4.c). */
+      int slot=curfunc->genlocals;
+      sym=addvariable(name,(slot+1)*sizeof(cell),ident,sLOCAL,
+                      tag,dim,numdim,idxtag,pc_nestlevel);
+      sym->usage|=uLIFTED;
+      curfunc->genlocals=slot+1;
+      /* the initializer still stores through the lifted path below; open the
+       * staging buffer for it exactly as the on-stack case does */
+      assert(!staging);
+      stgset(TRUE);
+      assert(stgidx==0);
+      staging_start=stgidx;
     } else {
+      if (pc_generator && ident==iARRAY) {
+        /* array/string locals are not lifted in v1 (only scalars fit a block
+         * slot). Emitting the on-stack allocation below would unbalance the
+         * frame across a suspend and crash at run time, so reject it now; the
+         * error fails the compile, so no broken binary is produced. Task 6
+         * gives this its own diagnostic number. */
+        error(255,"a generator (\"yield\") may not declare an array or string local yet");
+      } /* if */
       declared+=(int)size;      /* variables are put on stack, adjust "declared" */
       sym=addvariable(name,-declared*sizeof(cell),ident,sLOCAL,
                       tag,dim,numdim,idxtag,pc_nestlevel);
@@ -4937,6 +4967,7 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
   pc_generator=generator_isgen(sym);
   if (pc_generator) {
     sym->usage|=uGENERATOR;
+    sym->genlocals=0;   /* recount lifted locals from scratch in this pass */
     generator_emit_prologue();
   } /* if */
   #if !defined SC_LIGHT
@@ -7300,8 +7331,9 @@ static int doforeach(void)
      * hidden first argument on every step, so the generator and the
      * "@yield.emit" helper both address the state through it.
      *
-     * Experiment 009 v1: the block holds only the continuation (B[0]); a
-     * generator with lifted locals extends it to L+1 cells (Task 2 on). */
+     * The block holds the continuation in B[0] and the generator's L lifted
+     * scalar locals in B[1..L] (L == gensym->genlocals, counted while the
+     * generator body was parsed), so its size is L+1 cells. */
     if (reverse)
       error(255,"\"foreach\" cannot reverse a generator (iterfunc); a generator defines its own order");
     if (sc_status!=statSKIP)
@@ -7312,7 +7344,7 @@ static int doforeach(void)
     /* hidden cell holding the state-block base, plus the block itself on the
      * AMX heap. "modheap" leaves the OLD heap top (== the block base) in ALT,
      * so the fill and the store of B need no address arithmetic. */
-    blkcells=1;                 /* L+1, with L == 0 (no lifted locals yet) */
+    blkcells=1+gensym->genlocals;   /* B[0] continuation + L lifted scalar locals */
     declared+=1;
     genaddr=-declared*(cell)sizeof(cell);
     modstk(-(int)sizeof(cell));
@@ -9659,7 +9691,7 @@ static void doreturn(void)
   } else {
     /* this return statement contains no expression */
     ldconst(0,sPRI);
-    if ((rettype & uRETVALUE)!=0 && (curfunc->flags & flagNAKED)==0) {
+    if ((rettype & uRETVALUE)!=0 && (curfunc->flags & flagNAKED)==0 && !pc_generator) {
       char symname[2*sNAMEMAX+16];      /* allow space for user defined operators */
       assert(curfunc!=NULL);
       funcdisplayname(symname,curfunc->name);

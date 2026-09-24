@@ -395,6 +395,36 @@ SC_FUNC void alignframe(int numbytes)
   code_idx+=opcodes(5)+opargs(4);
 }
 
+/*  Coroutine-generator lifted locals (experiment 009, Task 2)
+ *
+ *  A scalar local of a generator lives in the heap state block, not on the
+ *  stack, so its value survives across a "yield" suspend. Its symbol is flagged
+ *  uLIFTED and its "addr" is the byte offset of its slot within the block. The
+ *  block's base B is held in the hidden "localsbase" frame cell, whose frame
+ *  offset is "pc_genlocalsbase" (set by generator_emit_prologue). The absolute
+ *  data address of the local is therefore B + addr, i.e. *(FRM+localsbase)+addr.
+ *
+ *  These helpers emit the indexed access; the read/write/inc/dec/address code
+ *  below routes lifted locals through them instead of the "load.s"/"stor.s"/
+ *  "inc.s"/"dec.s"/"addr" stack-relative opcodes. No new opcodes are used.
+ */
+static int lifted_local(const symbol *sym)
+{
+  return sym!=NULL && (sym->usage & uLIFTED)!=0;
+}
+
+/*  PRI = B + addr  (the absolute address of the lifted local's slot). ALT is
+ *  left untouched. */
+static void lifted_slotaddr_pri(const symbol *sym)
+{
+  stgwrite("\tload.s.pri ");     /* PRI = B (state-block base) */
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");          /* PRI = B + addr (slot address) */
+  outval(sym->addr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+}
+
 /*  rvalue
  *
  *  Generate code to get the value of a symbol into "primary".
@@ -427,6 +457,14 @@ SC_FUNC void rvalue(value *lval)
   } else {
     /* direct or stack relative fetch */
     assert(sym!=NULL);
+    if (lifted_local(sym)) {
+      /* PRI = *(B + addr) */
+      lifted_slotaddr_pri(sym);   /* PRI = B + addr */
+      stgwrite("\tload.i\n");     /* PRI = [B + addr] */
+      code_idx+=opcodes(1);
+      markusage(sym,uREAD);
+      return;
+    } /* if */
     if (sym->vclass==sLOCAL)
       stgwrite("\tload.s.pri ");
     else
@@ -454,6 +492,21 @@ SC_FUNC void address(symbol *sym,regid reg)
 {
   assert(sym!=NULL);
   assert(reg==sPRI || reg==sALT);
+  if (lifted_local(sym)) {
+    /* the lifted local's address is B + addr, an absolute data address. For
+     * sPRI compute it directly (ALT untouched); for sALT route it through PRI
+     * (add.c only affects PRI) while preserving the caller's PRI. */
+    if (reg==sALT)
+      pushreg(sPRI);
+    lifted_slotaddr_pri(sym);     /* PRI = B + addr */
+    if (reg==sALT) {
+      stgwrite("\tmove.alt\n");    /* ALT = B + addr */
+      code_idx+=opcodes(1);
+      popreg(sPRI);               /* restore the caller's PRI */
+    } /* if */
+    markusage(sym,uREAD);
+    return;
+  } /* if */
   /* the symbol can be a local array, a global array, or an array
    * that is passed by reference.
    */
@@ -520,6 +573,22 @@ SC_FUNC void store(value *lval)
   } else {
     assert(sym!=NULL);
     markusage(sym,uWRITTEN);
+    if (lifted_local(sym)) {
+      /* *(B + addr) = PRI. The value to store is in PRI and must stay there
+       * (it is the expression result); ALT is preserved too, so this is a drop-
+       * in replacement for "stor.s.pri". add.c works on PRI only, so the slot
+       * address is computed in PRI and moved to ALT around the saved value. */
+      stgwrite("\tpush.alt\n");    /* save ALT */
+      stgwrite("\tpush.pri\n");    /* save the value */
+      code_idx+=opcodes(2);
+      lifted_slotaddr_pri(sym);    /* PRI = B + addr */
+      stgwrite("\tmove.alt\n");    /* ALT = B + addr (store address) */
+      stgwrite("\tpop.pri\n");     /* PRI = the value again */
+      stgwrite("\tstor.i\n");      /* [B + addr] = PRI */
+      stgwrite("\tpop.alt\n");     /* restore ALT */
+      code_idx+=opcodes(4);
+      return;
+    } /* if */
     if (sym->vclass==sLOCAL)
       stgwrite("\tstor.s.pri ");
     else
@@ -1288,6 +1357,21 @@ SC_FUNC void inc(value *lval)
   } else {
     /* local or global variable */
     assert(sym!=NULL);
+    if (lifted_local(sym)) {
+      /* ++*(B + addr), preserving PRI and ALT (as "inc.s" does) */
+      stgwrite("\tpush.pri\n");
+      stgwrite("\tpush.alt\n");
+      code_idx+=opcodes(2);
+      lifted_slotaddr_pri(sym);    /* PRI = B + addr */
+      stgwrite("\tmove.alt\n");    /* ALT = B + addr (store address) */
+      stgwrite("\tload.i\n");      /* PRI = [B + addr] (current value) */
+      stgwrite("\tinc.pri\n");     /* PRI = value + 1 */
+      stgwrite("\tstor.i\n");      /* [B + addr] = value + 1 */
+      stgwrite("\tpop.alt\n");
+      stgwrite("\tpop.pri\n");
+      code_idx+=opcodes(6);
+      return;
+    } /* if */
     if (sym->vclass==sLOCAL)
       stgwrite("\tinc.s ");
     else
@@ -1348,6 +1432,21 @@ SC_FUNC void dec(value *lval)
   } else {
     /* local or global variable */
     assert(sym!=NULL);
+    if (lifted_local(sym)) {
+      /* --*(B + addr), preserving PRI and ALT (as "dec.s" does) */
+      stgwrite("\tpush.pri\n");
+      stgwrite("\tpush.alt\n");
+      code_idx+=opcodes(2);
+      lifted_slotaddr_pri(sym);    /* PRI = B + addr */
+      stgwrite("\tmove.alt\n");    /* ALT = B + addr (store address) */
+      stgwrite("\tload.i\n");      /* PRI = [B + addr] (current value) */
+      stgwrite("\tdec.pri\n");     /* PRI = value - 1 */
+      stgwrite("\tstor.i\n");      /* [B + addr] = value - 1 */
+      stgwrite("\tpop.alt\n");
+      stgwrite("\tpop.pri\n");
+      code_idx+=opcodes(6);
+      return;
+    } /* if */
     if (sym->vclass==sLOCAL)
       stgwrite("\tdec.s ");
     else

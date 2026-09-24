@@ -154,6 +154,9 @@ typedef struct s_symbol {
   int lnumber;          /* line number (in the current source file) for the declaration */
   struct s_symbol **refer;  /* referrer list, functions that "use" this symbol */
   int numrefers;        /* number of entries in the referrer list */
+  int genlocals;        /* coroutine generator (uGENERATOR): number of scalar
+                         * locals lifted into its state block (block size = this
+                         * + 1 for the continuation cell; see doforeach) */
   char *documentation;  /* optional documentation string */
 } symbol;
 
@@ -256,6 +259,11 @@ typedef struct s_hookgroup {
  * an "iterfunc" declared without parameters): "foreach" resumes it via a saved
  * continuation instead of calling it fresh each step (see the yield docs) */
 #define uGENERATOR  0x10000
+/* a local variable of a coroutine generator that is "lifted" into the state
+ * block: it lives at localsbase + addr (a heap slot) instead of on the stack,
+ * so its value survives across a "yield" suspend. Reads/writes emit indexed
+ * access against the hidden "localsbase" cell (see rvalue()/store() in sc4.c). */
+#define uLIFTED     0x20000
 /* uRETNONE is not stored in the "usage" field of a symbol. It is
  * used during parsing a function, to detect a mix of "return;" and
  * "return value;" in a few special cases.
@@ -1021,6 +1029,9 @@ SC_VDECL int stgidx;          /* index to the staging buffer */
 SC_VDECL int sc_labnum;       /* number of (internal) labels */
 SC_VDECL int staging;         /* true if staging output */
 SC_VDECL cell declared;       /* number of local cells declared */
+SC_VDECL cell pc_genlocalsbase;/* frame offset of a coroutine generator's hidden
+                               * "localsbase" cell (base of its state block);
+                               * used to emit lifted-local access (see sc4.c) */
 SC_VDECL cell glb_declared;   /* number of global cells declared */
 SC_VDECL cell code_idx;       /* number of bytes with generated code */
 SC_VDECL int ntv_funcid;      /* incremental number of native function */

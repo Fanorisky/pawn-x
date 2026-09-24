@@ -1,14 +1,14 @@
 {
   'test_type': 'runtime',
   'output': """
-v 0
+e 0
 
-v 1
+e 2
 
-v 2
+e 4
 
 done
 
-yield_simple.amx returns 0
+yield_continue.amx returns 0
 """
 }

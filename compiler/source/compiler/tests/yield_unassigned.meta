@@ -1,14 +1,10 @@
 {
   'test_type': 'runtime',
   'output': """
-v 0
-
-v 1
-
-v 2
+u 0
 
 done
 
-yield_simple.amx returns 0
+yield_unassigned.amx returns 0
 """
 }

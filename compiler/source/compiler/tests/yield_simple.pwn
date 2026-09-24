@@ -1,15 +1,16 @@
 #include <console>
 #include <foreach>
 
-// A generator that yields two constants, with no loop-carried locals yet.
-iterfunc Pair()
+// A generator whose loop variable "i" is a lifted local: it must survive
+// across each "yield" suspend so the loop advances 0, 1, 2.
+iterfunc Count()
 {
-	yield return 10;
-	yield return 20;
+	for (new i = 0; i != 3; ++i)
+		yield return i;
 }
 
 main()
 {
-	foreach (new v : Pair()) printf("pair %d\n", v);
+	foreach (new v : Count()) printf("v %d\n", v);
 	printf("done\n");
 }
