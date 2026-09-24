@@ -1797,6 +1797,15 @@ static int pc_iterfunc=FALSE;
  * argument count) and, in the addressing pass that first discovers a "yield",
  * while the body is being parsed. */
 static int pc_generator=FALSE;
+/* the value of "declared" right after a generator's prologue reserves its cells
+ * -- the baseline at which the body begins, with every scalar local/param lifted
+ * into the state block and so NOT counted here. A "yield" is only sound while
+ * "declared" is still at this baseline: any live stack storage beyond it (e.g. a
+ * nested "foreach"'s loop/hidden cells) is discarded by the suspend and rebuilt
+ * as garbage on resume, so doyield() rejects a "yield" seen above it (error 099).
+ * Set in generator_emit_prologue(), which runs on every pass whose addresses
+ * matter, so the guard is two-pass stable. */
+static cell pc_gen_baseline=0;
 
 /* native "hook" support (experiment 004): registry of hooked callbacks for the
  * current parse pass, plus the routines that register a hook and synthesise the
@@ -2708,6 +2717,11 @@ static void generator_emit_prologue(void)
     stgwrite("\tstor.i\n");     /* *(B + slot) = parameter */
     code_idx+=opcodes(1);
   } /* for */
+
+  /* the body begins here: "declared" now counts only the one prologue cell
+   * (lifted params/locals live in the state block, off-stack). Record it as the
+   * "no live stack storage" baseline the "yield" guard in doyield() checks. */
+  pc_gen_baseline=declared;
 }
 
 /*  doyield - parse "yield return <expr>;" and emit the suspend.
@@ -2740,6 +2754,20 @@ static void doyield(void)
     pc_generator=TRUE;
     curfunc->usage|=uGENERATOR;
     sc_reparse=TRUE;
+  } /* if */
+  if (pc_generator && declared>pc_gen_baseline) {
+    /* a live stack cell exists beyond the prologue's single reserved cell -- a
+     * construct inside the body (e.g. a nested "foreach") allocated loop/hidden
+     * cells that are NOT lifted into the state block. The suspend discards the
+     * frame and the resume rebuilds it with only the prologue cell, so that
+     * storage would be garbage on resume (a silent runtime hang). Reject it
+     * rather than miscompile; the compile fails, so no broken binary is emitted.
+     * error() suppresses this (number<100) outside the statWRITE pass, and the
+     * comparison is derived from prologue-set, pass-stable data, so the guard
+     * fires identically in both passes. */
+    error(99);
+    lexclr(TRUE);
+    return;
   } /* if */
   if (!needtoken(tRETURN)) {
     lexclr(TRUE);

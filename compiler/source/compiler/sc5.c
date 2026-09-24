@@ -137,7 +137,8 @@ static char *errmsg[] = {
 /*095*/  "\"yield\" is only valid inside an iterfunc generator\n",
 /*096*/  "a local array cannot span a \"yield\"\n",
 /*097*/  "\"yield\" is a statement, not an expression\n",
-/*098*/  "a generator cannot combine \"yield\" with a reference/cur parameter\n"
+/*098*/  "a generator cannot combine \"yield\" with a reference/cur parameter\n",
+/*099*/  "a \"yield\" cannot appear where stack storage is live (e.g. inside a nested \"foreach\") in v1\n"
 };
 
 static char *fatalmsg[] = {
