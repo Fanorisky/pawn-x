@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+orig 1
+
+orig 101
+
+r 102
+
+chook_multi.amx returns 0
+"""
+}

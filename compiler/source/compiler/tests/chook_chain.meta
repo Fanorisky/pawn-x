@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+A 7
+
+B 7
+
+base 7
+
+r 18
+
+chook_chain.amx returns 0
+"""
+}
