@@ -1843,6 +1843,41 @@ static int callhook_inject_idx=0;
 static callhookgroup *callhook_find(const char *name);
 static void callhook_parse(int modifier,int prio);
 
+/* Persistent set of native names that have been hooked at least once during
+ * THIS compile. Unlike callhook_registry (rebuilt every pass by callhook_reset)
+ * this list survives resetglobals so it can gate a one-shot reparse: the first
+ * time a native is hooked we force one extra addressing pass, after which the
+ * name is already "seen" and no further reparse is requested (monotonic ->
+ * converges). The redirect itself is size-stable because uCALLHOOK is set on the
+ * native at registration time in callhook_parse (see the note there); this set
+ * only prevents the reparse from looping and is the hook Task 4 will consult to
+ * pre-mark a native at its declaration for forward references. */
+typedef struct s_chooknativepersist {
+  struct s_chooknativepersist *next;
+  char name[sNAMEMAX+1];
+} chooknativepersist;
+static chooknativepersist *chook_native_seen=NULL;
+static int chook_native_is_seen(const char *name)
+{
+  chooknativepersist *p;
+  for (p=chook_native_seen; p!=NULL; p=p->next)
+    if (strcmp(p->name,name)==0)
+      return TRUE;
+  return FALSE;
+}
+static void chook_native_mark_seen(const char *name)
+{
+  chooknativepersist *p;
+  if (chook_native_is_seen(name))
+    return;
+  p=(chooknativepersist*)malloc(sizeof(chooknativepersist));
+  if (p==NULL)
+    return;                     /* out of memory: skip the reparse gate, not fatal */
+  strcpy(p->name,name);
+  p->next=chook_native_seen;
+  chook_native_seen=p;
+}
+
 /* coroutine generator ("yield") support; see the comment block above
  * generator_emit_helper() */
 static symbol *generator_helper(void);
@@ -2556,21 +2591,30 @@ static void callhook_parse(int modifier,int prio)
   symbol *tsym,*body,*wrapper,*chain,*save_disp;
   callhookgroup *grp;
 
-  /* TEMPORARY Task-1 scaffolding: only "hook function" is size-neutral at the
-   * call choke-point (call <-> call). Redirecting a NATIVE call site would turn
-   * a 4-cell "sysreq.c"+"stack" into a 2-cell "call wrapper" between the
-   * addressing and code passes and desynchronise every following address (a
-   * silent miscompile); "stock" is not validated yet either. Reject those two
-   * modifiers cleanly here, consuming the whole declaration so no cascade
-   * follows. Lift this per-modifier: Task 3 implements "hook native" (drop the
-   * CHOOK_NATIVE arm), Task 4 implements "hook stock" (drop the CHOOK_STOCK arm). */
-  if (modifier==CHOOK_NATIVE || modifier==CHOOK_STOCK) {
+  /* TEMPORARY scaffolding: "hook stock" is not validated yet (Task 4). Reject it
+   * cleanly here, consuming the whole declaration so no cascade follows.
+   *
+   * "hook native" (Task 3) IS supported below. Unlike a pawn function -- whose
+   * call site is size-neutral under redirect (2-cell "call orig" <-> 2-cell
+   * "call wrapper") -- a native call site is NOT: an un-redirected native emits a
+   * 4-cell "sysreq.c"+"stack" (ffcall, sc4.c), a redirected one a 2-cell "call
+   * wrapper". If the flag that drives the redirect were only set at end-of-parse
+   * (callhook_emit), the addressing pass would emit "sysreq" (flag unset) and the
+   * write pass "call wrapper" (flag set): a 4->2 shift desynchronising every
+   * following address. The yield/uGENERATOR trick of persisting the flag on the
+   * symbol across passes does NOT work for a native: delete_symbols() always
+   * frees native symbols between passes (sc2.c: mustdelete |= uNATIVE), so the
+   * flag cannot ride the symbol. Instead we set uCALLHOOK on the native at
+   * REGISTRATION time (this parse point) -- which is re-executed on every pass,
+   * ahead of the (hook-before-call) call sites -- so BOTH the final addressing
+   * pass and the write pass emit "call wrapper" consistently. A one-shot
+   * sc_reparse (gated by a persistent name set so it converges) backs this up and
+   * is the groundwork Task 4's forward references rely on. */
+  if (modifier==CHOOK_STOCK) {
     int depth=0,seen=0,t;
     cell v;
     char *s;
-    error(255, (modifier==CHOOK_NATIVE)
-               ? "hook native is not yet supported in this build (implemented in a later task)"
-               : "hook stock is not yet supported in this build (implemented in a later task)");
+    error(255, "hook stock is not yet supported in this build (implemented in a later task)");
     /* skip the target name, argument list and body block, so the parser stays
      * in sync (the declaration is otherwise well-formed) */
     while (freading) {
@@ -2604,6 +2648,20 @@ static void callhook_parse(int modifier,int prio)
   tsym=findglb(target,sGLOBAL);
   if (tsym==NULL || tsym->ident!=iFUNCTN) {
     error(17,target);           /* undefined symbol */
+    lexclr(TRUE);
+    return;
+  } /* if */
+
+  /* the modifier must match the target's kind, or we would miscompile the
+   * original-endpoint (a native needs a SYSREQ, a pawn function a "call").
+   * Task 5 owns the polished diagnostic; here we only refuse to miscompile. */
+  if (modifier==CHOOK_NATIVE && (tsym->usage & uNATIVE)==0) {
+    error(255, "hook native target is not a native function");
+    lexclr(TRUE);
+    return;
+  } /* if */
+  if (modifier==CHOOK_FUNCTION && (tsym->usage & uNATIVE)!=0) {
+    error(255, "hook function target is a native (use \"hook native\")");
     lexclr(TRUE);
     return;
   } /* if */
@@ -2664,6 +2722,25 @@ static void callhook_parse(int modifier,int prio)
   hook_set_prototype(chain,tsym); /* chain's declared args = target args (for continue) */
   grp->wrapper=wrapper;
   grp->dispatcher=chain;
+
+  /* Native size-stability (see the long note at the top of this function): mark
+   * the native uCALLHOOK NOW, at registration time, not at end-of-parse. This
+   * parse point is re-executed on every pass ahead of the (hook-before-call)
+   * call sites, so the call-site choke-point (callhook_target_wrapper) redirects
+   * to the 2-cell "call wrapper" in the final addressing pass AND the write pass
+   * alike -- no 4-cell "sysreq"->2-cell "call" shift between passes. (The native
+   * symbol is freed by delete_symbols between passes, so the flag cannot persist
+   * on it the way uGENERATOR does for a pawn function; re-establishing it here
+   * each pass is what keeps it stable.) The first time a given native is hooked,
+   * force one extra addressing pass; the persistent "seen" set makes that
+   * one-shot so the initial-scan loop converges. */
+  if (modifier==CHOOK_NATIVE) {
+    tsym->usage|=uCALLHOOK;
+    if (!chook_native_is_seen(target)) {
+      chook_native_mark_seen(target);
+      sc_reparse=TRUE;
+    } /* if */
+  } /* if */
 
   /* pre-mark the body "read" so its code is not skipped in the write pass before
    * the dispatcher (emitted later) records the reference to it (mirrors dohook) */
@@ -2750,7 +2827,11 @@ static void callhook_emit(void)
     /* mark the target as hooked so its call sites redirect to the wrapper; the
      * flag persists into the next pass (reduce_referrers only clears uREAD). */
     orig->usage|=uCALLHOOK;
-    markusage(orig,uREAD);      /* dispatcher's tail-call keeps the original alive */
+    if ((orig->usage & uNATIVE)==0)
+      markusage(orig,uREAD);    /* pawn function: dispatcher's tail-call keeps it alive.
+                                 * A NATIVE is marked uREAD only AFTER its ffcall below,
+                                 * so ffcall's lazy SYSREQ-id assignment (which requires
+                                 * uREAD clear) still fires -- see the default case. */
     markusage(wrapper,uREAD);
     markusage(chain,uREAD);
 
@@ -2809,7 +2890,28 @@ static void callhook_emit(void)
       code_idx+=opcodes(1)+opargs(1);
     } /* for */
     pushval(argbytes_orig);
+    /* For a NATIVE original, ffcall emits "sysreq.c <id>" and assigns the native
+     * id lazily -- but only in the write pass and only while uREAD is clear
+     * (sc4.c). Every user call site is redirected to the wrapper, so this
+     * dispatcher tail is the ONLY real SYSREQ for the native; the call site's
+     * markusage(...,uREAD) (sc3.c) may already have set the flag, which would
+     * skip the id assignment and leave a hole in the natives table. Clear it just
+     * for this emission, then mark it read again so the native lands in the
+     * table. (A pawn original was already marked read above; ffcall emits a
+     * plain "call", no id involved.) */
+    if ((orig->usage & uNATIVE)!=0)
+      orig->usage&=~uREAD;
     ffcall(orig,NULL,argcount);           /* pawn -> call, native -> sysreq (ffcall decides) */
+    if ((orig->usage & uNATIVE)!=0) {
+      markusage(orig,uREAD);
+      /* count the library this native belongs to, mirroring the ordinary call
+       * site (sc3.c): the dispatcher tail is a real call, so its library must be
+       * listed even if every user call site was redirected to the wrapper. The
+       * value is a usage threshold (>0), so overlapping with a call site's own
+       * increment is harmless. */
+      if (orig->x.lib!=NULL)
+        orig->x.lib->value+=1;
+    } /* if */
     pc_emit_orig=0;
     ffret(TRUE);
     /* one body call per slot: body k(idx, args) */

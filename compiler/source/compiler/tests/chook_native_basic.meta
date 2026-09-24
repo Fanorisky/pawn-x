@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+max=7
+
+r 7
+
+chook_native_basic.amx returns 0
+"""
+}
