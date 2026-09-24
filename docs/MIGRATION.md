@@ -50,6 +50,7 @@ bare `___` forwards all of them.
 | `Iterator:Player` (auto-maintained) | `#include <players>` → `Player` |
 | `Iterator:Vehicle` / `Actor` | `#include <vehicles>` / `<actors>` → `Vehicle_Create`/`Actor_Create` wrappers |
 | custom `iterfunc` needing state (Fib) | `iterfunc Name(&acc, cur, ...)` (leading ref = persistent state) |
+| `#define Iterator@N iteryield` + `iterfunc N() { yield return x; }` | `iterfunc N() { yield return x; }` (no `iteryield` define — pawn-x detects `yield`) |
 
 Note the model difference: YSI is an **index-set** (values must be `< cap`);
 pawn-x is a **value-set** (sorted distinct values, any magnitude the array

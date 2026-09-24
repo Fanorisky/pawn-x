@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+u 0
+
+u 1
+
+u 2
+
+done
+
+yield_umbrella.amx returns 0
+"""
+}

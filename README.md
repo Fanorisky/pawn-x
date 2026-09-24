@@ -26,6 +26,7 @@ Two pillars, split by *when the information exists*:
 | `___` varargs forwarding | `y_va` | exp 001, 005 |
 | `foreach` + `set*` natives (+ multi-dim) | `y_iterate` / `y_foreach` | exp 002/003/005 |
 | `iterfunc` generators | y_iterate custom iterators | exp 003 |
+| `yield` coroutine generators | `#define Iterator@N iteryield` + `yield` | tests `yield_*` |
 | `hook` keyword (+ `hook:N` priority) | `y_hooks` (compile-time) | exp 004/005 |
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
 
@@ -83,6 +84,12 @@ foreach (new p : grid[vid]) { }
 iterfunc stock Count(cur, lo, hi) { if (cur==ITER_STOP) return lo<hi?lo:ITER_STOP; return cur+1<hi?cur+1:ITER_STOP; }
 foreach (new i : Count(0, 10)) { }
 iterfunc stock Fib(&acc, cur, lim) { ... }   // leading &ref = persistent state (Fibonacci etc.)
+```
+
+**Coroutine generators (`yield`)** — write the sequence straight-line; each `yield return` suspends and resumes on the next step (no `#define Iterator@N iteryield` needed, unlike YSI):
+```pawn
+iterfunc Count(n) { for (new i = 0; i != n; ++i) yield return i; }   // scalar locals only
+foreach (new v : Count(3)) { }               // v = 0, 1, 2; `return;` ends the sequence
 ```
 
 **Entity iterators** — ready-made connected-players / tracked-vehicle sets:
