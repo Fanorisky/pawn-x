@@ -1,0 +1,28 @@
+{
+  'test_type': 'runtime',
+  'output': """
+s 0
+
+s 10
+
+s 20
+
+s 30
+
+s 40
+
+s 50
+
+s 60
+
+s 70
+
+s 80
+
+s 90
+
+done
+
+yield_params.amx returns 0
+"""
+}

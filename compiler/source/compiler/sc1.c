@@ -2611,11 +2611,26 @@ static void generator_emit_helper(void)
  *  B[0] is the continuation to resume at. It is 0 on the first call, which
  *  must run the body from the top; otherwise "sctrl 6" jumps straight back to
  *  the instruction after the "yield" that suspended the generator.
+ *
+ *  A generator's user parameters are LIFTED into block slots, exactly like its
+ *  scalar locals (Task 2). The parameters take the first slots (0..P-1) and the
+ *  body's locals continue from slot P in declloc(), so param slots and local
+ *  slots never collide -- "genlocals" is the single running slot counter for
+ *  both. This makes a parameter mutable and lets its value survive a "yield"
+ *  suspend. The real calling convention is Gen(B, p0, p1, ...): B is the hidden
+ *  arg0 at FRM+12, so a parameter declared by declargs() at frame offset "off"
+ *  is physically passed one cell higher (at off+sizeof(cell)). On the FRESH call
+ *  each parameter is copied from that incoming stack location into its block
+ *  slot; on a RESUME the copies are skipped (the block already holds the state).
  */
 static void generator_emit_prologue(void)
 {
   int lbl_fresh;
   cell localsbase;
+  symbol *sym;
+  int slot,nparm,pi;
+  cell parmphys[sMAXARGS];      /* incoming stack offset of each lifted param */
+  cell parmslot[sMAXARGS];      /* block byte-offset of each lifted param slot */
 
   declared+=1;
   localsbase=-declared*(cell)sizeof(cell);
@@ -2624,6 +2639,29 @@ static void generator_emit_prologue(void)
   assert(curfunc!=NULL);
   if (curfunc->x.stacksize<declared+1)
     curfunc->x.stacksize=declared+1;
+
+  /* lift each user parameter into a block slot (they occupy the first slots;
+   * body locals in declloc() continue after them). Only local symbols exist yet
+   * (define_args() ran; no body local is declared before the prologue), so every
+   * symbol in loctab is a parameter. Only scalars fit a single slot; an array or
+   * by-reference parameter cannot be lifted, so it is rejected. */
+  nparm=0;
+  for (sym=loctab.next; sym!=NULL; sym=sym->next) {
+    assert(sym->vclass==sLOCAL);
+    if (sym->ident!=iVARIABLE) {
+      error(255,"a generator (\"yield\") may not take an array or reference parameter yet");
+      continue;
+    } /* if */
+    if (nparm>=sMAXARGS)
+      break;                    /* declargs() already capped the count */
+    slot=curfunc->genlocals;
+    parmphys[nparm]=sym->addr+(cell)sizeof(cell); /* B shifts every user arg up one cell */
+    parmslot[nparm]=(cell)(slot+1)*sizeof(cell);  /* B[0] is the continuation */
+    sym->addr=parmslot[nparm];  /* body access now indexes the block (see sc4.c) */
+    sym->usage|=uLIFTED;
+    curfunc->genlocals=slot+1;
+    nparm++;
+  } /* for */
 
   stgwrite("\tload.s.pri ");    /* PRI = arg0 = B (the state block) */
   outval(3*sizeof(cell),TRUE);
@@ -2638,6 +2676,25 @@ static void generator_emit_prologue(void)
   stgwrite("\tsctrl 6\n");      /* resume: CIP = B[0] */
   code_idx+=opcodes(1)+opargs(1);
   setlabel(lbl_fresh);
+
+  /* FRESH path only: copy each incoming user parameter into its block slot, so
+   * it is readable in the body and survives resumption. ALT/PRI are free here.
+   *   ALT = B + slot   (destination);   PRI = incoming arg;   *(ALT) = PRI */
+  for (pi=0; pi<nparm; pi++) {
+    stgwrite("\tload.s.pri ");  /* PRI = B */
+    outval(localsbase,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tadd.c ");       /* PRI = B + slot (the block slot address) */
+    outval(parmslot[pi],TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tmove.alt\n");   /* ALT = B + slot (destination) */
+    code_idx+=opcodes(1);
+    stgwrite("\tload.s.pri ");  /* PRI = incoming parameter value */
+    outval(parmphys[pi],TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tstor.i\n");     /* *(B + slot) = parameter */
+    code_idx+=opcodes(1);
+  } /* for */
 }
 
 /*  doyield - parse "yield return <expr>;" and emit the suspend.
@@ -7318,7 +7375,7 @@ static int doforeach(void)
   } /* if */
 
   if (gensym!=NULL && (gensym->usage & uGENERATOR)!=0) {
-    /* --- COROUTINE PATH: foreach (new i : Gen()) ---
+    /* --- COROUTINE PATH: foreach (new i : Gen(args...)) ---
      * Gen is a generator that uses "yield": instead of being called fresh with
      * the running state, it is RESUMED where it last suspended, until it runs
      * off its end (or "return"s), which yields ITER_STOP (== cellmin) and ends
@@ -7332,19 +7389,51 @@ static int doforeach(void)
      * "@yield.emit" helper both address the state through it.
      *
      * The block holds the continuation in B[0] and the generator's L lifted
-     * scalar locals in B[1..L] (L == gensym->genlocals, counted while the
-     * generator body was parsed), so its size is L+1 cells. */
+     * slots in B[1..L] (L == gensym->genlocals) -- the user parameters take the
+     * first slots and the body's scalar locals the rest, both counted while the
+     * generator body was parsed -- so its size is L+1 cells. The user args are
+     * evaluated once here and pushed after B on every step; the prologue copies
+     * them into their slots on the fresh call. */
     if (reverse)
       error(255,"\"foreach\" cannot reverse a generator (iterfunc); a generator defines its own order");
     if (sc_status!=statSKIP)
       markusage(gensym,uREAD);
-    needtoken(')');             /* close "Gen(" -- generators take no user args yet */
+
+    /* the call's user args (Gen(a,b,...)): evaluate each ONCE here (they are
+     * loop-invariant) and cache in a hidden loop cell, exactly as the re-entrant
+     * generator path does below. On every resume step they are pushed unchanged
+     * after B; the generator prologue copies them into their block slots on the
+     * FRESH call so a parameter is mutable and survives across a "yield". */
+    nuser=0;
+    if (!matchtoken(')')) {
+      do {
+        if (nuser>=sMAXARGS-1) {
+          error(45);            /* too many function arguments */
+          break;
+        } /* if */
+        argident=expression(&val,NULL,NULL,FALSE);   /* leaves the value in PRI */
+        if (argident==iARRAY || argident==iREFARRAY)
+          error(35,nuser+2);    /* argument type mismatch: arrays are not supported here */
+        else if (argident==iCONSTEXPR)
+          ldconst(val,sPRI);    /* a constant is not auto-loaded -- force it into PRI */
+        declared+=1;
+        argaddr[nuser]=-declared*(cell)sizeof(cell);
+        modstk(-(int)sizeof(cell));
+        if (curfunc->x.stacksize<declared+1)
+          curfunc->x.stacksize=declared+1;
+        stgwrite("\tstor.s.pri ");
+        outval(argaddr[nuser],TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+        nuser++;
+      } while (matchtoken(','));
+      needtoken(')');           /* close "Gen(" after its user args */
+    } /* if */
     needtoken(')');             /* close "foreach(" */
 
     /* hidden cell holding the state-block base, plus the block itself on the
      * AMX heap. "modheap" leaves the OLD heap top (== the block base) in ALT,
      * so the fill and the store of B need no address arithmetic. */
-    blkcells=1+gensym->genlocals;   /* B[0] continuation + L lifted scalar locals */
+    blkcells=1+gensym->genlocals;   /* B[0] continuation + L lifted params & locals */
     declared+=1;
     genaddr=-declared*(cell)sizeof(cell);
     modstk(-(int)sizeof(cell));
@@ -7372,14 +7461,21 @@ static int doforeach(void)
     lbl_cond=getlabel();
     setline(TRUE);
     setlabel(lbl_cond);
-    /* call Gen(B): one hidden argument, then the byte count. "retn" pops the
-     * argument, so STK is restored on return and PRI holds the next value (or
+    /* call Gen(B, arg0, ..., argN-1): B is the hidden arg0, so the user args are
+     * pushed first in reverse order (last param first) and B is pushed LAST, to
+     * land arg0==B at FRM+12 and the user args just above it. "retn" pops them
+     * all, so STK is restored on return and PRI holds the next value (or
      * ITER_STOP). */
-    stgwrite("\tpush.s ");
+    for (ai=nuser-1; ai>=0; ai--) {
+      stgwrite("\tpush.s ");
+      outval(argaddr[ai],TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* for */
+    stgwrite("\tpush.s ");       /* B is arg0 -- pushed last */
     outval(genaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
-    pushval(sizeof(cell));      /* one argument (B), in bytes */
-    ffcall(gensym,NULL,1);
+    pushval((cell)(nuser+1)*sizeof(cell));   /* B + nuser user args, in bytes */
+    ffcall(gensym,NULL,nuser+1);
 
     /* if (PRI == ITER_STOP) goto exit */
     stgwrite("\tconst.alt ");
