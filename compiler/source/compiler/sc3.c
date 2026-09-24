@@ -2583,6 +2583,9 @@ static int nesting=0;
   int fwdcompat=FALSE; /* TRUE when a script symbol "___" must keep its */
                     /* usual meaning (the current function has no variable */
                     /* argument list, so "___" cannot forward anything) */
+  int redirected=FALSE; /* TRUE when this call site was redirected to a call-hook
+                    * wrapper (uCALLHOOK target); the original native is then not
+                    * marked uREAD here -- see the redirect block below */
   value lval = {0};
   arginfo *arg;
   char arglist[sMAXARGS];
@@ -3148,6 +3151,7 @@ static int nesting=0;
       symbol *wrap=callhook_target_wrapper(sym);
       if (wrap!=NULL) {
         callee=wrap;
+        redirected=TRUE;
         markusage(wrap,uREAD);
       } /* if */
     } /* if */
@@ -3161,8 +3165,14 @@ static int nesting=0;
      */
     fwdpopnative((int)fwdskip);
   } /* if */
-  if (sc_status!=statSKIP)
-    markusage(sym,uREAD);       /* do not mark as "used" when this call itself is skipped */
+  if (sc_status!=statSKIP && !(redirected && (sym->usage & uNATIVE)!=0))
+    markusage(sym,uREAD);       /* do not mark as "used" when this call itself is skipped.
+                                 * A REDIRECTED native call is NOT marked here: the real
+                                 * SYSREQ (and thus the native-id assignment) happens in the
+                                 * dispatcher tail (callhook_emit), and that path needs uREAD
+                                 * to unambiguously mean "a non-redirected sysreq already
+                                 * assigned an id" so it can reuse it instead of assigning a
+                                 * second, conflicting one. The wrapper is marked read above. */
   if ((sym->usage & uNATIVE)!=0 &&sym->x.lib!=NULL)
     sym->x.lib->value += 1;     /* increment "usage count" of the library */
   modheap(-heapalloc*sizeof(cell));

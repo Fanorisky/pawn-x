@@ -2891,19 +2891,20 @@ static void callhook_emit(void)
     } /* for */
     pushval(argbytes_orig);
     /* For a NATIVE original, ffcall emits "sysreq.c <id>" and assigns the native
-     * id lazily -- but only in the write pass and only while uREAD is clear
-     * (sc4.c). Every user call site is redirected to the wrapper, so this
-     * dispatcher tail is the ONLY real SYSREQ for the native; the call site's
-     * markusage(...,uREAD) (sc3.c) may already have set the flag, which would
-     * skip the id assignment and leave a hole in the natives table. Clear it just
-     * for this emission, then mark it read again so the native lands in the
-     * table. (A pawn original was already marked read above; ffcall emits a
-     * plain "call", no id involved.) */
-    if ((orig->usage & uNATIVE)!=0)
-      orig->usage&=~uREAD;
+     * id lazily (sc4.c), in the write pass, only while uREAD is clear. Two cases:
+     *   - uREAD clear: no non-redirected call site emitted a sysreq for this
+     *     native, so this dispatcher tail is the first & only real sysreq --
+     *     ffcall assigns the id here.
+     *   - uREAD set: a REAL (non-redirected, e.g. lexically-before-the-hook) call
+     *     site already emitted a sysreq and ffcall assigned it an id; we must
+     *     REUSE that id. So we do NOT clear uREAD -- clearing it would make ffcall
+     *     assign a SECOND, different id to the same native (double id -> a hole /
+     *     out-of-bounds write in the natives table, sc6.c, and a runtime error 19).
+     * Redirected call sites deliberately do not set uREAD on the original
+     * (sc3.c), so uREAD here means exactly "a real sysreq already exists". */
     ffcall(orig,NULL,argcount);           /* pawn -> call, native -> sysreq (ffcall decides) */
     if ((orig->usage & uNATIVE)!=0) {
-      markusage(orig,uREAD);
+      markusage(orig,uREAD);              /* count the native in the natives table */
       /* count the library this native belongs to, mirroring the ordinary call
        * site (sc3.c): the dispatcher tail is a real call, so its library must be
        * listed even if every user call site was redirected to the wrapper. The

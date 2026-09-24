@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+early 20
+
+hooked=7
+
+late 7
+
+chook_native_forward.amx returns 0
+"""
+}
