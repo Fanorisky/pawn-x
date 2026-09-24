@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+pre 5
+
+orig 5
+
+post 50
+
+result 51
+
+chook_function.amx returns 0
+"""
+}

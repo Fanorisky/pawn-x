@@ -186,6 +186,41 @@ typedef struct s_hookgroup {
   hookslot *slots;              /* ordered hook slots (source order, then priority-sorted) */
 } hookgroup;
 
+/*  Native CALL-SITE hook support (experiment 010): "hook function|native|stock
+ *  Name(args) { ... }" intercepts every in-unit call to "Name", routing it
+ *  through a synthesised wrapper -> chain dispatcher -> hook body(s) -> original,
+ *  with "continue(args)" advancing the chain. Unlike callback hooks (above), the
+ *  hooked symbol keeps its name; the wrapper/dispatcher/bodies are hidden
+ *  "@chook.Name.*" functions and call sites are redirected at the ffcall
+ *  choke-point via the uCALLHOOK flag. The registry is rebuilt each parse pass
+ *  (callhook_reset) so the synthesised addresses stay consistent across passes.
+ *
+ *  Runtime shape (all ordinary call/push/retn, no new opcodes):
+ *    wrapper   @chook.Name.wrap(args)      -> return @chook.Name.chain(0, args)
+ *    dispatch  @chook.Name.chain(idx,args) -> switch(idx): k -> body k; else orig
+ *    body      @chook.Name.<seq>(idx,args) -> user code; continue(a) -> chain(idx+1,a)
+ */
+#define CHOOK_FUNCTION 1
+#define CHOOK_NATIVE   2
+#define CHOOK_STOCK    3
+typedef struct s_callhookslot {  /* one call-hook body in a target's chain */
+  symbol *fn;                    /* the hidden body function (@chook.Name.<seq>) */
+  int prio;                      /* chain priority (higher runs first; default 0) */
+} callhookslot;
+typedef struct s_callhookgroup {
+  struct s_callhookgroup *next;
+  char name[sNAMEMAX+1];         /* the hooked target name (keeps its own name) */
+  int modifier;                  /* CHOOK_FUNCTION / CHOOK_NATIVE / CHOOK_STOCK */
+  int count;                     /* number of hook bodies recorded (next seq) */
+  int capacity;                  /* allocated slots in "slots" */
+  int argcount;                  /* target's argument count (shared signature) */
+  int tag;                       /* target's result tag */
+  callhookslot *slots;           /* hook bodies (source order; priority-sorted at emit) */
+  symbol *wrapper;               /* @chook.Name.wrap : owns the call sites (redirect target) */
+  symbol *dispatcher;            /* @chook.Name.chain : the switch(idx) dispatcher */
+  symbol *orig;                  /* the original target symbol (pawn body or native) */
+} callhookgroup;
+
 
 /*  Possible entries for "ident". These are used in the "symbol", "value"
  *  and arginfo structures. Not every constant is valid for every use.
@@ -264,6 +299,13 @@ typedef struct s_hookgroup {
  * so its value survives across a "yield" suspend. Reads/writes emit indexed
  * access against the hidden "localsbase" cell (see rvalue()/store() in sc4.c). */
 #define uLIFTED     0x20000
+/* call-site hook target (experiment 010): a pawn function / native / stock that
+ * is hooked by "hook function|native|stock Name(...)". Every in-unit call to the
+ * symbol is redirected to its synthesised wrapper "@chook.Name.wrap" at the call
+ * choke-point (callfunction() in sc3.c). Set at end-of-parse (callhook_emit) so
+ * it persists into the next pass (reduce_referrers only clears uREAD|uWRITTEN),
+ * which is what makes the redirect decl-order-independent and pass-stable. */
+#define uCALLHOOK   0x40000
 /* uRETNONE is not stored in the "usage" field of a symbol. It is
  * used during parsing a function, to detect a mix of "return;" and
  * "return value;" in a few special cases.
@@ -747,6 +789,10 @@ long pc_lengthbin(void *handle); /* return the length of the file */
 /* function prototypes in SC1.C */
 SC_FUNC void set_extension(char *filename,char *extension,int force);
 SC_FUNC symbol *fetchfunc(char *name,int tag);
+/* call-site hooks (experiment 010): if "sym" is a hooked call target (uCALLHOOK)
+ * and we are not emitting the dispatcher's tail-call to the original, return the
+ * wrapper symbol its call sites must be redirected to; otherwise NULL. */
+SC_FUNC symbol *callhook_target_wrapper(const symbol *sym);
 SC_FUNC char *operator_symname(char *symname,char *opername,int tag1,int tag2,int numtags,int resulttag);
 SC_FUNC void check_index_tagmismatch(char *symname,int expectedtag,int actualtag,int allowcoerce,int errline);
 SC_FUNC void check_tagmismatch(int formaltag,int actualtag,int allowcoerce,int errline);
@@ -1082,6 +1128,10 @@ SC_VDECL int pc_isrecording;  /* true if recording input */
 SC_VDECL char *pc_recstr;     /* recorded input */
 SC_VDECL int pc_loopcond;     /* equals to 'tFOR', 'tWHILE' or 'tDO' if the current expression is a loop condition, zero otherwise */
 SC_VDECL int pc_numloopvars;  /* number of variables used inside a loop condition */
+/* call-site hook ("hook function/native/stock", experiment 010) parse/emit state */
+SC_VDECL symbol *pc_callhook_dispatcher; /* while compiling a call-hook body: its chain dispatcher (for "continue(...)"); NULL otherwise */
+SC_VDECL int pc_continue_pending; /* set by primary() when "continue(...)" is lowered, consumed by callfunction() to inject the hidden idx+1 leading argument */
+SC_VDECL int pc_emit_orig;    /* set while callhook_emit() emits the dispatcher's tail-call to the ORIGINAL, so that call is not itself redirected (recursion guard) */
 
 SC_VDECL char *sc_tokens[];
 

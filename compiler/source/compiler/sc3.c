@@ -2212,6 +2212,25 @@ static int primary(value *lval)
     ldconst(0,sPRI);
     return FALSE;       /* not an lvalue */
   } /* if */
+  if (tok==tCONTINUE) {
+    /* "continue(...)" inside a call-site hook body (experiment 010) is the
+     * chain-advance intrinsic: it lowers to a call to the target's chain
+     * dispatcher with idx+1 and the given args. The idx+1 leading argument is
+     * injected in callfunction() via pc_continue_pending. The loop statement
+     * "continue;" never reaches here -- it is handled in statement()/docont(),
+     * so only the call form in expression position arrives at the parser. */
+    if (pc_callhook_dispatcher==NULL || !matchtoken('(')) {
+      error(29);        /* expression error: continue() only valid in a call-hook body */
+      ldconst(0,sPRI);
+      return FALSE;
+    } /* if */
+    lexpush();          /* put '(' back so hier1() forms the call */
+    lval->sym=pc_callhook_dispatcher;
+    lval->ident=iFUNCTN;
+    lval->tag=pc_callhook_dispatcher->tag;
+    pc_continue_pending=TRUE;
+    return FALSE;       /* a function (not an lvalue); hier1() sees '(' and calls it */
+  } /* if */
   if (tok==tSYMBOL) {
     /* lastsymbol is char[sNAMEMAX+1], lex() should have truncated any symbol
      * to sNAMEMAX significant characters */
@@ -2572,8 +2591,16 @@ static int nesting=0;
   symbol *symret;
   cell lexval;
   char *lexstr;
+  /* call-site hook (experiment 010): if this call was produced by lowering a
+   * "continue(...)" intrinsic, inject the hidden idx+1 leading argument below
+   * (after the arg-reorder region) and do NOT redirect the call -- it already
+   * targets the chain dispatcher. Captured and cleared at entry so nested
+   * argument calls do not inherit it. */
+  int chook_inject_idx;
 
   assert(sym!=NULL);
+  chook_inject_idx=pc_continue_pending;
+  pc_continue_pending=FALSE;
   lval_result->ident=iEXPRESSION; /* preset, may be changed later */
   lval_result->constval=0;
   lval_result->tag=sym->tag;
@@ -3088,6 +3115,20 @@ static int nesting=0;
     arglist[argidx]=ARG_DONE;
   } /* for */
   stgmark(sENDREORDER);         /* mark end of reversed evaluation */
+  if (chook_inject_idx) {
+    /* push the hidden chain index (idx+1) as the dispatcher's leading argument.
+     * Emitted after the reorder region so it is pushed last -> lands as arg 0.
+     * idx is the current call-hook body's param 0, at frame offset 3*cell. */
+    stgwrite("\tload.s.pri ");
+    outval(3*sizeof(cell),TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tadd.c ");
+    outval(1,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    pushreg(sPRI);
+    nargs++;
+    nest_stkusage++;
+  } /* if */
   if (fwdpending) {
     /* the byte count covers the statically pushed arguments plus the
      * forwarded cells; the latter part is only known at run time
@@ -3097,7 +3138,21 @@ static int nesting=0;
     pushval((cell)nargs*sizeof(cell));
   } /* if */
   nest_stkusage++;
-  ffcall(sym,NULL,nargs);
+  /* call-site hook redirect: a call to a hooked target goes to its wrapper. The
+   * dispatcher's own tail-call to the original is guarded by pc_emit_orig (inside
+   * callhook_target_wrapper), and a continue()-lowered call already targets the
+   * dispatcher, so neither is redirected. */
+  {
+    symbol *callee=sym;
+    if (!chook_inject_idx) {
+      symbol *wrap=callhook_target_wrapper(sym);
+      if (wrap!=NULL) {
+        callee=wrap;
+        markusage(wrap,uREAD);
+      } /* if */
+    } /* if */
+    ffcall(callee,NULL,nargs);
+  }
   if (fwdpending && (sym->usage & uNATIVE)!=0) {
     /* a native function removes its parameters with a constant "stack"
      * instruction, which covers only the statically pushed arguments;

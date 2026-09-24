@@ -78,6 +78,8 @@
 static void resetglobals(void);
 static void hook_reset(void);
 static void hook_emit_dispatchers(void);
+static void callhook_reset(void);
+static void callhook_emit(void);
 static void generator_emit_helper(void);
 static void initglobals(void);
 static char *get_extension(char *filename);
@@ -676,6 +678,7 @@ int pc_compile(int argc, char *argv[])
     preprocess();                       /* fetch first line */
     parse();                            /* process all input */
     hook_emit_dispatchers();            /* synthesise native-hook dispatchers (addressing pass) */
+    callhook_emit();                    /* synthesise call-site hook wrappers/dispatchers (addressing pass) */
     generator_emit_helper();            /* synthesise @yield.emit for coroutine generators */
     warnstack_cleanup();
     sc_parsenum++;
@@ -770,6 +773,7 @@ int pc_compile(int argc, char *argv[])
   preprocess();                         /* fetch first line */
   parse();                              /* process all input */
   hook_emit_dispatchers();              /* synthesise native-hook dispatchers (code-emission pass) */
+  callhook_emit();                      /* synthesise call-site hook wrappers/dispatchers (code-emission pass) */
   generator_emit_helper();              /* synthesise @yield.emit for coroutine generators */
   warnstack_cleanup();
   if (sc_listing)
@@ -989,6 +993,7 @@ static void resetglobals(void)
   emit_flags=0;
   emit_stgbuf_idx=-1;
   hook_reset();         /* clear the per-pass native-hook registry */
+  callhook_reset();     /* clear the per-pass call-site hook registry */
 }
 
 static void initglobals(void)
@@ -1824,7 +1829,19 @@ static hookdefault *hook_defaults=NULL;
 static void hook_register(const char *callback,symbol *hidden,int argcount,int tag,int prio,int hasstate,cell statevar,cell stateval);
 static void hook_set_default(const char *callback,cell value);
 static int hook_get_default(const char *callback,cell *value);
+static void hook_set_prototype(symbol *disp,symbol *proto);
 static void dohook(void);
+
+/* native CALL-SITE "hook" support (experiment 010): registry of hooked call
+ * targets ("hook function/native/stock Name") for the current parse pass. See
+ * the callhookgroup comment in sc.h. Rebuilt each pass in callhook_reset(). */
+static callhookgroup *callhook_registry=NULL;
+/* set while declargs() parses a call-hook body's parameter list: it prepends a
+ * hidden leading "idx" (chain-index) parameter, so the user's declared args land
+ * at frame offsets 16.. and the body reads idx at frame offset 12 (param 0). */
+static int callhook_inject_idx=0;
+static callhookgroup *callhook_find(const char *name);
+static void callhook_parse(int modifier,int prio);
 
 /* coroutine generator ("yield") support; see the comment block above
  * generator_emit_helper() */
@@ -2197,6 +2214,20 @@ static void dohook(void)
   } /* if */
 
   tok=lex(&val,&str);
+  /* call-site hook? "hook [<prio>] native|function|stock Name(args) body" hooks
+   * an ordinary call target (experiment 010), distinct from the callback hook
+   * below. "native"/"stock" are keywords; "function" is not, so it arrives as a
+   * symbol -- treat it as the modifier only when a target name follows (otherwise
+   * it is an ordinary callback that happens to be named "function"). */
+  if (tok==tNATIVE || tok==tSTOCK) {
+    callhook_parse((tok==tNATIVE) ? CHOOK_NATIVE : CHOOK_STOCK,prio);
+    return;
+  } /* if */
+  if (tok==tSYMBOL && strcmp(str,"function")==0 && matchtoken(tSYMBOL)) {
+    lexpush();                  /* put the target name back for callhook_parse() */
+    callhook_parse(CHOOK_FUNCTION,prio);
+    return;
+  } /* if */
   if (tok!=tSYMBOL) {
     error(20,str);              /* invalid symbol name */
     lexclr(TRUE);
@@ -2459,6 +2490,314 @@ static void hook_emit_dispatchers(void)
 
     endfunc();
     disp->codeaddr=code_idx;
+  } /* for */
+  curfunc=savedfunc;
+}
+
+/*  Native CALL-SITE hooks ("hook function/native/stock", experiment 010) -------
+ *
+ *  See the callhookgroup comment in sc.h for the runtime shape. These routines
+ *  (a) parse a "hook <mod> Name(args) body" declaration, compiling the body as a
+ *  hidden "@chook.Name.<seq>" function with a hidden leading chain-index param,
+ *  and (b) synthesise, at end-of-parse in BOTH passes (stable addresses), the
+ *  wrapper "@chook.Name.wrap" and chain dispatcher "@chook.Name.chain", and mark
+ *  the target uCALLHOOK so its call sites redirect to the wrapper. */
+
+/*  callhook_find - locate the registry group for a hooked target (or NULL) */
+static callhookgroup *callhook_find(const char *name)
+{
+  callhookgroup *grp;
+  for (grp=callhook_registry; grp!=NULL; grp=grp->next)
+    if (strcmp(grp->name,name)==0)
+      return grp;
+  return NULL;
+}
+
+/*  callhook_reset - free the per-pass call-site hook registry (from resetglobals) */
+static void callhook_reset(void)
+{
+  callhookgroup *grp,*next;
+  for (grp=callhook_registry; grp!=NULL; grp=next) {
+    next=grp->next;
+    free(grp->slots);
+    free(grp);
+  } /* for */
+  callhook_registry=NULL;
+}
+
+/*  callhook_target_wrapper - the redirect consulted at the call choke-point: if
+ *  "sym" is a hooked target and we are not emitting the dispatcher's tail-call to
+ *  the original, return the wrapper its call sites must be routed to. Resolves the
+ *  group by name (not by decl order), so a call site anywhere in the unit is
+ *  redirected as long as uCALLHOOK is set (which persists from the prior pass). */
+SC_FUNC symbol *callhook_target_wrapper(const symbol *sym)
+{
+  callhookgroup *grp;
+  if (sym==NULL || (sym->usage & uCALLHOOK)==0 || pc_emit_orig)
+    return NULL;
+  grp=callhook_find(sym->name);
+  if (grp==NULL)
+    return NULL;
+  return grp->wrapper;
+}
+
+/*  callhook_parse - parse "hook [<prio>] function|native|stock Name(args) body".
+ *  The caller has consumed "hook", the priority and the modifier; the target name
+ *  is the next token. */
+static void callhook_parse(int modifier,int prio)
+{
+  char target[sNAMEMAX+1];
+  char hidden[sNAMEMAX+32];
+  char wrapname[sNAMEMAX+32];
+  char chainname[sNAMEMAX+32];
+  cell val;
+  char *str;
+  int seq,argcount;
+  symbol *tsym,*body,*wrapper,*chain,*save_disp;
+  callhookgroup *grp;
+
+  if (!needtoken(tSYMBOL)) {
+    lexclr(TRUE);
+    return;
+  } /* if */
+  tokeninfo(&val,&str);
+  assert(strlen(str)<=sNAMEMAX);
+  strcpy(target,str);
+
+  /* the target must be visible: we adopt its signature for continue()'s type
+   * check and to know how many args to forward. In this task the target is a
+   * pawn function defined before the hook (forward references are a later task). */
+  tsym=findglb(target,sGLOBAL);
+  if (tsym==NULL || tsym->ident!=iFUNCTN) {
+    error(17,target);           /* undefined symbol */
+    lexclr(TRUE);
+    return;
+  } /* if */
+
+  grp=callhook_find(target);
+  seq= (grp!=NULL) ? grp->count : 0;
+  sprintf(hidden,"@chook.%s.%d",target,seq);
+  sprintf(wrapname,"@chook.%s.wrap",target);
+  sprintf(chainname,"@chook.%s.chain",target);
+  if (strlen(hidden)>sNAMEMAX || strlen(wrapname)>sNAMEMAX || strlen(chainname)>sNAMEMAX) {
+    error(200,target,sNAMEMAX); /* symbol too long */
+    lexclr(TRUE);
+    return;
+  } /* if */
+
+  if (grp==NULL) {
+    grp=(callhookgroup*)malloc(sizeof(callhookgroup));
+    if (grp==NULL) {
+      error(103);               /* insufficient memory */
+      return;
+    } /* if */
+    memset(grp,0,sizeof(callhookgroup));
+    strcpy(grp->name,target);
+    grp->modifier=modifier;
+    grp->capacity=4;
+    grp->slots=(callhookslot*)malloc(grp->capacity*sizeof(callhookslot));
+    if (grp->slots==NULL) {
+      free(grp);
+      error(103);               /* insufficient memory */
+      return;
+    } /* if */
+    grp->next=callhook_registry;
+    callhook_registry=grp;
+  } /* if */
+
+  /* adopt the target's fixed-arity signature */
+  argcount=0;
+  if (tsym->dim.arglist!=NULL)
+    while (tsym->dim.arglist[argcount].ident!=0)
+      argcount++;
+  grp->argcount=argcount;
+  grp->tag=tsym->tag;
+  grp->orig=tsym;
+
+  /* fetch the wrapper and chain dispatcher now (their code is emitted at
+   * end-of-parse). The chain adopts the target's arg signature so that
+   * continue(...) type-checks; both are prototyped so calls to them resolve. */
+  wrapper=fetchfunc(wrapname,tsym->tag);
+  chain=fetchfunc(chainname,tsym->tag);
+  if (wrapper==NULL || chain==NULL) {
+    error(103);                 /* insufficient memory */
+    return;
+  } /* if */
+  wrapper->usage|=uDEFINE|uPROTOTYPED|uREAD|uRETVALUE;
+  chain->usage|=uDEFINE|uPROTOTYPED|uREAD|uRETVALUE;
+  wrapper->tag=tsym->tag;
+  chain->tag=tsym->tag;
+  hook_set_prototype(chain,tsym); /* chain's declared args = target args (for continue) */
+  grp->wrapper=wrapper;
+  grp->dispatcher=chain;
+
+  /* pre-mark the body "read" so its code is not skipped in the write pass before
+   * the dispatcher (emitted later) records the reference to it (mirrors dohook) */
+  body=fetchfunc(hidden,tsym->tag);
+  if (body!=NULL)
+    body->usage|=uREAD;
+
+  /* compile the body as a hidden function with a hidden leading "idx" parameter
+   * (callhook_inject_idx); inside it, continue(...) lowers to a call to the chain
+   * dispatcher (pc_callhook_dispatcher). */
+  callhook_inject_idx=1;
+  save_disp=pc_callhook_dispatcher;
+  pc_callhook_dispatcher=chain;
+  if (!newfunc(hidden,tsym->tag,FALSE,FALSE,FALSE)) {
+    error(10);                  /* illegal function or declaration */
+    lexclr(TRUE);
+    litidx=0;
+  } /* if */
+  pc_callhook_dispatcher=save_disp;
+  callhook_inject_idx=0;
+
+  body=findglb(hidden,sGLOBAL);
+  if (body==NULL || body->ident!=iFUNCTN)
+    return;                     /* body was only a prototype or was rejected */
+
+  if (grp->count>=grp->capacity) {
+    callhookslot *grown;
+    grp->capacity*=2;
+    grown=(callhookslot*)realloc(grp->slots,grp->capacity*sizeof(callhookslot));
+    if (grown==NULL) {
+      error(103);               /* insufficient memory */
+      return;
+    } /* if */
+    grp->slots=grown;
+  } /* if */
+  grp->slots[grp->count].fn=body;
+  grp->slots[grp->count].prio=prio;
+  grp->count++;
+}
+
+/*  callhook_emit - synthesise the wrapper + chain dispatcher for every hooked
+ *  call target, at end-of-parse. Runs at the same point in both passes (right
+ *  after hook_emit_dispatchers), so the synthesised addresses are consistent.
+ *  All ordinary push/call/retn; no new opcodes.
+ *
+ *  Frame layout (arg N at frame offset (N+3)*cell):
+ *    wrapper (args)        arg a at (a+3)*cell
+ *    chain   (idx,args)    idx at 3*cell, target arg a at (a+4)*cell
+ *    body    (idx,args)    same as chain
+ */
+static void callhook_emit(void)
+{
+  callhookgroup *grp;
+  symbol *savedfunc;
+  int i,a,k;
+  cell argbytes_body,argbytes_orig;
+
+  if (callhook_registry==NULL)
+    return;
+
+  savedfunc=curfunc;
+  for (grp=callhook_registry; grp!=NULL; grp=grp->next) {
+    symbol *wrapper=grp->wrapper;
+    symbol *chain=grp->dispatcher;
+    symbol *orig=grp->orig;
+    int argcount=grp->argcount;
+    int *lbls;
+
+    if (wrapper==NULL || chain==NULL || orig==NULL)
+      continue;
+
+    /* order the chain by priority (higher first), stable -> equal priorities keep
+     * source order. Done identically in both passes for address stability. */
+    for (i=1; i<grp->count; i++) {
+      callhookslot hs=grp->slots[i];
+      int j=i-1;
+      while (j>=0 && grp->slots[j].prio<hs.prio) {
+        grp->slots[j+1]=grp->slots[j];
+        j--;
+      } /* while */
+      grp->slots[j+1]=hs;
+    } /* for */
+
+    /* mark the target as hooked so its call sites redirect to the wrapper; the
+     * flag persists into the next pass (reduce_referrers only clears uREAD). */
+    orig->usage|=uCALLHOOK;
+    markusage(orig,uREAD);      /* dispatcher's tail-call keeps the original alive */
+    markusage(wrapper,uREAD);
+    markusage(chain,uREAD);
+
+    argbytes_body=(cell)(argcount+1)*sizeof(cell);  /* idx + target args */
+    argbytes_orig=(cell)argcount*sizeof(cell);       /* target args only */
+
+    /* ---- wrapper @chook.Name.wrap(args): return chain(0, args) ---- */
+    wrapper->addr=code_idx;
+    curfunc=wrapper;
+    if (wrapper->x.stacksize<argcount+4)
+      wrapper->x.stacksize=argcount+4;
+    begcseg();
+    startfunc(wrapper->name,TRUE);        /* proc */
+    for (a=argcount-1; a>=0; a--) {       /* forward the wrapper's own args (reverse) */
+      stgwrite("\tpush.s ");
+      outval((a+3)*sizeof(cell),TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* for */
+    pushval(0);                           /* idx = 0 (leading argument) */
+    pushval(argbytes_body);               /* argument-count marker (in bytes) */
+    ffcall(chain,NULL,argcount+1);        /* result in PRI */
+    ffret(TRUE);                          /* return chain(0, args) */
+    endfunc();
+    wrapper->codeaddr=code_idx;
+
+    /* ---- chain dispatcher @chook.Name.chain(idx, args) ---- */
+    chain->addr=code_idx;
+    curfunc=chain;
+    if (chain->x.stacksize<argcount+4)
+      chain->x.stacksize=argcount+4;
+    begcseg();
+    startfunc(chain->name,TRUE);          /* proc */
+    lbls=(int*)malloc((grp->count>0 ? grp->count : 1)*sizeof(int));
+    if (lbls==NULL) {
+      error(103);                         /* insufficient memory */
+      curfunc=savedfunc;
+      return;
+    } /* if */
+    for (k=0; k<grp->count; k++)
+      lbls[k]=getlabel();
+    /* dispatch: if idx==k, jump to body k's call */
+    for (k=0; k<grp->count; k++) {
+      stgwrite("\tload.s.pri ");          /* PRI = idx (param 0) */
+      outval(3*sizeof(cell),TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      ldconst((cell)k,sALT);              /* ALT = k */
+      ob_eq();                            /* PRI = (idx == k) */
+      jmp_ne0(lbls[k]);
+    } /* for */
+    /* default: tail-call the ORIGINAL. pc_emit_orig guards the redirect so this
+     * call is not itself routed back through the wrapper (recursion guard). */
+    pc_emit_orig=1;
+    for (a=argcount-1; a>=0; a--) {       /* forward the chain's target args (reverse) */
+      stgwrite("\tpush.s ");
+      outval((a+4)*sizeof(cell),TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* for */
+    pushval(argbytes_orig);
+    ffcall(orig,NULL,argcount);           /* pawn -> call, native -> sysreq (ffcall decides) */
+    pc_emit_orig=0;
+    ffret(TRUE);
+    /* one body call per slot: body k(idx, args) */
+    for (k=0; k<grp->count; k++) {
+      symbol *body=grp->slots[k].fn;
+      setlabel(lbls[k]);
+      for (a=argcount-1; a>=0; a--) {     /* forward target args (reverse) */
+        stgwrite("\tpush.s ");
+        outval((a+4)*sizeof(cell),TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* for */
+      stgwrite("\tpush.s ");              /* forward idx as body's leading param */
+      outval(3*sizeof(cell),TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      pushval(argbytes_body);
+      markusage(body,uREAD);
+      ffcall(body,NULL,argcount+1);
+      ffret(TRUE);
+    } /* for */
+    free(lbls);
+    endfunc();
+    chain->codeaddr=code_idx;
   } /* for */
   curfunc=savedfunc;
 }
@@ -4980,7 +5319,11 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
     return FALSE;
   /* so it is a function, proceed */
   funcline=fline;               /* save line at which the function is defined */
-  if (symbolname[0]==PUBLIC_CHAR) {
+  if (symbolname[0]==PUBLIC_CHAR && !callhook_inject_idx) {
+    /* the '@' prefix normally marks a public function; a synthesised call-hook
+     * body (experiment 010) borrows the "@chook.*" namespace but is an ordinary
+     * hidden function, not a public one (callhook_inject_idx is set only while
+     * such a body is being compiled). */
     fpublic=TRUE;               /* implicitly public function */
     if (stock)
       error(42);                /* invalid combination of class specifiers */
@@ -5246,6 +5589,33 @@ static int declargs(symbol *sym,int chkshadow)
   numtags=0;
   fconst=fpragma=FALSE;
   fpublic= (sym->usage & uPUBLIC)!=0;
+  /* call-site hook body (experiment 010): prepend a hidden leading "idx" (the
+   * chain index) parameter, so the user's declared args land at frame offsets
+   * 16.. and the body reads idx at offset 12 (param 0). No local symbol is
+   * created for it -- it is never referenced by name; continue()'s lowering reads
+   * the fixed offset directly. The arglist entry is added once (first/addressing
+   * pass) and matched on later passes, like any prototyped argument. */
+  if (callhook_inject_idx) {
+    callhook_inject_idx=0;              /* only the leading parameter of this body */
+    if ((sym->usage & uPROTOTYPED)==0) {
+      arginfo *na=(arginfo*)realloc(sym->dim.arglist,2*sizeof(arginfo));
+      if (na==NULL) {
+        error(103);                     /* insufficient memory */
+      } else {
+        sym->dim.arglist=na;
+        memset(&sym->dim.arglist[0],0,sizeof(arginfo));
+        memset(&sym->dim.arglist[1],0,sizeof(arginfo)); /* keep the list terminated */
+        strcpy(sym->dim.arglist[0].name,"__chook_idx");
+        sym->dim.arglist[0].ident=iVARIABLE;
+        sym->dim.arglist[0].usage=uCONST;
+        sym->dim.arglist[0].numtags=1;
+        sym->dim.arglist[0].tags=(int*)malloc(sizeof(int));
+        if (sym->dim.arglist[0].tags!=NULL)
+          sym->dim.arglist[0].tags[0]=0;
+      } /* if */
+    } /* if */
+    argcnt=1;                           /* user args continue at slot 1 (offset 16) */
+  } /* if */
   /* the '(' parentheses has already been parsed */
   if (!matchtoken(')')){
     do {                                /* there are arguments; process them */

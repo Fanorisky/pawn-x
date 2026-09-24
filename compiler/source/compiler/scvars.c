@@ -108,6 +108,9 @@ SC_VDEFINE int pc_isrecording=FALSE;        /* true if recording input */
 SC_VDEFINE char *pc_recstr=NULL;            /* recorded input */
 SC_VDEFINE int pc_loopcond=FALSE;           /* true if the current expression is a loop condition */
 SC_VDEFINE int pc_numloopvars=0;            /* number of variables used inside a loop condition */
+SC_VDEFINE symbol *pc_callhook_dispatcher=NULL; /* current call-hook body's chain dispatcher (for "continue(...)") */
+SC_VDEFINE int pc_continue_pending=FALSE;   /* "continue(...)" awaiting idx+1 injection in callfunction() */
+SC_VDEFINE int pc_emit_orig=FALSE;          /* emitting the dispatcher's tail-call to the original (recursion guard) */
 
 SC_VDEFINE char *sc_tokens[] = {
   "*=", "/=", "%=", "+=", "-=", "<<=", ">>>=", ">>=", "&=", "^=", "|=",
