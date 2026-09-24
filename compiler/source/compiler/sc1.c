@@ -2711,6 +2711,7 @@ static void doyield(void)
   int ident,tag;
   cell val;
   symbol *sym,*helper;
+  int localstaging,index;
 
   if (curfunc==NULL || (curfunc->usage & uITERFUNC)==0) {
     error(255,"\"yield\" is only valid inside an iterfunc generator");
@@ -2732,6 +2733,21 @@ static void doyield(void)
     return;
   } /* if */
 
+  /* Stage-buffer the yielded expression and the "@yield.emit" call, exactly as
+   * doexpr()/doreturn()/test() stage any other statement expression. Without
+   * staging the peephole optimizer and, crucially, the stgdel() that plnge2()
+   * uses to scratch a pushed left operand when the right operand is a constant
+   * are no-ops, so "<lifted local> OP <constant>" (e.g. "i * 10") emits broken
+   * code. Staging here makes a "yield return" expression behave like any other. */
+  localstaging=FALSE;
+  if (!staging) {
+    stgset(TRUE);                   /* start stage-buffering */
+    localstaging=TRUE;
+    assert(stgidx==0);
+  } /* if */
+  index=stgidx;
+  errorset(sEXPRMARK,0);
+
   sym=NULL;
   ident=expression(&val,&tag,&sym,FALSE);   /* the yielded value, in PRI */
   if (ident==iARRAY || ident==iREFARRAY) {
@@ -2751,6 +2767,13 @@ static void doyield(void)
     pushval(2*sizeof(cell));        /* argument count, in bytes */
     markusage(helper,uREAD);
     ffcall(helper,NULL,2);
+  } /* if */
+
+  markexpr(sEXPR,NULL,0);           /* end of the yield expression/statement */
+  errorset(sEXPRRELEASE,0);
+  if (localstaging) {
+    stgout(index);
+    stgset(FALSE);                  /* stop staging */
   } /* if */
   needtoken(tTERM);
 }

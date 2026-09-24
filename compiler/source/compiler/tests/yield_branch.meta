@@ -1,0 +1,24 @@
+{
+  'test_type': 'runtime',
+  'output': """
+b 0
+
+b 10
+
+b -2
+
+b 3
+
+b 40
+
+b -5
+
+b 6
+
+b 70
+
+done
+
+yield_branch.amx returns 0
+"""
+}
