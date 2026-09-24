@@ -1,0 +1,8 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+yield_err_expr.pwn(5) : error 097: "yield" is a statement, not an expression
+yield_err_expr.pwn(5) : error 001: expected token: ";", but found "return"
+yield_err_expr.pwn(5) : warning 204: symbol is assigned a value that is never used: "x"
+"""
+}

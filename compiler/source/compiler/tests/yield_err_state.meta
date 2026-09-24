@@ -1,0 +1,8 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+yield_err_state.pwn(4) : error 098: a generator cannot combine "yield" with a reference/cur parameter
+yield_err_state.pwn(3) : warning 203: symbol is never used: "cur"
+yield_err_state.pwn(3) : warning 203: symbol is never used: "acc"
+"""
+}

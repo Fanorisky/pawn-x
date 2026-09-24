@@ -2511,7 +2511,15 @@ static int generator_isgen(symbol *sym)
     return FALSE;
   /* no parameters: there is no "cur"/"&state" argument for the re-entrant
    * call-loop to hand the function, so the coroutine protocol is the only one
-   * that can drive it */
+   * that can drive it.
+   *
+   * D5 reclassification note: this reinterprets EVERY parameterless iterfunc as
+   * a coroutine generator, even one that never uses "yield". A no-param iterfunc
+   * therefore no longer follows the classic re-entrant iterator protocol -- its
+   * "return <val>" is treated as the end of the sequence (it yields ITER_STOP,
+   * == cellmin, to "foreach"), not as a per-step value. This is intentional for
+   * v1 (a parameterless classic iterfunc has no state channel to drive it), but
+   * any future no-param iterfunc inherits this coroutine semantics. */
   return sym->dim.arglist==NULL || sym->dim.arglist[0].ident==0;
 }
 
@@ -2649,11 +2657,16 @@ static void generator_emit_prologue(void)
   for (sym=loctab.next; sym!=NULL; sym=sym->next) {
     assert(sym->vclass==sLOCAL);
     if (sym->ident!=iVARIABLE) {
-      error(255,"a generator (\"yield\") may not take an array or reference parameter yet");
+      if (sym->ident==iREFERENCE)
+        error(98);              /* a generator cannot combine "yield" with a reference/cur parameter */
+      else
+        error(255,"a generator (\"yield\") may not take an array parameter yet");
       continue;
     } /* if */
-    if (nparm>=sMAXARGS)
-      break;                    /* declargs() already capped the count */
+    if (nparm>=sMAXARGS-1)
+      break;                    /* declargs()/the caller already capped the count
+                                 * at sMAXARGS-1 (B takes one slot); keep the two
+                                 * bounds symmetric */
     slot=curfunc->genlocals;
     parmphys[nparm]=sym->addr+(cell)sizeof(cell); /* B shifts every user arg up one cell */
     parmslot[nparm]=(cell)(slot+1)*sizeof(cell);  /* B[0] is the continuation */
@@ -2714,7 +2727,7 @@ static void doyield(void)
   int localstaging,index;
 
   if (curfunc==NULL || (curfunc->usage & uITERFUNC)==0) {
-    error(255,"\"yield\" is only valid inside an iterfunc generator");
+    error(95);          /* "yield" is only valid inside an iterfunc generator */
     lexclr(TRUE);
     return;
   } /* if */
@@ -3381,15 +3394,18 @@ static int declloc(int fstatic)
       stgset(TRUE);
       assert(stgidx==0);
       staging_start=stgidx;
+    } else if (pc_generator && ident==iARRAY) {
+      /* array/string locals are not lifted in v1 (only scalars fit a block
+       * slot). Emitting the on-stack allocation below would unbalance the
+       * frame across a suspend and crash at run time, so reject it now; the
+       * error fails the compile, so no broken binary is produced. Register the
+       * symbol (so later references to it resolve rather than cascading an
+       * "undefined symbol" error) but skip the on-stack alloc/init path below. */
+      error(96);                /* a local array cannot span a "yield" */
+      addvariable(name,-(declared+1)*sizeof(cell),ident,sLOCAL,
+                  tag,dim,numdim,idxtag,pc_nestlevel);
+      continue;
     } else {
-      if (pc_generator && ident==iARRAY) {
-        /* array/string locals are not lifted in v1 (only scalars fit a block
-         * slot). Emitting the on-stack allocation below would unbalance the
-         * frame across a suspend and crash at run time, so reject it now; the
-         * error fails the compile, so no broken binary is produced. Task 6
-         * gives this its own diagnostic number. */
-        error(255,"a generator (\"yield\") may not declare an array or string local yet");
-      } /* if */
       declared+=(int)size;      /* variables are put on stack, adjust "declared" */
       sym=addvariable(name,-declared*sizeof(cell),ident,sLOCAL,
                       tag,dim,numdim,idxtag,pc_nestlevel);

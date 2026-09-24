@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+yield_err_array.pwn(5) : error 096: a local array cannot span a "yield"
+"""
+}

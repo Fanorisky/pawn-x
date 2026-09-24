@@ -2203,6 +2203,15 @@ static int primary(value *lval)
 
   clear_value(lval);    /* clear lval */
   tok=lex(&val,&st);
+  if (tok==tYIELD) {
+    /* "yield return <expr>" is a statement (handled in statement()); reaching
+     * "yield" through the expression parser means it was written where a value
+     * is expected (e.g. "new x = yield return 1;"). The coroutine protocol
+     * suspends a whole statement, so "yield" has no value in an expression. */
+    error(97);          /* "yield" is a statement, not an expression */
+    ldconst(0,sPRI);
+    return FALSE;       /* not an lvalue */
+  } /* if */
   if (tok==tSYMBOL) {
     /* lastsymbol is char[sNAMEMAX+1], lex() should have truncated any symbol
      * to sNAMEMAX significant characters */

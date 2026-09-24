@@ -133,7 +133,11 @@ static char *errmsg[] = {
 /*091*/  "ambiguous constant; tag override is required (symbol \"%s\")\n",
 /*092*/  "functions may not return arrays of unknown size (symbol \"%s\")\n",
 /*093*/  "\"__addressof\" operator is invalid in preprocessor expressions\n",
-/*094*/  "division by zero\n"
+/*094*/  "division by zero\n",
+/*095*/  "\"yield\" is only valid inside an iterfunc generator\n",
+/*096*/  "a local array cannot span a \"yield\"\n",
+/*097*/  "\"yield\" is a statement, not an expression\n",
+/*098*/  "a generator cannot combine \"yield\" with a reference/cur parameter\n"
 };
 
 static char *fatalmsg[] = {

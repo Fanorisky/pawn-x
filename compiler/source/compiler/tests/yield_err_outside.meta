@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+yield_err_outside.pwn(4) : error 095: "yield" is only valid inside an iterfunc generator
+"""
+}
