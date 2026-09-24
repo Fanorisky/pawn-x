@@ -30,7 +30,8 @@ Two pillars, split by *when the information exists*:
 | `hook` keyword (+ `hook:N` priority) | `y_hooks` (compile-time) | exp 004/005 |
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
 
-Every row was run on a real `omp-server` and diffed against YSI; see
+Most rows were run on a real `omp-server` and diffed against YSI (the `yield`
+row is proven by the `yield_*` compiler tests, not a live server run); see
 `experiments/*/RESULT.md`.
 
 ## Quickstart
