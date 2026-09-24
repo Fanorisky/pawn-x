@@ -2556,6 +2556,40 @@ static void callhook_parse(int modifier,int prio)
   symbol *tsym,*body,*wrapper,*chain,*save_disp;
   callhookgroup *grp;
 
+  /* TEMPORARY Task-1 scaffolding: only "hook function" is size-neutral at the
+   * call choke-point (call <-> call). Redirecting a NATIVE call site would turn
+   * a 4-cell "sysreq.c"+"stack" into a 2-cell "call wrapper" between the
+   * addressing and code passes and desynchronise every following address (a
+   * silent miscompile); "stock" is not validated yet either. Reject those two
+   * modifiers cleanly here, consuming the whole declaration so no cascade
+   * follows. Lift this per-modifier: Task 3 implements "hook native" (drop the
+   * CHOOK_NATIVE arm), Task 4 implements "hook stock" (drop the CHOOK_STOCK arm). */
+  if (modifier==CHOOK_NATIVE || modifier==CHOOK_STOCK) {
+    int depth=0,seen=0,t;
+    cell v;
+    char *s;
+    error(255, (modifier==CHOOK_NATIVE)
+               ? "hook native is not yet supported in this build (implemented in a later task)"
+               : "hook stock is not yet supported in this build (implemented in a later task)");
+    /* skip the target name, argument list and body block, so the parser stays
+     * in sync (the declaration is otherwise well-formed) */
+    while (freading) {
+      t=lex(&v,&s);
+      if (t==0)
+        break;
+      if (t=='{') {
+        depth++;
+        seen=1;
+      } else if (t=='}') {
+        if (depth>0)
+          depth--;
+      } /* if */
+      if (seen && depth==0)
+        break;
+    } /* while */
+    return;
+  } /* if */
+
   if (!needtoken(tSYMBOL)) {
     lexclr(TRUE);
     return;
