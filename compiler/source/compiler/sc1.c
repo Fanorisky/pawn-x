@@ -78,6 +78,7 @@
 static void resetglobals(void);
 static void hook_reset(void);
 static void hook_emit_dispatchers(void);
+static void generator_emit_helper(void);
 static void initglobals(void);
 static char *get_extension(char *filename);
 static void setopt(int argc,char **argv,char *oname,char *ename,char *pname,
@@ -675,6 +676,7 @@ int pc_compile(int argc, char *argv[])
     preprocess();                       /* fetch first line */
     parse();                            /* process all input */
     hook_emit_dispatchers();            /* synthesise native-hook dispatchers (addressing pass) */
+    generator_emit_helper();            /* synthesise @yield.emit for coroutine generators */
     warnstack_cleanup();
     sc_parsenum++;
   } while (sc_reparse);
@@ -768,6 +770,7 @@ int pc_compile(int argc, char *argv[])
   preprocess();                         /* fetch first line */
   parse();                              /* process all input */
   hook_emit_dispatchers();              /* synthesise native-hook dispatchers (code-emission pass) */
+  generator_emit_helper();              /* synthesise @yield.emit for coroutine generators */
   warnstack_cleanup();
   if (sc_listing)
     goto cleanup;
@@ -1788,6 +1791,13 @@ static int getclassspec(int initialtok,int *fpublic,int *fstatic,int *fstock,int
  * foreach drives with a call-loop; see doforeach) */
 static int pc_iterfunc=FALSE;
 
+/* set while parsing a coroutine generator: an "iterfunc" that "foreach" drives
+ * by resuming it where it last suspended (see the "yield" support below). It is
+ * decided at the top of the function (from the uGENERATOR flag or the declared
+ * argument count) and, in the addressing pass that first discovers a "yield",
+ * while the body is being parsed. */
+static int pc_generator=FALSE;
+
 /* native "hook" support (experiment 004): registry of hooked callbacks for the
  * current parse pass, plus the routines that register a hook and synthesise the
  * dispatchers at end-of-parse. See the hookgroup comment in sc.h. */
@@ -1806,6 +1816,13 @@ static void hook_register(const char *callback,symbol *hidden,int argcount,int t
 static void hook_set_default(const char *callback,cell value);
 static int hook_get_default(const char *callback,cell *value);
 static void dohook(void);
+
+/* coroutine generator ("yield") support; see the comment block above
+ * generator_emit_helper() */
+static symbol *generator_helper(void);
+static void generator_emit_helper(void);
+static void generator_emit_prologue(void);
+static void doyield(void);
 
 /*  parse       - process all input text
  *
@@ -2437,6 +2454,247 @@ static void hook_emit_dispatchers(void)
   curfunc=savedfunc;
 }
 
+/*  Coroutine generators ("yield") - experiment 009
+ *
+ *  An "iterfunc" whose body contains a top-level "yield return <expr>;" is a
+ *  coroutine generator: "foreach" does not call it fresh on every step, it
+ *  RESUMES it where it last suspended. An "iterfunc" that declares no
+ *  parameters at all is a generator too -- with no argument cell to receive
+ *  the running state, the re-entrant call-loop of the other "iterfunc" kinds
+ *  cannot drive it (see generator_isgen()).
+ *
+ *  All state a running generator needs to survive across the suspend lives in
+ *  one heap block, the "state block", of which "foreach" owns the lifetime:
+ *
+ *      B[0]        continuation to resume at (0 = never suspended yet)
+ *      B[1 .. L]   the generator's lifted scalar locals (L = 0 in v1)
+ *
+ *  The base B is passed BY VALUE as the hidden first argument on every call,
+ *  so inside the generator "arg0" (i.e. [frm+3*sizeof(cell)]) is B. The
+ *  prologue loads B[0] and, if it is non-zero, jumps back into the middle of
+ *  the body with "sctrl 6" (set CIP). No new opcodes are used, so the output
+ *  runs on an unmodified host -- but the host must support "lctrl 6"/"sctrl 6"
+ *  (CIP get/set), the same dependency YSI's yield has.
+ *
+ *  "yield" itself only has to record where to resume and get the value out to
+ *  "foreach". It calls the single generic helper "@yield.emit(B,val)", which
+ *  captures its own return address (the instruction after the call, i.e.
+ *  exactly the resume point) as the continuation, then unwinds the generator's
+ *  frame so that the value is returned to "foreach" just as the generator's
+ *  own "retn" would have done.
+ *
+ *  Not supported yet (v1): a generator body may not declare locals, and may not
+ *  take arguments -- both are lifted into the state block by a later step of
+ *  experiment 009. Until then a generator with a local misbehaves (its frame is
+ *  discarded across the suspend, so the block-exit stack adjustment no longer
+ *  matches the allocation that the resume skipped), which is why "yield" is
+ *  only exercised by generators whose body holds nothing but the yields.
+ */
+
+/*  the sentinel that ends a generator's sequence: cellmin, the same value the
+ *  re-entrant "iterfunc" generators return (ITER_STOP) */
+#define generator_iterstop ((cell)((ucell)1 << (PAWN_CELL_SIZE-1)))
+
+/*  generator_isgen - is the current function definition a coroutine generator?
+ *
+ *  This must answer identically in the addressing pass (statFIRST) and the
+ *  code-emission pass (statWRITE), so it is derived only from information that
+ *  is stable across passes: the uGENERATOR flag of an earlier pass, and the
+ *  declared parameter count.
+ */
+static int generator_isgen(symbol *sym)
+{
+  if ((sym->usage & uGENERATOR)!=0)
+    return TRUE;
+  if ((sym->usage & uITERFUNC)==0)
+    return FALSE;
+  /* no parameters: there is no "cur"/"&state" argument for the re-entrant
+   * call-loop to hand the function, so the coroutine protocol is the only one
+   * that can drive it */
+  return sym->dim.arglist==NULL || sym->dim.arglist[0].ident==0;
+}
+
+/*  generator_helper - the symbol of the hidden "@yield.emit" helper, creating
+ *  it on first use.
+ *
+ *  The helper is defined once per compilation unit at end-of-parse in both
+ *  passes (generator_emit_helper()), exactly like the native-hook dispatchers,
+ *  so its address is the same in both passes and a generator's "call
+ *  .@yield.emit" resolves. Its argument list is the default empty one; it is
+ *  never called through the type-checking call path.
+ */
+static symbol *generator_helper(void)
+{
+  symbol *sym;
+
+  sym=fetchfunc("@yield.emit",0);
+  if (sym==NULL)
+    return NULL;                /* error 021 already given */
+  sym->usage|=uDEFINE|uSTOCK;   /* synthesized, never warned about as unused */
+  return sym;
+}
+
+/*  generator_emit_helper - emit the body of "@yield.emit", at end-of-parse.
+ *
+ *  The helper is called as "@yield.emit(B, val)" by a suspended generator, so
+ *  on entry (with the usual frame layout of this compiler) it has:
+ *
+ *      [frm+0]  caller's frame == the generator's frame
+ *      [frm+4]  return address    == the point to resume the generator at
+ *      [frm+8]  number of argument bytes
+ *      [frm+12] B    (first argument)
+ *      [frm+16] val  (second argument)
+ *
+ *  It stores the resume point into B[0], then unwinds the generator's frame --
+ *  "sctrl 4" sets STK back to the generator's frame and "retn" pops the
+ *  generator's frame, its return address and its arguments, exactly as if the
+ *  generator had returned itself -- and leaves "val" in PRI, so the value is
+ *  what "foreach" receives from the generator call.
+ */
+static void generator_emit_helper(void)
+{
+  symbol *sym,*savedfunc;
+  int havegenerator;
+  cell argbase;
+
+  /* emit only when a generator exists, and do so at the same point of both
+   * passes (right after the hook dispatchers) so the address matches */
+  havegenerator=FALSE;
+  for (sym=glbtab.next; sym!=NULL; sym=sym->next)
+    if (sym->ident==iFUNCTN && (sym->usage & uGENERATOR)!=0) {
+      havegenerator=TRUE;
+      break;
+    } /* if */
+  if (!havegenerator)
+    return;
+  sym=generator_helper();
+  if (sym==NULL)
+    return;
+
+  savedfunc=curfunc;
+  sym->addr=code_idx;           /* address of the "proc" that follows */
+  curfunc=sym;
+  begcseg();
+  startfunc(sym->name,TRUE);    /* emit "proc" */
+
+  argbase=3*sizeof(cell);       /* [frm + 3*cell] = first argument */
+  stgwrite("\tload.s.alt ");    /* ALT = B */
+  outval(argbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.s.pri ");    /* PRI = the resume point (our own return address) */
+  outval(sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tstor.i\n");       /* B[0] = PRI */
+  code_idx+=opcodes(1);
+  stgwrite("\tload.s.pri ");    /* PRI = [frm+0] = the generator's own frame */
+  outval(0,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tsctrl 4\n");      /* STK = the generator's frame: drop our frame */
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.s.pri ");    /* PRI = val */
+  outval(argbase+sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  ffret(TRUE);                  /* return to "foreach"; pops the generator's frame */
+
+  endfunc();
+  sym->codeaddr=code_idx;
+  curfunc=savedfunc;
+}
+
+/*  generator_emit_prologue - emit the resume test at the top of a generator.
+ *
+ *  One hidden local cell holds the state-block base B for the whole body; it
+ *  is the first local of the function, so its frame offset is always
+ *  "-1*sizeof(cell)" (the body's own locals follow it).
+ *
+ *  B[0] is the continuation to resume at. It is 0 on the first call, which
+ *  must run the body from the top; otherwise "sctrl 6" jumps straight back to
+ *  the instruction after the "yield" that suspended the generator.
+ */
+static void generator_emit_prologue(void)
+{
+  int lbl_fresh;
+  cell localsbase;
+
+  declared+=1;
+  localsbase=-declared*(cell)sizeof(cell);
+  modstk(-(int)sizeof(cell));
+  assert(curfunc!=NULL);
+  if (curfunc->x.stacksize<declared+1)
+    curfunc->x.stacksize=declared+1;
+
+  stgwrite("\tload.s.pri ");    /* PRI = arg0 = B (the state block) */
+  outval(3*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tstor.s.pri ");    /* localsbase = B */
+  outval(localsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.i\n");       /* PRI = B[0] = resume point (0 => fresh) */
+  code_idx+=opcodes(1);
+  lbl_fresh=getlabel();
+  jmp_eq0(lbl_fresh);           /* never suspended: run the body from the top */
+  stgwrite("\tsctrl 6\n");      /* resume: CIP = B[0] */
+  code_idx+=opcodes(1)+opargs(1);
+  setlabel(lbl_fresh);
+}
+
+/*  doyield - parse "yield return <expr>;" and emit the suspend.
+ *
+ *  The value of <expr> is left in PRI by "expression()" (a constant is not
+ *  loaded, so it is forced there), and the state block is loaded from the
+ *  hidden first argument. Both, plus the argument count, are pushed for
+ *  "@yield.emit" -- the value first, so that B is the FIRST argument -- and
+ *  the call follows. The instruction after the call is where the generator
+ *  resumes on the next step; the helper finds it as its own return address.
+ */
+static void doyield(void)
+{
+  int ident,tag;
+  cell val;
+  symbol *sym,*helper;
+
+  if (curfunc==NULL || (curfunc->usage & uITERFUNC)==0) {
+    error(255,"\"yield\" is only valid inside an iterfunc generator");
+    lexclr(TRUE);
+    return;
+  } /* if */
+  if (!pc_generator) {
+    /* the first "yield" of this generator, seen while its body is parsed: the
+     * prologue was not emitted (the addressing pass did not know yet), so have
+     * the addressing pass redone. That is what "sc_reparse" is for; the next
+     * run sees uGENERATOR at the top of the function and emits the prologue
+     * there, identically to the code-emission pass. */
+    pc_generator=TRUE;
+    curfunc->usage|=uGENERATOR;
+    sc_reparse=TRUE;
+  } /* if */
+  if (!needtoken(tRETURN)) {
+    lexclr(TRUE);
+    return;
+  } /* if */
+
+  sym=NULL;
+  ident=expression(&val,&tag,&sym,FALSE);   /* the yielded value, in PRI */
+  if (ident==iARRAY || ident==iREFARRAY) {
+    error(33,(sym!=NULL) ? sym->name : "-unknown-");  /* array must be indexed */
+    ldconst(0,sPRI);
+  } else if (ident==iCONSTEXPR) {
+    ldconst(val,sPRI);                      /* a constant is not auto-loaded */
+  } /* if */
+
+  helper=generator_helper();
+  if (helper!=NULL) {
+    pushreg(sPRI);                  /* val (second argument: pushed first) */
+    stgwrite("\tload.s.pri ");      /* PRI = B (hidden first argument) */
+    outval(3*sizeof(cell),TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    pushreg(sPRI);                  /* B */
+    pushval(2*sizeof(cell));        /* argument count, in bytes */
+    markusage(helper,uREAD);
+    ffcall(helper,NULL,2);
+  } /* if */
+  needtoken(tTERM);
+}
 
 /*  dumplits
  *
@@ -4402,7 +4660,7 @@ static void funcstub(int fnative)
   if (sym==NULL)
     return;
   if (fnative) {
-    sym->usage=(short)(uNATIVE | uRETVALUE | uDEFINE | (sym->usage & uPROTOTYPED));
+    sym->usage=(uNATIVE | uRETVALUE | uDEFINE | (sym->usage & uPROTOTYPED));
     sym->x.lib=curlibrary;
   } else if (fpublic && opertok==0) {
     sym->usage|=uPUBLIC;
@@ -4672,6 +4930,15 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
   rettype=(sym->usage & uRETVALUE);      /* set "return type" variable */
   curfunc=sym;
   define_args();        /* add the symbolic info for the function arguments */
+  /* decide whether this is a coroutine generator ("yield") and, if so, emit
+   * its prologue. The decision is pass-stable (see generator_isgen()); in the
+   * addressing pass that first discovers a "yield" the flag is set later, while
+   * the body is parsed, and "sc_reparse" then re-runs that pass. */
+  pc_generator=generator_isgen(sym);
+  if (pc_generator) {
+    sym->usage|=uGENERATOR;
+    generator_emit_prologue();
+  } /* if */
   #if !defined SC_LIGHT
     if (matchtoken('{')) {
       lexpush();
@@ -4701,9 +4968,11 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
   } /* if */
   if (!isterminal(lastst) && lastst!=tGOTO && (sym->flags & flagNAKED)==0) {
     destructsymbols(&loctab,0);
-    ldconst(0,sPRI);
+    /* falling off the end of a generator ends the sequence, so it returns the
+     * same sentinel to "foreach" as an explicit "return" does */
+    ldconst(pc_generator ? generator_iterstop : 0,sPRI);
     ffret(strcmp(sym->name,uENTRYFUNC)!=0);
-    if ((sym->usage & uRETVALUE)!=0) {
+    if ((sym->usage & uRETVALUE)!=0 && !pc_generator) {
       char symname[2*sNAMEMAX+16];  /* allow space for user defined operators */
       funcdisplayname(symname,sym->name);
       error(209,symname);       /* function should return a value */
@@ -6350,6 +6619,12 @@ static void statement(int *lastindent,int allow_decl)
     doreturn();
     lastst=tRETURN;
     break;
+  case tYIELD:
+    doyield();
+    /* the generator is suspended, not finished: the statement after the
+     * "yield" is reached when the generator is resumed */
+    lastst=tYIELD;
+    break;
   case tBREAK:
     dobreak();
     lastst=tBREAK;
@@ -6888,6 +7163,11 @@ static int dofor(void)
  *  Only existing AMX opcodes are emitted, so the output runs on an
  *  unmodified host. "break"/"continue" reuse the loop machinery
  *  (addwhile/readwhile) exactly as "for" does.
+ *
+ *  The operand may also be a call to an "iterfunc", in which case there is no
+ *  backing array and the two generator sub-paths below are taken instead: the
+ *  re-entrant call-loop for an "iterfunc" that is handed the running state, and
+ *  the coroutine protocol for one that declares "yield" (or no parameters).
  */
 static int doforeach(void)
 {
@@ -6907,6 +7187,8 @@ static int doforeach(void)
   symbol *gensym,*cand;         /* generator (iterfunc) support */
   cell curaddr,argaddr[sMAXARGS],iterstop,stateaddr;
   int nuser,ai,argident,statebyref;
+  cell genaddr;                 /* coroutine generator support */
+  int blkcells;
 
   save_decl=declared;
   save_nestlevel=pc_nestlevel;
@@ -7003,6 +7285,108 @@ static int doforeach(void)
     else
       lexpush();                /* not a generator call -- hand the symbol to the operand parser */
   } /* if */
+
+  if (gensym!=NULL && (gensym->usage & uGENERATOR)!=0) {
+    /* --- COROUTINE PATH: foreach (new i : Gen()) ---
+     * Gen is a generator that uses "yield": instead of being called fresh with
+     * the running state, it is RESUMED where it last suspended, until it runs
+     * off its end (or "return"s), which yields ITER_STOP (== cellmin) and ends
+     * the loop.
+     *
+     * The whole persistent state of the running generator lives in one heap
+     * block, the "state block" (see the "yield" support above), which this loop
+     * owns: it is allocated and zero-filled here, and freed at loop exit -- the
+     * label "break" jumps to. Its base is passed BY VALUE as the generator's
+     * hidden first argument on every step, so the generator and the
+     * "@yield.emit" helper both address the state through it.
+     *
+     * Experiment 009 v1: the block holds only the continuation (B[0]); a
+     * generator with lifted locals extends it to L+1 cells (Task 2 on). */
+    if (reverse)
+      error(255,"\"foreach\" cannot reverse a generator (iterfunc); a generator defines its own order");
+    if (sc_status!=statSKIP)
+      markusage(gensym,uREAD);
+    needtoken(')');             /* close "Gen(" -- generators take no user args yet */
+    needtoken(')');             /* close "foreach(" */
+
+    /* hidden cell holding the state-block base, plus the block itself on the
+     * AMX heap. "modheap" leaves the OLD heap top (== the block base) in ALT,
+     * so the fill and the store of B need no address arithmetic. */
+    blkcells=1;                 /* L+1, with L == 0 (no lifted locals yet) */
+    declared+=1;
+    genaddr=-declared*(cell)sizeof(cell);
+    modstk(-(int)sizeof(cell));
+    assert(curfunc!=NULL);
+    if (curfunc->x.stacksize<declared+1)
+      curfunc->x.stacksize=declared+1;
+    modheap((int)blkcells*(int)sizeof(cell));   /* ALT = B */
+    ldconst(0,sPRI);
+    stgwrite("\tfill ");
+    outval((cell)blkcells*sizeof(cell),TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    moveto1();                  /* PRI = ALT = B (the block base) */
+    stgwrite("\tstor.s.pri ");
+    outval(genaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+
+    /* "break"/"continue" clean the body's own locals down to here; the loop
+     * variable and the hidden base cell are the loop-scoped cells. */
+    ptr=readwhile();
+    assert(ptr!=NULL);
+    ptr[wqBRK]=(int)declared;
+    ptr[wqCONT]=(int)declared;
+    ptr[wqLVL]=pc_nestlevel+1;
+
+    lbl_cond=getlabel();
+    setline(TRUE);
+    setlabel(lbl_cond);
+    /* call Gen(B): one hidden argument, then the byte count. "retn" pops the
+     * argument, so STK is restored on return and PRI holds the next value (or
+     * ITER_STOP). */
+    stgwrite("\tpush.s ");
+    outval(genaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    pushval(sizeof(cell));      /* one argument (B), in bytes */
+    ffcall(gensym,NULL,1);
+
+    /* if (PRI == ITER_STOP) goto exit */
+    stgwrite("\tconst.alt ");
+    outval(generator_iterstop,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tjeq ");
+    outval(wq[wqEXIT],TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+
+    /* bind the loop variable to the returned value */
+    if (loopsym->vclass==sLOCAL)
+      stgwrite("\tstor.s.pri ");
+    else
+      stgwrite("\tstor.pri ");
+    outval(iaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+
+    statement(NULL,FALSE);      /* the loop body; "i" is live here */
+
+    setlabel(wq[wqLOOP]);       /* "continue" lands here: call the generator again */
+    jumplabel(lbl_cond);
+    setlabel(wq[wqEXIT]);       /* "break" lands here too: free the state block */
+    delwhile();
+
+    /* clean up the loop variable and the hidden base cell */
+    if (declared>save_decl) {
+      destructsymbols(&loctab,pc_nestlevel);
+      modstk((int)(declared-save_decl)*sizeof(cell));
+      testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);   /* look for unused block locals */
+      declared=save_decl;
+      delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
+    } /* if */
+    /* release the state block. It is the last heap allocation made, so this is
+     * a strict LIFO release, even when this loop is nested in another one. */
+    modheap(-(int)blkcells*(int)sizeof(cell));
+    pc_nestlevel=save_nestlevel;
+    endlessloop=save_endlessloop;
+    return tFOREACH;
+  } /* if coroutine generator */
 
   if (gensym!=NULL) {
     /* --- GENERATOR PATH: foreach (new i : Gen(a,b,...)) ---
@@ -9283,6 +9667,11 @@ static void doreturn(void)
     } /* if */
     rettype|=uRETNONE;                  /* function does not return anything */
   } /* if */
+  /* in a generator a "return" ends the sequence, so whatever was returned (or
+   * the 0 of a bare "return;") is replaced by the stop sentinel that "foreach"
+   * watches for */
+  if (pc_generator)
+    ldconst(generator_iterstop,sPRI);
   destructsymbols(&loctab,0);           /* call destructor for *all* locals */
   modstk((int)declared*sizeof(cell));   /* end of function, remove *all*
                                          * local variables */

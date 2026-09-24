@@ -116,7 +116,7 @@ SC_VDEFINE char *sc_tokens[] = {
   "default", "defined", "foreach", "do", "else", "__emit", "*end", "enum", "exit", "for",
   "forward", "goto", "hook", "if", "iterfunc", "__nameof", "native", "new", "operator", "__pragma",
   "public", "return", "sizeof", "sleep", "state", "static", "__static_assert",
-  "__static_check", "stock", "switch", "tagof", "*then", "while",
+  "__static_check", "stock", "switch", "tagof", "*then", "while", "yield",
   "#assert", "#define", "#else", "#elseif", "#emit", "#endif", "#endinput",
   "#endscript", "#error", "#file", "#if", "#include", "#line", "#pragma",
   "#tryinclude", "#undef", "#warning",

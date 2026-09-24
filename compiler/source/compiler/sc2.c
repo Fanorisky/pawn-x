@@ -3405,7 +3405,7 @@ SC_FUNC int refer_symbol(symbol *entry,symbol *bywhom)
 SC_FUNC void markusage(symbol *sym,int usage)
 {
   assert(sym!=NULL);
-  sym->usage |= (short)(unsigned short)usage;
+  sym->usage |= (unsigned int)usage;
   if ((usage & uWRITTEN)!=0)
     sym->lnumber=fline;
   if ((usage & uREAD)!=0 && (sym->ident==iVARIABLE || sym->ident==iREFERENCE))
@@ -3638,7 +3638,7 @@ SC_FUNC symbol *addsym(const char *name,cell addr,int ident,int vclass,int tag,i
   entry.vclass=(char)vclass;
   entry.ident=(char)ident;
   entry.tag=tag;
-  entry.usage=(short)(unsigned short)usage;
+  entry.usage=(unsigned int)usage;
   entry.assignlevel=0;
   entry.fnumber=-1;     /* assume global visibility (ignored for local symbols) */
   entry.lnumber=fline;

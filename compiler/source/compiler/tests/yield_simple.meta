@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+pair 10
+
+pair 20
+
+done
+
+yield_simple.amx returns 0
+"""
+}

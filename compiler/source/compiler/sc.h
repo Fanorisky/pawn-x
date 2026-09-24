@@ -125,7 +125,8 @@ typedef struct s_symbol {
   cell codeaddr;        /* address (in the code segment) where the symbol declaration starts */
   char vclass;          /* sLOCAL if "addr" refers to a local symbol */
   char ident;           /* see below for possible values */
-  short usage;          /* see below for possible values */
+  unsigned int usage;   /* see below for possible values (no longer a "short":
+                         * uGENERATOR is above the 16-bit range) */
   char flags;           /* see below for possible values */
   int compound;         /* compound level (braces nesting level) */
   int tag;              /* tagname id */
@@ -251,6 +252,10 @@ typedef struct s_hookgroup {
 /* function is a lazy generator (declared "iterfunc"): foreach over a call
  * to it emits a call-loop instead of an array walk (see doforeach) */
 #define uITERFUNC   0x800
+/* function is a coroutine generator (an "iterfunc" body containing "yield", or
+ * an "iterfunc" declared without parameters): "foreach" resumes it via a saved
+ * continuation instead of calling it fresh each step (see the yield docs) */
+#define uGENERATOR  0x10000
 /* uRETNONE is not stored in the "usage" field of a symbol. It is
  * used during parsing a function, to detect a mix of "return;" and
  * "return value;" in a few special cases.
@@ -350,7 +355,7 @@ typedef struct s_valuepair {
 typedef struct s_assigninfo {
   int lnumber;      /* line number of the first unused assignment made in one of
                      * the branches (used for error messages) */
-  short usage;      /* usage flags to memoize */
+  unsigned int usage; /* usage flags to memoize (same width as symbol.usage) */
 } symstate;
 
 /* macros for code generation */
@@ -472,6 +477,7 @@ enum {
   tTAGOF,
   tTHEN,
   tWHILE,
+  tYIELD,
 
   /* compiler directives */
   tpASSERT, /* #assert */

@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+empty n=0
+
+done
+
+yield_empty.amx returns 0
+"""
+}
