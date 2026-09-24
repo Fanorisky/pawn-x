@@ -1,18 +1,20 @@
 #if defined _INC_y_races
 	#endinput
 #endif
-#define _INC_y_races
 
 /**
- * <library name="y_races">
- * <section>
- *  Description
- * </section>
- *  Create, manage, and run races.
- * <section>
- *  Version
- * </section>
- *  2.0
+ * <library
+ *   name="y_races"
+ *   version="2.0"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ *   summary="Create, manage, and run races."
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
  * </library>
  *//** *//*
 Legal:
@@ -31,7 +33,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -58,6 +60,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -86,80 +89,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-#include "..\YSI_Internal\y_compilerdata"
-
-#if !defined YSI_NO_RACE_POSITION && !defined RACE_POSITION
-	#define RACE_POSITION
+#if !defined _INC_y_races
+	#tryinclude "y_races\y_races_entry"
 #endif
-
-#if defined YSI_TESTS
-	#define _Y_RACES_STATIC
-#else
-	#define _Y_RACES_STATIC static
+#if !defined _INC_y_races
+	#tryinclude "YSI_Visual\y_races\y_races_entry"
 #endif
-
-#include "..\YSI_Players\y_text"
-#include "..\YSI_Data\y_bit"
-#include "..\YSI_Data\y_iterate"
-#include "..\YSI_Data\y_playerarray"
-#if defined RACE_POSITION
-	#include "..\YSI_Coding\y_timers"
+#if !defined _INC_y_races
+	#tryinclude "YSI\YSI_Visual\y_races\y_races_entry"
 #endif
-
-#if !defined MAX_RACES
-	#define MAX_RACES 16
+#if !defined _INC_y_races
+	#tryinclude <YSI_Visual\y_races\y_races_entry>
 #endif
-
-#define YSIM_U_DISABLE
-#define MASTER 53
-#include "..\YSI_Core\y_master"
-
-#define _GROUP_MAKE_NAME<%0...%1> %0Race%1
-#define _GROUP_MAKE_LIMIT         MAX_RACES
-#include "..\YSI_Players\y_groups\_funcs"
-
-#include "..\YSI_Coding\y_hooks"
-
-stock _YSI_HAS_y_races(_do_not_call_me_ever_, _like_never_)
-{
-	P:E("You called _YSI_HAS_y_races!  Bad, don't do that!", _do_not_call_me_ever_, _like_never_);
-	assert(false);
-	return 0;
-}
-
-forward Race_Create(laps = 0, entry = 0, countdown = 3, bool:arial = false, bool:fixedPrize = true, exitTime = 0, interior = 0, world = 0, bool:restart = false);
-forward Race_Destroy(slot, bool:refund = false);
-foreign Race_AddCheckpoint(raceid, Float:x, Float:y, Float:z);
-foreign Race_AddStart(raceid, Float:x, Float:y, Float:z, Float:a);
-foreign void:Race_SetFixedWin(raceid, set);
-foreign void:Race_SetRestart(raceid, set);
-foreign void:Race_SetArial(raceid, set);
-foreign void:Race_SetCountdown(raceid, countdown);
-foreign void:Race_SetInterior(raceid, interior);
-foreign void:Race_SetWorld(raceid, world);
-foreign void:Race_SetPrize(raceid, position, amount);
-foreign void:Race_SetExitTime(raceid, time);
-foreign Race_IsActive(raceid);
-foreign void:Race_SetLaps(raceid, laps);
-foreign void:Race_SetEntry(raceid, cost);
-foreign Race_GetPlayerExitedTime(playerid);
-foreign Race_PlayerJoin(playerid, race);
-forward Race_PlayerLeave(playerid, bool:refund = false);
-foreign Race_Start(race);
-foreign Race_GetPlayerPosition(playerid);
-foreign Race_GetPlayerRaceTime(playerid);
-foreign Race_GetPlayerRace(playerid);
-foreign Race_SetPlayer(race, playerid, bool:set);
-
-#include "y_races/impl"
-#if defined YSI_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_races/tests"
-	// Get some new IDs.
+#if !defined _INC_y_races
+	#tryinclude <YSI\YSI_Visual\y_races\y_races_entry>
 #endif
-
-#undef _GROUP_MAKE_LIMIT
-#undef _GROUP_MAKE_NAME
-
-#include "..\YSI_Core\y_master"
+#if !defined _INC_y_races
+	#error Could not find y_races
+#endif
 

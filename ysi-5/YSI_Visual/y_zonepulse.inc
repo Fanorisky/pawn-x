@@ -1,37 +1,19 @@
 #if defined _INC_y_zonepulse
 	#endinput
 #endif
-#define _INC_y_zonepulse
-
 /**
- * <library name="y_zonepulse">
- * <section>
- *  Description
- * </section>
- *  Gradually fades a zone's colour between one colour and another, then back.
- * <section>
- *  Version
- * </section>
- *  0.1
- * <section>
- *  Functions
- * </section>
- * <subsection>
- * Public
- * </subsection><ul>
- *  <symbol name="__GangZonePulse">The timer that does the hard work.</symbol>
- * </ul><subsection>
- * Stock
- * </subsection><ul>
- *  <symbol name="GangZonePulse">Pulse a zone for player or collection of players.</symbol>
- *  <symbol name="GangZonePulseForPlayer">Pulse a zone for a player.</symbol>
- *  <symbol name="GangZonePulseForAll">Pulse a zone for everyone.</symbol>
- *  <symbol name="GangZoneStopPulse">Stop a zone pulsing for a set of players.</symbol>
- *  <symbol name="GangZoneStopPulseForPlayer">Stop a zone pulsing for a single player.</symbol>
- *  <symbol name="GangZoneStopPulseForAll">Stop a zone pulsing for everyone.</symbol>
- * </ul><section>Compile options</section><ul>
- *  <symbol name="ZONE_PULSE_STAGE_TIME">ms between each pulse frame.</symbol>
- * </ul>
+ * <library
+ *   name="y_zonepulse"
+ *   version="0.1"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ *   summary="Gradually fades a zone's colour between one colour and another, then back."
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
  * </library>
  *//** *//*
 Legal:
@@ -50,7 +32,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -77,6 +59,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -105,27 +88,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-/*
-native GangZonePulse(@PlayerSet:ps, zone, from, to, time, delay = ZONE_PULSE_STAGE_TIME);
-native GangZonePulseForPlayer(playerid, zone, from, to, time, delay = ZONE_PULSE_STAGE_TIME);
-native GangZonePulseForAll(zone, from, to, time, delay = ZONE_PULSE_STAGE_TIME);
-native GangZoneStopPulse(@PlayerSet:ps, zone);
-native GangZoneStopPulseForPlayer(playerid, zone);
-native GangZoneStopPulseForAll(zone);
-*/
-
-#include <a_samp>
-#include "..\YSI_Internal\y_version"
-#include "..\YSI_Data\y_playerset"
-#include "..\YSI_Data\y_iterate"
-#include "..\YSI_Core\y_debug"
-
-#if !defined ZONE_PULSE_STAGE_TIME
-	#define ZONE_PULSE_STAGE_TIME (50)
+#if !defined _INC_y_zonepulse
+	#tryinclude "y_zonepulse\y_zonepulse_entry"
+#endif
+#if !defined _INC_y_zonepulse
+	#tryinclude "YSI_Visual\y_zonepulse\y_zonepulse_entry"
+#endif
+#if !defined _INC_y_zonepulse
+	#tryinclude "YSI\YSI_Visual\y_zonepulse\y_zonepulse_entry"
+#endif
+#if !defined _INC_y_zonepulse
+	#tryinclude <YSI_Visual\y_zonepulse\y_zonepulse_entry>
+#endif
+#if !defined _INC_y_zonepulse
+	#tryinclude <YSI\YSI_Visual\y_zonepulse\y_zonepulse_entry>
+#endif
+#if !defined _INC_y_zonepulse
+	#error Could not find y_zonepulse
 #endif
 
-#include "y_zonepulse/impl"
-#if defined YSI_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_zonepulse/tests"
-#endif

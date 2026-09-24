@@ -1,23 +1,27 @@
 #if defined _INC_y_va
 	#endinput
 #endif
-#define _INC_y_va
 
 /**
- * <library name="y_va">
- * <section>
- *  Description
- * </section>
- *  This library currently provides two functions - va_printf and va_format
- *  which perform printf and format using variable arguments passed to another
- *  function.
- *
- *  This is bsed on the variable parameter passing method based on code by Zeex.
- *  See page 15 of the code optimisations topic.
- * <section>
- *  Version
- * </section>
- *  1.0
+ * <library
+ *   name="y_va"
+ *   version="1.0"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
+ *   <remarks>
+ *     This library currently provides two functions - va_printf and va_format
+ *     which perform printf and format using variable arguments passed to
+ *     another function.
+ *     <p />
+ *     This is bsed on the variable parameter passing method based on code by
+ *     Zeex. See page 15 of the code optimisations topic.
+ *   </remarks>
  * </library>
  *//** *//*
 Legal:
@@ -36,7 +40,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -63,6 +67,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -91,64 +96,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-#if 0
-
-	// Example:
-	stock MyPrintf(const format[], {Float, File, _}:...)
-	{
-		// The triple underscore is used to mirror the triple dots in the
-		// function definition.  You can't easily tell it is three from a
-		// glance, but it is.
-		printf(format, ___1); // Or `___(1)`.
-		print("Printed many things");
-		return 42;
-	}
-
+#if !defined _INC_y_va
+	#tryinclude "y_va\y_va_entry"
 #endif
-
-#define ___ YVA2_DummyPush()
-// For optional parameter skips.
-#define YVA2_DummyPush()(%1) YVA2_DummyPush((%1) * 4)
-
-// Shortcuts.
-#define ___0 ___(0)
-#define ___1 ___(1)
-#define ___2 ___(2)
-#define ___3 ___(3)
-#define ___4 ___(4)
-#define ___5 ___(5)
-#define ___6 ___(6)
-#define ___7 ___(7)
-#define ___8 ___(8)
-#define ___9 ___(9)
-
-#include "..\YSI_Internal\y_globaltags"
-
-#define va_args<%0> GLOBAL_TAG_TYPES:...
-#define va_start<%0> ___(%0)
-
-// Detect Slice's va_formatex function, which now doesn't need to exist.  This
-// is my first ever use of `#pragma deprecated`!  Actually quite happy about
-// that - it's one of the few language features I've never used in earnest, so
-// its almost an occassion when that happens.
-#pragma deprecated Use formatex instead
-forward va_formatex(output[], size = sizeof(output), const fmat[], va_:STATIC_ARGS);
-
-// Backwards compatability.
-native va_printf            (const format[], GLOBAL_TAG_TYPES:...)                                        = printf;
-native va_CallRemoteFunction(const function[], const format[], GLOBAL_TAG_TYPES:...)                      = CallRemoteFunction;
-native va_CallLocalFunction (const function[], const format[], GLOBAL_TAG_TYPES:...)                      = CallLocalFunction;
-native va_SetTimerEx        (const function[], interval, repeating, const format[], GLOBAL_TAG_TYPES:...) = SetTimerEx;
-native va_format            (output[], len, const format[], GLOBAL_TAG_TYPES:...)                         = format;
-
-#include "..\YSI_Internal\y_version"
-#include "..\YSI_Internal\y_funcinc"
-#include "..\YSI_Core\y_utils"
-
-#include "y_va/impl"
-
-#if defined YSI_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_va/tests"
+#if !defined _INC_y_va
+	#tryinclude "YSI_Coding\y_va\y_va_entry"
+#endif
+#if !defined _INC_y_va
+	#tryinclude "YSI\YSI_Coding\y_va\y_va_entry"
+#endif
+#if !defined _INC_y_va
+	#tryinclude <YSI_Coding\y_va\y_va_entry>
+#endif
+#if !defined _INC_y_va
+	#tryinclude <YSI\YSI_Coding\y_va\y_va_entry>
+#endif
+#if !defined _INC_y_va
+	#error Could not find y_va
 #endif
 

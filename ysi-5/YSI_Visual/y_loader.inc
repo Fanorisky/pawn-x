@@ -1,58 +1,39 @@
+#if defined _INC_y_loader
+	#endinput
+#endif
+
 /**
- * <library name="y_loader">
- * <section>
- *  Description
- * </section>
- *  Loads MTA XML format map files for use with the object and race systems.
- * Legal:
- *  Copyright (C) 2007 Alex "Y_Less" Cole
- *
- *  This program is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU General Public License
- *  as published by the Free Software Foundation; either version 2
- *  of the License, or (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
- *  MA 02110-1301, USA.
- * <section>
- *  Functions
- * </section>
- * <subsection>
- * Public
- * </subsection><ul>
- *  <symbol name="Loader_Spawn">Processes a loaded spawn point.</symbol>
- *  <symbol name="Loader_Check">Processes a loaded checkpoint.</symbol>
- *  <symbol name="Loader_Obj">Processes a loaded object.</symbol>
- * </ul><subsection>
- * Core
- * </subsection><ul>
- *  <symbol name="Loader_Loader">Initialises data.</symbol>
- * </ul><subsection>
- * Stock
- * </subsection><ul>
- *  <symbol name="Loader_Parse">Loads a file.</symbol>
- *  <symbol name="Loader_AddHandler">Adds a custom handle for the race file.</symbol>
- *  <symbol name="Loader_GetRace">Returns the current race handle.</symbol>
- * </ul><section>
- *  Tags
- * </section><ul>
- *  <symbol name="e_RACE_FLAGS">Race data flag.</symbol>
- * </ul><section>
- *  Variables
- * </section>
- * <subsection>
- * Static
- * </subsection><ul>
- *  <symbol name="YSI_g_sXMLRules">Handle to the XML parse rule set.</symbol>
- *  <symbol name="YSI_g_sCurRace">Handle to the current race being built.</symbol>
- * </ul>
+ * <library
+ *   name="y_loader"
+ *   version="1.0"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ *   summary="Loads MTA XML format map files for use with the object and race systems."
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
+ *   <section>
+ *     Legal
+ *   </section>
+ *     Copyright (C) 2007 Alex "Y_Less" Cole
+ *     
+ *     This program is free software; you can redistribute it and/or
+ *     modify it under the terms of the GNU General Public License
+ *     as published by the Free Software Foundation; either version 2
+ *     of the License, or (at your option) any later version.
+ *     
+ *     This program is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *     
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program; if not, write to the Free Software
+ *     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ *     MA 02110-1301, USA.
  * </library>
  *//** *//*
 Legal:
@@ -71,7 +52,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -98,6 +79,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -131,8 +113,8 @@ static stock
 	#if defined _YSI_VISUAL_OBJECTS
 		YSI_g_sRaceObjects[ceildiv(MAX_DYN_OBJECTS, 4)] = {-1, ...},
 	#endif
-	YSI_g_sCurRace,
-	YSI_g_sCurWorld;
+	YSI_g_sCurRace = 0,
+	YSI_g_sCurWorld = 0;
 
 forward Loader_Spawn();
 forward Loader_Check();
@@ -162,7 +144,7 @@ Loader_Loader()
 /*-------------------------------------------------------------------------*//**
  * <param name="filename">File to parse as an XML race file.</param>
  * <param name="laps">Number of laps to race for.</param>
- * <param name="entry">Cost of entry.</param>
+ * <param name="entryCost">Cost of entry.</param>
  * <param name="countdown">Time to count down from for start.</param>
  * <param name="arial">Use arial checkpoints instead.</param>
  * <param name="fixedPrize">Set prize amounts manually.</param>
@@ -176,11 +158,11 @@ Loader_Loader()
  * </remarks>
  *//*------------------------------------------------------------------------**/
 
-stock Loader_Parse(filename[], laps = 0, entry = 0, countdown = 3, bool:arial = false, bool:fixedPrize = true, exitTime = 0, interior = 0, world = 0, bool:restart = false)
+stock Loader_Parse(filename[], laps = 0, entryCost = 0, countdown = 3, bool:arial = false, bool:fixedPrize = true, exitTime = 0, interior = 0, world = 0, bool:restart = false)
 {
 	if (!fexist(filename)) return NO_RACE;
 	new
-		race = Race_Create(laps, entry, countdown, arial, fixedPrize, exitTime, interior, world, restart);
+		race = Race_Create(laps, entryCost, countdown, arial, fixedPrize, exitTime, interior, world, restart);
 	if (race != NO_RACE)
 	{
 		YSI_g_sCurRace = race;
@@ -283,19 +265,19 @@ public Loader_Obj()
 			name[MAX_XML_ENTRY_NAME],
 			val[MAX_XML_ENTRY_TEXT];
 		new
-			Float:x,
-			Float:y,
-			Float:z,
-			Float:rx,
-			Float:ry,
-			Float:rz,
-			model;
+			Float:x = 0.0,
+			Float:y = 0.0,
+			Float:z = 0.0,
+			Float:rx = 0.0,
+			Float:ry = 0.0,
+			Float:rz = 0.0,
+			model = 0;
 		while (XML_GetKeyValue(name, val))
 		{
 			if (!strcmp(name, "position", true))
 			{
 				new
-					pos;
+					pos = 0;
 				x = floatstr(val);
 				pos = chrfind(' ', val, pos);
 				y = floatstr(val[++pos]);
@@ -305,7 +287,7 @@ public Loader_Obj()
 			else if (!strcmp(name, "rotation", true))
 			{
 				new
-					pos;
+					pos = 0;
 				rz = floatstr(val);
 				pos = chrfind(' ', val, pos);
 				ry = floatstr(val[++pos]);
@@ -354,15 +336,15 @@ public Loader_Check()
 			name[MAX_XML_ENTRY_NAME],
 			val[MAX_XML_ENTRY_TEXT];
 		new
-			Float:x,
-			Float:y,
-			Float:z;
+			Float:x = 0.0,
+			Float:y = 0.0,
+			Float:z = 0.0;
 		while (XML_GetKeyValue(name, val))
 		{
 			if (!strcmp(name, "position", true))
 			{
 				new
-					pos;
+					pos = 0;
 				x = floatstr(val);
 				pos = chrfind(' ', val, pos);
 				y = floatstr(val[++pos]);
@@ -391,16 +373,16 @@ public Loader_Spawn()
 			name[MAX_XML_ENTRY_NAME],
 			val[MAX_XML_ENTRY_TEXT];
 		new
-			Float:x,
-			Float:y,
-			Float:z,
-			Float:rz;
+			Float:x = 0.0,
+			Float:y = 0.0,
+			Float:z = 0.0,
+			Float:rz = 0.0;
 		while (XML_GetKeyValue(name, val))
 		{
 			if (!strcmp(name, "position", true))
 			{
 				new
-					pos;
+					pos = 0;
 				x = floatstr(val);
 				pos = chrfind(' ', val, pos);
 				y = floatstr(val[++pos]);

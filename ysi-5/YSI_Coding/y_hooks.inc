@@ -1,27 +1,4 @@
-#if defined _inc_y_hooks
-	#undef _inc_y_hooks
-#endif
-
-// Multiple includes!
-#include "..\YSI_Internal\y_unique"
-
-#if defined _INC_y_hooks
-	#endinput
-#endif
-#define _INC_y_hooks
-
-/**
- * <library name="y_hooks">
- * <section>
- *  Description
- * </section>
- *  Automatically hooks any callbacks with a very simple syntax.
- * <section>
- *  Version
- * </section>
- *  2.0
- * </library>
- *//** *//*
+/*
 Legal:
 	Version: MPL 1.1
 	
@@ -38,7 +15,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -65,6 +42,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -93,31 +71,67 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-#if defined YSI_TESTS
-	#define _Y_HOOKS_STATIC
-#else
-	#define _Y_HOOKS_STATIC static
+#if defined _inc_y_hooks
+	#undef _inc_y_hooks
 #endif
 
-#include "y_hooks/macros"
+#if !defined _Y_UNIQUE_INCLUDED
+	#tryinclude "..\YSI_Coding\y_unique\y_unique_entry"
+#endif
+#if !defined _Y_UNIQUE_INCLUDED
+	#tryinclude "YSI_Coding\y_unique\y_unique_entry"
+#endif
+#if !defined _Y_UNIQUE_INCLUDED
+	#tryinclude "YSI\YSI_Coding\y_unique\y_unique_entry"
+#endif
+#if !defined _Y_UNIQUE_INCLUDED
+	#tryinclude <YSI_Coding\y_unique\y_unique_entry>
+#endif
+#if !defined _Y_UNIQUE_INCLUDED
+	#tryinclude <YSI\YSI_Coding\y_unique\y_unique_entry>
+#endif
+#if defined _Y_UNIQUE_INCLUDED
+	#undef _Y_UNIQUE_INCLUDED
+#else
+	#error Did you use `YSI_Coding/y_hooks` instead of `YSI_Coding\y_hooks`?
+#endif
 
-#include "..\YSI_Internal\y_unique"
-#include "..\YSI_Core\y_cell"
-#include "..\YSI_Core\y_utils"
-#include "..\YSI_Storage\y_amx"
-#include "..\YSI_Core\y_als"
+#if defined _INC_y_hooks
+	#endinput
+#endif
 
-#include "..\YSI_Internal\y_cgen"
+/**
+ * <library
+ *   name="y_hooks"
+ *   version="2.0"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ *   summary="Automatically hooks any callbacks with a very simple syntax."
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
+ * </library>
+ *//** */
 
-#include "..\YSI_Internal\y_thirdpartyinclude"
-//asm"
-
-#include "y_hooks/impl"
-
-#if defined YSI_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_hooks/tests"
-	// Get some new IDs.
-	//#include "..\YSI_Internal\y_unique"
+#if !defined _INC_y_hooks
+	#tryinclude "y_hooks\y_hooks_entry"
+#endif
+#if !defined _INC_y_hooks
+	#tryinclude "YSI_Coding\y_hooks\y_hooks_entry"
+#endif
+#if !defined _INC_y_hooks
+	#tryinclude "YSI\YSI_Coding\y_hooks\y_hooks_entry"
+#endif
+#if !defined _INC_y_hooks
+	#tryinclude <YSI_Coding\y_hooks\y_hooks_entry>
+#endif
+#if !defined _INC_y_hooks
+	#tryinclude <YSI\YSI_Coding\y_hooks\y_hooks_entry>
+#endif
+#if !defined _INC_y_hooks
+	#error Could not find y_hooks
 #endif
 

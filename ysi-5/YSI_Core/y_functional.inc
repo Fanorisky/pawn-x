@@ -1,20 +1,4 @@
-#if defined _INC_y_functional
-	#endinput
-#endif
-#define _INC_y_functional
-
-/**
- * <library name="y_functional">
- * <section>
- *  Description
- * </section>
- *  Lambda functions and functional program functions - map, fold, etc.
- * <section>
- *  Version
- * </section>
- *  1.0
- * </library>
- *//** *//*
+/*
 Legal:
 	Version: MPL 1.1
 	
@@ -31,7 +15,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -58,6 +42,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -86,17 +71,5 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-#include "y_utils"
-#include y_debug
-#include "..\YSI_Storage\y_amx"
-#include "..\YSI_Coding\y_inline"
-
-#include "..\YSI_Internal\y_thirdpartyinclude"
-#include "y_functional/impl"
-#include "y_functional/rewrite"
-
-#if defined YSI_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_functional/tests"
-#endif
+#error Please use <YSI_Coding\y_functional>
 

@@ -1,21 +1,26 @@
 #if defined _INC_y_timers
 	#endinput
 #endif
-#define _INC_y_timers
 
 /**
- * <library name="y_timers">
- * <section>
- *  Description
- * </section>
- *  Sets up repeating timers without requiring any SetTimers and arranges them
- *  so that they will be very unlikely to meet (at least for a long time) using
- *  scheduling algorithms to get timers with the same period to be offset.  Also
- *  fixes arrays and strings in timers so they can be passed properly.
- * <section>
- *  Version
- * </section>
- *  2.0
+ * <library
+ *   name="y_timers"
+ *   version="2.0"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
+ *   <remarks>
+ *     Sets up repeating timers without requiring any SetTimers and arranges
+ *     them so that they will be very unlikely to meet (at least for a long
+ *     time) using scheduling algorithms to get timers with the same period to
+ *     be offset.  Also fixes arrays and strings in timers so they can be passed
+ *     properly.
+ *   </remarks>
  * </library>
  *//** *//*
 Legal:
@@ -34,7 +39,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -61,6 +66,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -89,39 +95,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-// y_uvars
-
-#if defined USE_Y_TIMERS_V1
-	#error y_timers version 1 has not worked in years!
-	#include "y_timers/v1"
-	#endinput
+#if !defined _INC_y_timers
+	#tryinclude "y_timers\y_timers_entry"
+#endif
+#if !defined _INC_y_timers
+	#tryinclude "YSI_Coding\y_timers\y_timers_entry"
+#endif
+#if !defined _INC_y_timers
+	#tryinclude "YSI\YSI_Coding\y_timers\y_timers_entry"
+#endif
+#if !defined _INC_y_timers
+	#tryinclude <YSI_Coding\y_timers\y_timers_entry>
+#endif
+#if !defined _INC_y_timers
+	#tryinclude <YSI\YSI_Coding\y_timers\y_timers_entry>
+#endif
+#if !defined _INC_y_timers
+	#error Could not find y_timers
 #endif
 
-#include "..\YSI_Internal\y_plugins"
-
-#include "..\YSI_Internal\y_version"
-
-#include "..\YSI_Storage\y_amx"
-#include "..\YSI_Internal\y_shortfunc"
-#include "..\YSI_Coding\y_malloc"
-#include "..\YSI_Data\y_iterate"
-#include "..\YSI_Coding\y_hooks"
-#include "..\YSI_Core\y_debug"
-
-// Ripped from code-parse.inc.
-#define PARSER_ISOLATE(%9,%0,%1){%2,%3} _:T@:O@$%1$%0$(%9){%2,%3}
-#define T@:O@$$%0$(){%2,%3} %2(%0)
-#define O@$%1$%0$(%9){%2,%3} %3(%9%0%1)
-
-#include "y_timers/impl"
-#if defined _YSI_PLUGINS_FIXES_2
-	//#error V3
-	#include "y_timers/v3"
-#else
-	#include "y_timers/v2"
-#endif
-
-#if defined YSI_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_timers/tests"
-#endif

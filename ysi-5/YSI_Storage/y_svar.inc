@@ -1,18 +1,20 @@
 #if defined _INC_y_svar
 	#endinput
 #endif
-#define _INC_y_svar
 
 /**
- * <library name="y_svar">
- * <section>
- *  Description
- * </section>
- *  Declares data to be automatically saved and loaded for the whole server.
- * <section>
- *  Version
- * </section>
- *  0.1
+ * <library
+ *   name="y_svar"
+ *   version="0.1"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ *   summary="Declares data to be automatically saved and loaded for the whole server."
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
  * </library>
  *//** *//*
 Legal:
@@ -31,7 +33,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -58,6 +60,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -86,36 +89,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-// y_uvars
-
-#if !defined MODE_NAME
-	#error Please define "MODE_NAME" before including y_svar.
+#if !defined _INC_y_svar
+	#tryinclude "y_svar\y_svar_entry"
+#endif
+#if !defined _INC_y_svar
+	#tryinclude "YSI_Storage\y_svar\y_svar_entry"
+#endif
+#if !defined _INC_y_svar
+	#tryinclude "YSI\YSI_Storage\y_svar\y_svar_entry"
+#endif
+#if !defined _INC_y_svar
+	#tryinclude <YSI_Storage\y_svar\y_svar_entry>
+#endif
+#if !defined _INC_y_svar
+	#tryinclude <YSI\YSI_Storage\y_svar\y_svar_entry>
+#endif
+#if !defined _INC_y_svar
+	#error Could not find y_svar
 #endif
 
-#if defined SVAR_USE_MYSQL
-	#if _YSI_PLUGINS_MYSQL == 7
-		#include "y_svar/blueg7"
-	#elseif _YSI_PLUGINS_MYSQL == 6
-		#include "y_svar/blueg6"
-	#elseif _YSI_PLUGINS_MYSQL == 7
-		#include "y_svar/stricken"
-	#else
-		#error No MySQL plugin found.
-	#endif
-#elseif defined SVAR_USE_SQLITE
-	#include "y_svar/sqlite"
-#else
-	#include "..\YSI_Internal\y_version"
-	#include "..\YSI_Storage\y_amx"
-	#include "..\YSI_Core\y_debug"
-	#include "..\YSI_Core\y_utils"
-	#include "..\YSI_Storage\y_ini"
-	#include "..\YSI_Coding\y_hooks"
-	#include "..\YSI_Internal\y_stripnumbers"
-	
-	#include "y_svar/ini"
-#endif
-#if defined YSI_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_svar/tests"
-#endif

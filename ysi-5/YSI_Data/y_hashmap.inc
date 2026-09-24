@@ -1,36 +1,20 @@
 #if defined _INC_y_hashmap
 	#endinput
 #endif
-#define _INC_y_hashmap
 
 /**
- * <library name="y_hashmap">
- * <section>
- *  Description
- * </section>
- *  Maps string indexes to integer indexes.  Uses a fast hash to get an array
- *  slot, then a linked list to resolve collisions.
- * <section>
- *  Version
- * </section>
- *  2.0
- * <section>
- *  Functions
- * </section>
- * <subsection>
- * Stock
- * </subsection><ul>
- *  <symbol name="HashMap_Init">Associate a hash map with an array.</symbol>
- *  <symbol name="HashMap_Add">Add a value under a given string.</symbol>
- *  <symbol name="HashMap_Get">Get a value from a string.</symbol>
- *  <symbol name="HashMap_RemoveKey">Remove a string and its value from a hash map.</symbol>
- *  <symbol name="HashMap_Set">Change the value associated with a key.</symbol>
- * </ul><section>
- *  Definitions
- * </section><ul>
- *  <symbol name="HASH_MAP_DATA">What should be added to enums to be hash map referenced.</symbol>
- *  <symbol name="HashMap">Declare a new hash map.</symbol>
- * </ul>
+ * <library
+ *   name="y_hashmap"
+ *   version="2.0"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ *   summary="Maps string indexes to integer indexes.  Uses a fast hash to get an array slot, then a linked list to resolve collisions."
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
  * </library>
  *//** *//*
 Legal:
@@ -49,7 +33,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -76,6 +60,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -104,19 +89,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-#include "..\YSI_Internal\y_compilerdata"
-#include "..\YSI_Internal\y_thirdpartyinclude"
-#include "..\YSI_Internal\y_version"
-#include "..\YSI_Core\y_utils"
-#include "..\YSI_Storage\y_amx"
-#include "..\YSI_Coding\y_stringhash"
-#include "..\YSI_Internal\y_shortfunc"
-
-#include "y_hashmap/impl"
-
-// The hashmap tests are vast.  Only include them when explicitly requested.
-#if defined YSI_TESTS && defined YSI_HASHMAP_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_hashmap/tests"
+#if !defined _INC_y_hashmap
+	#tryinclude "y_hashmap\y_hashmap_entry"
+#endif
+#if !defined _INC_y_hashmap
+	#tryinclude "YSI_Core\y_hashmap\y_hashmap_entry"
+#endif
+#if !defined _INC_y_hashmap
+	#tryinclude "YSI\YSI_Core\y_hashmap\y_hashmap_entry"
+#endif
+#if !defined _INC_y_hashmap
+	#tryinclude <YSI_Core\y_hashmap\y_hashmap_entry>
+#endif
+#if !defined _INC_y_hashmap
+	#tryinclude <YSI\YSI_Core\y_hashmap\y_hashmap_entry>
+#endif
+#if !defined _INC_y_hashmap
+	#error Could not find y_hashmap
 #endif
 

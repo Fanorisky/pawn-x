@@ -1,24 +1,29 @@
 #if defined _INC_y_inline
 	#endinput
 #endif
-#define _INC_y_inline
 
 /**
- * <library name="y_inline">
- * <section>
- *  Description
- * </section>
- *  This library allows a user to write inline functions in their script.  It
- *  first detects all inline functions and generates data on them, such as
- *  parameter counts and addresses.  When an inline function is passed in code
- *  its current context data is stored.  Finally, when an inline function is
- *  found to be called at some point its current local stack is stored in global
- *  memory.  When the function actually is called, the stack is restored, and
- *  additional parameters which are the inline function parameters, are passed.
- * <section>
- *  Version
- * </section>
- *  1.0
+ * <library
+ *   name="y_inline"
+ *   version="1.0"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
+ *   <remarks>
+ *     This library allows a user to write inline functions in their script.  It
+ *     first detects all inline functions and generates data on them, such as
+ *     parameter counts and addresses.  When an inline function is passed in
+ *     code its current context data is stored.  Finally, when an inline
+ *     function is found to be called at some point its current local stack is
+ *     stored in global memory.  When the function actually is called, the stack
+ *     is restored, and additional parameters which are the inline function
+ *     parameters, are passed.
+ *   </remarks>
  * </library>
  *//** *//*
 Legal:
@@ -37,7 +42,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -64,6 +69,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -92,30 +98,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-#include "..\YSI_Internal\y_compilerdata"
-
-#if !defined YSI_MAX_INLINE_STRING
-	#define YSI_MAX_INLINE_STRING YSI_MAX_STRING
+#if !defined _INC_y_inline
+	#tryinclude "y_inline\y_inline_entry"
 #endif
-
-#include "..\YSI_Internal\y_thirdpartyinclude"
-#include "..\YSI_Internal\y_version"
-#include "..\YSI_Storage\y_amx"
-#include "..\YSI_Internal\y_shortfunc"
-#include "..\YSI_Core\y_debug"
-#include "..\YSI_Core\y_utils"
-#include "..\YSI_Data\y_bit"
-#include "y_malloc"
-
-
-#include "y_inline/macros"
-#include "..\YSI_Internal\y_cgen"
-
-#include "y_inline/impl"
-
-#if defined YSI_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_hooks"
-	#include "y_inline/tests"
+#if !defined _INC_y_inline
+	#tryinclude "YSI_Coding\y_inline\y_inline_entry"
+#endif
+#if !defined _INC_y_inline
+	#tryinclude "YSI\YSI_Coding\y_inline\y_inline_entry"
+#endif
+#if !defined _INC_y_inline
+	#tryinclude <YSI_Coding\y_inline\y_inline_entry>
+#endif
+#if !defined _INC_y_inline
+	#tryinclude <YSI\YSI_Coding\y_inline\y_inline_entry>
+#endif
+#if !defined _INC_y_inline
+	#error Could not find y_inline
 #endif
 

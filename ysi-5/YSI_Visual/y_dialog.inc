@@ -1,19 +1,20 @@
 #if defined _INC_y_dialog
 	#endinput
 #endif
-#define _INC_y_dialog
 
 /**
- * <library name="y_dialog">
- * <section>
- *  Description
- * </section>
- *  Provides functions for dealing with dialogs, without needing to worry about
- *  IDs or huge "OnDialogResponse" callbacks.
- * <section>
- *  Version
- * </section>
- *  0.1
+ * <library
+ *   name="y_dialog"
+ *   version="0.1"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ *   summary="Provides functions for dealing with dialogs, without needing to worry about IDs or huge `OnDialogResponse` callbacks."
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
  * </library>
  *//** *//*
 Legal:
@@ -32,7 +33,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -59,6 +60,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -87,147 +89,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-// y_dialog - does stuff with dialogs.
-
-#include "..\YSI_Internal\y_version"
-#include "..\YSI_Data\y_bit"
-
-#include "..\YSI_Coding\y_remote"
-
-#include "..\YSI_Coding\y_inline"
-#include "..\YSI_Data\y_iterate"
-
-#include "..\YSI_Coding\y_hooks"
-
-#include "..\YSI_Storage\y_amx"
-
-#define YSIM_U_DISABLE
-#define MASTER 54
-#include "..\YSI_Core\y_master"
-
-#define YSI_DIALOG_ID _A<_yD@>
-
-static stock
-	YSI_g_sPlayerDialog[MAX_PLAYERS] = {-1, ...},
-	bool:YSI_g_sPlayerMaster[MAX_PLAYERS] = {false, ...},
-	YSI_g_sPlayerCallback[MAX_PLAYERS][E_CALLBACK_DATA];
-
-stock Dialog_Get(playerid)
-{
-	return YSI_g_sPlayerDialog[playerid];
-}
-
-remotefunc void:Dialog_Set(playerid, dialogid)
-{
-	// If they could already see a dialog shown by this script, get rid of the
-	// data from that one.
-	YSI_g_sPlayerDialog[playerid] = dialogid;
-	if (YSI_g_sPlayerMaster[playerid])
-	{
-		Callback_Release(YSI_g_sPlayerCallback[playerid]),
-		YSI_g_sPlayerMaster[playerid] = false;
-	}
-}
-
-stock Dialog_ShowCallback(playerid, callback:callback, style, string:title[], string:caption[], string:button1[], string:button2[] = "", dialog = -1)
-{
-	#pragma unused dialog
-	new
-		ret = Dialog_Show(playerid, style, title, caption, button1, button2),
-		data[E_CALLBACK_DATA];
-	if (Callback_Get(callback, data, _F<iiiis>))
-		YSI_g_sPlayerCallback[playerid] = data;
-	return ret;
-}
-
-stock Dialog_ShowCallbackData(playerid, callback[E_CALLBACK_DATA], style, string:title[], string:caption[], string:button1[], string:button2[] = "", dialog = -1)
-{
-	#pragma unused dialog
-	new
-		ret = Dialog_Show(playerid, style, title, caption, button1, button2);
-	YSI_g_sPlayerCallback[playerid] = callback;
-	return ret;
-}
-
-stock Dialog_Show(playerid, style, string:title[], string:caption[], string:button1[], string:button2[] = "", dialog = -1)
-{
-	#pragma unused dialog
-	broadcastfunc Dialog_Set(playerid, YSI_DIALOG_ID);
-	YSI_g_sPlayerMaster[playerid] = true;
-	return ShowPlayerDialog(playerid, YSI_DIALOG_ID, style, title, caption, button1, button2);
-}
-
-stock Dialog_Hide(playerid)
-{
-	// This almost looks like a Windows API function call!
-	broadcastfunc Dialog_Set(playerid, -1);
-	return ShowPlayerDialog(playerid, -1, 0, NULL, NULL, NULL, NULL);
-}
-
-hook OnPlayerDisconnect(playerid, reason)
-{
-	#pragma unused reason
-	// If this is a filterscript that has the currently displayed dialog in it,
-	// then we need all scripts to know that this is no longer the case.  If
-	// this script is not in charge of the current dialog then do not broadcast
-	// the reset, just do it locally.
-	if (YSI_g_sPlayerMaster[playerid])
-		Dialog_Hide(playerid);
-	else
-		YSI_g_sPlayerDialog[playerid] = -1;
-	return 1;
-}
-
-hook OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
-{
-	// Apparently there's a hack to alter this.
-	dialogid = YSI_g_sPlayerDialog[playerid];
-	P:1("Dialog_OnDialogResponse called: %d %d %d %d %s", playerid, dialogid, response, listitem, inputtext);
-	if (dialogid == YSI_DIALOG_ID)
-	{
-		if (YSI_g_sPlayerMaster[playerid])
-		{
-			static
-				reset[E_CALLBACK_DATA];
-			new
-				callback[E_CALLBACK_DATA];
-			callback = YSI_g_sPlayerCallback[playerid];
-			// Totally blank the stored dialog information, after making a local
-			// copy of it for the sake of calling the callback.  This is so that
-			// we don't free the memory for the callback prematurely.
-			YSI_g_sPlayerCallback[playerid] = reset;
-			broadcastfunc Dialog_Set(playerid, -1);
-			// Call the callback.
-			Callback_Call(callback, playerid, YSI_DIALOG_ID, response, listitem, inputtext);
-			// Free the data.
-			Callback_Release(callback);
-			return Y_HOOKS_BREAK_RETURN_1;
-		}
-		return Y_HOOKS_BREAK_RETURN_0;
-	}
-	else
-		return Y_HOOKS_CONTINUE_RETURN_0;
-}
-
-stock _ShowPlayerDialog(playerid, dialog, style, string:title[], string:caption[], string:button1[], string:button2[])
-{
-	// Fail.
-	if (dialog == YSI_DIALOG_ID)
-		return 0;
-	broadcastfunc Dialog_Set(playerid, dialog);
-	YSI_g_sPlayerMaster[playerid] = true;
-	return ShowPlayerDialog(playerid, dialog, style, title, caption, button1, button2);
-}
-
-#if defined _ALS_ShowPlayerDialog
-	#undef ShowPlayerDialog
-#else
-	#define _ALS_ShowPlayerDialog
+#if !defined _INC_y_dialog
+	#tryinclude "y_dialog\y_dialog_entry"
 #endif
-#define ShowPlayerDialog _ShowPlayerDialog
-
-#define _ALS_HidePlayerDialog
-#define HidePlayerDialog Dialog_Hide
-
-#include "..\YSI_Core\y_master"
+#if !defined _INC_y_dialog
+	#tryinclude "YSI_Visual\y_dialog\y_dialog_entry"
+#endif
+#if !defined _INC_y_dialog
+	#tryinclude "YSI\YSI_Visual\y_dialog\y_dialog_entry"
+#endif
+#if !defined _INC_y_dialog
+	#tryinclude <YSI_Visual\y_dialog\y_dialog_entry>
+#endif
+#if !defined _INC_y_dialog
+	#tryinclude <YSI\YSI_Visual\y_dialog\y_dialog_entry>
+#endif
+#if !defined _INC_y_dialog
+	#error Could not find y_dialog
+#endif
 

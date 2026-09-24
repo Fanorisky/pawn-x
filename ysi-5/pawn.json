@@ -1,9 +1,16 @@
 {
 	"user": "pawn-lang",
 	"repo": "YSI-Includes",
-	"dependencies": ["sampctl/samp-stdlib", "Zeex/amx_assembly"],
+	"dependencies": [
+		"oscar-broman/md-sort",
+		"sampctl/samp-stdlib",
+		"Y-Less/code-parse.inc",
+		"Y-Less/indirection",
+		"Zeex/amx_assembly"
+	],
 	"contributors": [
 		"50p",
+		"AdrianGraber",
 		"Ahmad45123",
 		"breadfish",
 		"Chaprnks",
@@ -22,6 +29,7 @@
 		"Matite",
 		"Misiur",
 		"PatchwerkQWER",
+		"PatrickGTR/pds2k12",
 		"paulommu",
 		"Pixels^",
 		"RIDE2DAY",

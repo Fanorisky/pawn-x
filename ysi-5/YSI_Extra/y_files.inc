@@ -1,18 +1,20 @@
 #if defined _INC_y_files
 	#endinput
 #endif
-#define _INC_y_files
 
 /**
- * <library name="y_files">
- * <section>
- *  Description
- * </section>
- *  Provides native declarations for YSF functions.
- * <section>
- *  Version
- * </section>
- *  0.1
+ * <library
+ *   name="y_files"
+ *   version="0.1"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ *   summary="Provides native declarations for YSF functions."
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
  * </library>
  *//** *//*
 Legal:
@@ -31,7 +33,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -58,6 +60,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -86,17 +89,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-/*-------------------------------------------------------------------------*//**<to_comment/>
-*					=================
-*					 y_ini Libraries
-*					=================
-*//*-------------------------------------------------------------------------**/
+#if !defined _INC_y_files
+	#tryinclude "y_files\y_files_entry"
+#endif
+#if !defined _INC_y_files
+	#tryinclude "YSI_Extra\y_files\y_files_entry"
+#endif
+#if !defined _INC_y_files
+	#tryinclude "YSI\YSI_Extra\y_files\y_files_entry"
+#endif
+#if !defined _INC_y_files
+	#tryinclude <YSI_Extra\y_files\y_files_entry>
+#endif
+#if !defined _INC_y_files
+	#tryinclude <YSI\YSI_Extra\y_files\y_files_entry>
+#endif
+#if !defined _INC_y_files
+	#error Could not find y_files
+#endif
 
-// File functions
-native ffind(const pattern[], filename[], len, &idx);
-native frename(const oldname[], const newname[]);
-
-// Directory functions
-native dfind(const pattern[], filename[], len, &idx);
-native dcreate(const name[]);
-native drename(const oldname[], const newname[]);

@@ -1,23 +1,4 @@
-/*                                                                                              *
- *                                                                                             *
- *     _____ ______ ______   ____  ______ _      ______          __  ______ ____  _____        *
- *    / ____|  ____|  ____| |  _ \|  ____| |    / __ \ \        / / |  ____/ __ \|  __ \       *
- *   | (___ | |__  | |__    | |_) | |__  | |   | |  | \ \  /\  / /  | |__ | |  | | |__) |      *
- *    \___ \|  __| |  __|   |  _ <|  __| | |   | |  | |\ \/  \/ /   |  __|| |  | |  _  /       *
- *    ____) | |____| |____  | |_) | |____| |___| |__| | \  /\  /    | |   | |__| | | \ \       *
- *   |_____/|______|______| |____/|______|______\____/   \/  \/     |_|    \____/|_|  \_\      *
- *                                                                                             *
- *    _____   ____   _____ _    _ __  __ ______ _   _ _______    _______ _____ ____  _   _     *
- *   |  __ \ / __ \ / ____| |  | |  \/  |  ____| \ | |__   __|/\|__   __|_   _/ __ \| \ | |    *
- *   | |  | | |  | | |    | |  | | \  / | |__  |  \| |  | |  /  \  | |    | || |  | |  \| |    *
- *   | |  | | |  | | |    | |  | | |\/| |  __| | . ` |  | | / /\ \ | |    | || |  | | . ` |    *
- *   | |__| | |__| | |____| |__| | |  | | |____| |\  |  | |/ ____ \| |   _| || |__| | |\  |    *
- *   |_____/ \____/ \_____|\____/|_|  |_|______|_| \_|  |_/_/    \_\_|  |_____\____/|_| \_|    *
- *                                                                                             *
- *   This is required for technical reasons - to place it after `#endinput` to not generate    *
- *                   multiple copies of it in XML when compiling with `-r`.                    *
- *                                                                                             *
-*//*
+/*
 Legal:
 	Version: MPL 1.1
 	
@@ -34,7 +15,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -61,6 +42,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -88,21 +70,24 @@ Optional plugins:
 	Incognito - Streamer.
 	Me - sscanf2, fixes2, Whirlpool.
 */
-#if !defined _INC_y_als
-	#include "..\YSI_Internal\y_version"
-	#include "y_utils"
-	#include "..\YSI_Server\y_scriptinit"
-	#include "..\YSI_Data\y_bit"
-	#include "..\YSI_Internal\y_shortfunc"
-	
-	#include "y_als/impl"
-	
-	#if defined YSI_TESTS
-		#include "..\YSI_Coding\y_va"
-		
-		#include "y_testing"
-		#include "y_als/tests"
-	#endif
+
+#if !defined _INC_y_core
+	#tryinclude "y_core\y_core_entry"
+#endif
+#if !defined _INC_y_core
+	#tryinclude "YSI_Core\y_core\y_core_entry"
+#endif
+#if !defined _INC_y_core
+	#tryinclude "YSI\YSI_Core\y_core\y_core_entry"
+#endif
+#if !defined _INC_y_core
+	#tryinclude <YSI_Core\y_core\y_core_entry>
+#endif
+#if !defined _INC_y_core
+	#tryinclude <YSI\YSI_Core\y_core\y_core_entry>
+#endif
+#if !defined _INC_y_core
+	#error Could not find y_utils
 #endif
 
 // Allow multiple inclusions.
@@ -117,23 +102,4 @@ Optional plugins:
 	//&&&
 	#define ALS_MAKE<%0...%1> %0Mode_%1
 #endif
-
-#if defined _INC_y_als
-	#endinput
-#endif
-#define _INC_y_als
-
-/**
- * <library name="y_als">
- * <section>
- *  Description
- * </section>
- *  Provides a number of macros for making ALS (Advanced Library System)
- *  callback hooking simpler.
- * <section>
- *  Version
- * </section>
- *  1.0
- * </library>
- *//** */
 

@@ -33,7 +33,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -60,6 +60,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -88,5 +89,26 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-#include "y_iterate"
+#if defined _inc_y_foreach
+	#undef _inc_y_foreach
+#endif
+
+#if !defined _INC_y_iterate
+	#tryinclude "y_foreach\y_foreach_entry"
+#endif
+#if !defined _INC_y_iterate
+	#tryinclude "YSI_Data\y_foreach\y_foreach_entry"
+#endif
+#if !defined _INC_y_iterate
+	#tryinclude "YSI\YSI_Data\y_foreach\y_foreach_entry"
+#endif
+#if !defined _INC_y_iterate
+	#tryinclude <YSI_Data\y_foreach\y_foreach_entry>
+#endif
+#if !defined _INC_y_iterate
+	#tryinclude <YSI\YSI_Data\y_foreach\y_foreach_entry>
+#endif
+#if !defined _INC_y_iterate
+	#error Could not find y_iterate
+#endif
 

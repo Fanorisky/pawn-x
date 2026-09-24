@@ -1,20 +1,25 @@
 #if defined _INC_y_bitmap
 	#endinput
 #endif
-#define _INC_y_bitmap
 
 /**
- * <library name="y_bitmap">
- * <section>
- *  Description
- * </section>
- *  Code to generate images on the server in the bitmap format.  This is by far
- *  the simplest format to write to as it is just a huge array of colours (at
- *  least 24-bit bitmaps are, and we only do them).
- * <section>
- *  Version
- * </section>
- *  0.1
+ * <library
+ *   name="y_bitmap"
+ *   version="0.1"
+ *   license="(c) 2022 YSI contibutors, licensed under MPL 1.1"
+ *   summary="Read and write bitmap images."
+ * >
+ *   <summary pawndoc="true">
+ *     This library uses the enhanced <em>pawndoc.xsl</em> from
+ *     <a href="https://github.com/pawn-lang/pawndoc">pawn-lang/pawndoc</a>.
+ *     This XSL has features such as library and markdown support, and will not
+ *     render this message when used.
+ *   </summary>
+ *   <remarks>
+ *     Code to generate images on the server in the bitmap format.  This is by far
+ *     the simplest format to write to as it is just a huge array of colours (at
+ *     least 24-bit bitmaps are, and we only do them).
+ *   </remarks>
  * </library>
  *//** *//*
 Legal:
@@ -33,7 +38,7 @@ Legal:
 	The Original Code is the YSI framework.
 	
 	The Initial Developer of the Original Code is Alex "Y_Less" Cole.
-	Portions created by the Initial Developer are Copyright C 2011
+	Portions created by the Initial Developer are Copyright (c) 2022
 	the Initial Developer. All Rights Reserved.
 
 Contributors:
@@ -60,6 +65,7 @@ Contributors:
 	m0k1
 	paulommu
 	udan111
+	Cheaterman
 
 Thanks:
 	JoeBullet/Google63 - Handy arbitrary ASM jump code using SCTRL.
@@ -88,27 +94,22 @@ Optional plugins:
 	Me - sscanf2, fixes2, Whirlpool.
 */
 
-#include "..\YSI_Internal\y_version"
-#include "..\YSI_Data\y_bit"
-#include "..\YSI_Core\y_utils"
-#include "..\YSI_Coding\y_malloc"
-// Because having colours is always good...
-#include "..\YSI_Server\y_colours"
-
-#if defined YSI_MALLOC_SECURE
-	#error y_bitmap does not (well) work with YSI_MALLOC_SECURE.
+#if !defined _INC_y_bitmap
+	#tryinclude "y_bitmap\y_bitmap_entry"
+#endif
+#if !defined _INC_y_bitmap
+	#tryinclude "YSI_Storage\y_bitmap\y_bitmap_entry"
+#endif
+#if !defined _INC_y_bitmap
+	#tryinclude "YSI\YSI_Storage\y_bitmap\y_bitmap_entry"
+#endif
+#if !defined _INC_y_bitmap
+	#tryinclude <YSI_Storage\y_bitmap\y_bitmap_entry>
+#endif
+#if !defined _INC_y_bitmap
+	#tryinclude <YSI\YSI_Storage\y_bitmap\y_bitmap_entry>
+#endif
+#if !defined _INC_y_bitmap
+	#error Could not find y_bitmap
 #endif
 
-#include "y_bitmap/impl"
-#include "y_bitmap/fonts"
-#include "y_bitmap/blending"
-#include "y_bitmap/subpixel"
-#include "y_bitmap/patterns"
-#include "y_bitmap/shapes"
-
-#include "y_bitmap/write"
-
-#if defined YSI_TESTS
-	#include "..\YSI_Core\y_testing"
-	#include "y_bitmap/tests"
-#endif
