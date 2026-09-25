@@ -50,8 +50,9 @@
  *   async GetScore(playerid)              // mark the function "async"
  *   {
  *       new base = 100;                   // scalar locals survive an await
+ *       new tag[8] = "hi";                // ...and so do array/string locals
  *       new s = await AddScore(playerid, base);   // suspend; resume w/ result
- *       printf("score=%d\n", s + base);   // 'base' still holds 100 here
+ *       printf("%s score=%d\n", tag, s + base);   // 'base'/'tag' still intact
  *       return s + base;                  // delivers to this fn's awaiter
  *   }
  *
@@ -61,12 +62,31 @@
  *   "await asyncFn(args)" composes: it starts asyncFn and parks the caller until
  *   asyncFn's "return" delivers its value straight back (return-to-awaiter).
  *
- * ============================ v1 LIMITS ==================================
- *   * Scalar locals only across an await (array/string live across a suspend is
- *     rejected -- error 096, same envelope as "yield" v1).
- *   * Linear bodies (sequential awaits, if, simple loops). "await" inside a
- *     "foreach" is rejected (error 099); "foreach" over an async fn is rejected
- *     (error 267).
+ * ============================ SUPPORTED ACROSS AN AWAIT ==================
+ *   * Scalar locals.
+ *   * 1-D AND multi-dimensional array/string LOCALS. Their cells (and, for a
+ *     multi-dim array, the indirection vector) are LIFTED into the coroutine's
+ *     own state block, so they live across the suspend with no save/restore and
+ *     read back intact on resume. (This lifts the old v1 "scalar locals only /
+ *     error 096" restriction.)
+ *   * The per-coroutine block comes from SIZE-CLASSED ARENAS -- default 8 / 32 /
+ *     128 / 512 cells (ASYNC_C0..C3_CELLS). A coroutine is served from the
+ *     smallest class whose block fits; one whose block exceeds the LARGEST class
+ *     cleanly NO-STARTs -- Async_Start returns token 0 (invalid) -- rather than
+ *     corrupting storage. Every class cell-count AND slot-count is overridable
+ *     with a #define (ASYNC_C0..C3_CELLS / ASYNC_C0..C3_MAX) before this include.
+ *   * NOTE: each arena class SLOT COUNT (ASYNC_cK_MAX) must be >= 2. The per-class
+ *     stride is derived from one-past-slot-0 (__addressof(g_arenaK[ASYNC_cK_CELLS])),
+ *     so a class configured with a single slot would index one element out of
+ *     bounds -- keep every ASYNC_C0..C3_MAX at 2 or more.
+ *
+ * ============================ STILL UNSUPPORTED =========================
+ *   * Array / "&"reference PARAMS across an await -- rejected with error 268: such
+ *     a parameter points into the CALLER's frame, which is gone once the coroutine
+ *     suspends, so it cannot be lifted (pass by value / copy in instead).
+ *   * "await" inside a "foreach" -- rejected (error 099); "foreach" over an async
+ *     fn -- rejected (error 267).
+ *   * Linear bodies (sequential awaits, if, simple loops).
  *   * Single compilation unit (one .amx).
  *
  * ============================ NON-GOALS (MVP) ============================

@@ -113,10 +113,26 @@ Add the include (it is not part of the umbrella `<pawn-x>`):
 
 Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests
 today; a real timer/dialog/DB/HTTP host adapter is a thin wrapper that calls the
-same entry (out of MVP scope). `async`/`await` is single-`.amx`, scalar-local,
-linear-body in this MVP; the same v1 limits as `yield` apply (array/string across
-an `await` → error 096; `await` inside a `foreach` → error 099; `foreach` over an
-`async` function → error 267). See the header comment in `include/async.inc`.
+same entry (out of MVP scope). `async`/`await` is single-`.amx` and linear-body in
+this MVP, but scalar **and** array/string/multi-dim LOCALS now survive an `await`
+(they are lifted into the coroutine's own state block). What still doesn't cross an
+`await`: array / `&`reference PARAMS → error 268 (they point into the caller's
+frame); `await` inside a `foreach` → error 099; `foreach` over an `async` function
+→ error 267. See the header comment in `include/async.inc`.
+
+### vs PawnPlus `amx_async` / coroutines
+
+PawnPlus also offers `await`-style coroutines, but as a **runtime plugin**: it
+suspends by taking a full snapshot of the AMX machine (`amx::reset` `memcpy`s the
+whole stack + heap for that call) and restores it on resume. pawn-x needs **no
+plugin** — the compiler emits the state machine and copies only *the coroutine's
+own lifted locals* into a fixed data-segment block, so there is nothing to
+save/restore of the surrounding stack/heap. That is leaner and plugin-free; the
+trade-off is the documented compile-time limits above (no by-`&`ref/array PARAM
+across an `await`, and mid-expression temporaries are not preserved). pawn-x does
+**not** yet match PawnPlus's breadth: combinators (`task_all`/`task_any`),
+timer/callback awaitables, and fault/exception propagation across `await`, plus
+JIT compatibility and a real host adapter, all remain roadmap/non-goal.
 
 
 

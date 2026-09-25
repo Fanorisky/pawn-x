@@ -96,15 +96,16 @@ iterfunc Count(n) { for (new i = 0; i != n; ++i) yield return i; }   // scalar l
 foreach (new v : Count(3)) { }               // v = 0, 1, 2; `return;` ends the sequence
 ```
 
-**Native `async`/`await` (`#include <async>`)** — write sequential code over callback-style ops; the function suspends at each `await` and resumes when the op completes. Single-threaded (a coroutine transform, not parallelism), single-`.amx`, scalar locals, linear bodies (MVP). YSI only ever *sketched* `y_async` — pawn-x is the first to actually implement it:
+**Native `async`/`await` (`#include <async>`)** — write sequential code over callback-style ops; the function suspends at each `await` and resumes when the op completes. Single-threaded (a coroutine transform, not parallelism), single-`.amx`, linear bodies (MVP). Scalar **and** array/string/multi-dim *locals* survive an `await` — they are lifted into the coroutine's own state block, natively, no plugin. YSI only ever *sketched* `y_async` — pawn-x is the first to actually implement it:
 ```pawn
 #include <async>
 
 async GetScore(playerid)
 {
     new base = 100;
+    new tag[16] = "player";                   // array/string locals survive too
     new s = await AddScore(playerid, base);   // suspend; resumes with the result
-    printf("score=%d\n", s + base);           // 'base' survives the await -> 207
+    printf("%s: score=%d\n", tag, s + base);  // 'base' and 'tag' both intact
 }
 
 main()
@@ -113,7 +114,7 @@ main()
     Async_Resume(t, AddScore(7, 100));        // a pump/host completion resumes it
 }
 ```
-`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests, a thin timer/dialog/DB adapter on a live host (out of MVP scope). See `docs/MIGRATION.md` for the `y_async` mapping.
+`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests, a thin timer/dialog/DB adapter on a live host (out of MVP scope). Still compile-rejected across an `await`: array/`&`reference *params* (error 268), and `await` inside a `foreach` (error 099). Combinators, fault propagation, and a real host adapter remain roadmap. See `docs/MIGRATION.md` for the `y_async` mapping and the PawnPlus comparison.
 
 **Entity iterators** — ready-made connected-players / tracked-vehicle sets:
 ```pawn
