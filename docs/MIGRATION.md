@@ -150,11 +150,11 @@ timers, resume in correct chronological order off the tick loop, with scalar +
 array locals surviving the suspend, combinators and the fault channel working, and
 the arena returning to baseline — no plugin, no leak (see
 `experiments/012-native-async/HOST-VALIDATION.md`). pawn-x still does **not** match
-PawnPlus's remaining breadth: fault AUTO-RAISE across a composed `await asyncFn()`
-chain (the leaf channel ships; the cascade is a compiler-level follow-on),
-suspending at arbitrary call-stack depth (nested non-async frames), mid-expression
-or loop-carried awaits (error 269/099), plus JIT compatibility, all remain
-roadmap/non-goal.
+PawnPlus's remaining breadth: IMPLICIT fault auto-raise (a leaf fault an inner
+ignored does not raise by itself — the inner calls `Async_Fail(err)` to propagate,
+which IS supported and propagates up the compose chain), suspending at arbitrary
+call-stack depth (nested non-async frames), mid-expression or loop-carried awaits
+(error 269/099), plus JIT compatibility, all remain roadmap/non-goal.
 
 
 

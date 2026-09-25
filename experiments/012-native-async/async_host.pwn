@@ -63,6 +63,23 @@ async ArrayAcross()
     return sum;
 }
 
+/* --- 5) fault AUTO-RAISE up a composed await, driven by a real timer ------ */
+async RaiseInner()
+{
+    await Async_Ms(280);                   // suspend on a real timer
+    Async_Fail(902);                       // then fault our awaiter
+    return -1;                             // return -> AUTO-RAISE 902 into RaiseOuter
+}
+async RaiseOuter()
+{
+    new r = await RaiseInner();            // composed: inner raises -> this await faults
+    if (Async_Failed())
+        printf("[async] auto-raise: outer caught err=%d", Async_Error());   // 902
+    else
+        printf("[async] auto-raise: NO fault (bug!) r=%d", r);
+    return 0;
+}
+
 /* --- lifetime probe: after everything completes, the arena is back to 0 --- */
 forward Baseline();
 public Baseline() { printf("[async] lifetime: active coroutines now = %d (expect 0)", Async_ActiveCount()); }
@@ -74,6 +91,7 @@ public OnGameModeInit()
     Async_Start(WaitBoth);
     Async_Start(MayFail);
     Async_Start(ArrayAcross);
+    Async_Start(RaiseOuter);
     printf(">>> started; %d coroutines parked on REAL timers; control returned", Async_ActiveCount());
     SetTimer("Baseline", 700, false);      // after all awaits (<=400ms) have resolved
     return 1;

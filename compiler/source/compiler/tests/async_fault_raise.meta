@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(awaiting)
+
+outer caught auto-raised err=301
+
+active=0
+
+async_fault_raise.amx returns 0
+"""
+}

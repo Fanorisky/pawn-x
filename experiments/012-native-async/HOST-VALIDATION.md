@@ -32,9 +32,10 @@ cd openmp/Server && ./omp-server        # Ctrl-C after ~1s
 ```
 >>> async host-adapter test: starting coroutines
 [async] countdown: start
->>> started; 5 coroutines parked on REAL timers; control returned
+>>> started; 7 coroutines parked on REAL timers; control returned
 [async] countdown: tick @200ms
 [async] fault: caught err=404 (recovered)
+[async] auto-raise: outer caught err=902
 [async] array: buf survived the timer, sum=140
 [async] combinator: both timers fired, total=33
 [async] countdown: tick @400ms (base still 1000)
@@ -44,10 +45,10 @@ cd openmp/Server && ./omp-server        # Ctrl-C after ~1s
 
 ## What this proves on a live host (not a synthetic pump)
 - **Suspend/return/resume** across a real `SetTimerEx` timer: `OnGameModeInit`
-  starts 5 coroutines, they park on real timers, control returns, the tick loop
+  starts the coroutines, they park on real timers, control returns, the tick loop
   resumes each in place.
 - **Correct chronological interleaving** of independent coroutines by timer delay
-  (200 → 250 → 300 → 350 → 400 ms), all from one tick loop.
+  (200 → 250 → 280 → 300 → 350 → 400 ms), all from one tick loop.
 - **Scalar locals** (`base=1000`) survive across two real-timer awaits.
 - **Array locals** (`buf[8]`) lifted into the coroutine block survive a real-timer
   await (`sum=140`).
@@ -55,6 +56,8 @@ cd openmp/Server && ./omp-server        # Ctrl-C after ~1s
   (`total=33`).
 - **Fault channel** (`Async_ResumeError` from a timer) is observed via
   `Async_Failed()`/`Async_Error()` (`err=404`).
+- **Fault AUTO-RAISE** (`Async_Fail`) propagates a real-timer-driven inner's fault
+  up a composed `await` into its awaiter (`err=902`).
 - **Lifetime**: the arena returns to **0** after all coroutines complete — no leak
   on the real host.
 - **No runtime errors**, no plugin — only the patched compiler's emitted code plus

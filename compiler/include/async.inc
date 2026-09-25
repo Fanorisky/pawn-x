@@ -87,6 +87,9 @@
  *   * Async_ResumeError(token, err) / Async_GateFail(gate, err) report FAILURE; the
  *     coroutine checks Async_Failed()/Async_Error() right after the await
  *     (task_set_error parity, leaf-await model). See the fault-channel block below.
+ *   * Async_Fail(err) inside an async body, followed by "return", AUTO-RAISES err
+ *     into the awaiter of a composed "await asyncFn()" -- fault propagation up the
+ *     compose chain, no explicit re-signal at each level. See the fault-channel block.
  *
  * ============================ STILL UNSUPPORTED =========================
  *   * Array / "&"reference PARAMS across an await -- rejected with error 268: such
@@ -101,25 +104,17 @@
  *     iteration from the resumer. Loop-carried awaits are a documented follow-on.
  *   * "await" mid-expression / at arbitrary call-stack depth (a non-async helper
  *     the coroutine calls cannot suspend it) -- these need generic frame handling.
- *   * FAULT AUTO-RAISE across a composed "await asyncFn()" chain. SPIKE FINDING: a
- *     leaf-await fault channel (Async_ResumeError -> Async_Failed/Async_Error) is
- *     pure library and shipped here; making an inner async fn's failure AUTO-
- *     propagate up the awaiter chain (so the outer await also faults without an
- *     explicit re-signal) needs the COMPILER to carry a fault bit through the
- *     return-to-awaiter path and abort the awaiter's await -- a dedicated slot in
- *     B (gen_reserved 4->5, a layout change) plus a branch in doawait's resume
- *     landing. Tractable but compiler-touching; deferred to its own task so the
- *     current green suite is not risked. Until then, an awaiter of a fallible inner
- *     re-checks Async_Failed() after its own await and returns/handles explicitly.
- *     (The INVERSE hazard -- a composed await FALSELY reporting a fault the inner
- *     already handled -- IS fixed: the compiler resets the channel on the return-
- *     to-awaiter path via __async_clearfault, so a normally-returning inner always
- *     hands its awaiter a clean Async_Failed()==0.)
+ *   * IMPLICIT fault auto-raise: a leaf fault an inner IGNORED does not raise by
+ *     itself -- the inner must call Async_Fail(err) to propagate (explicit raise IS
+ *     supported and shipped; see below). A normally-returning inner (incl. one that
+ *     RECOVERED from a leaf fault) hands its awaiter a clean channel.
  *   * Single compilation unit (one .amx).
  *
  * ============================ NON-GOALS (MVP) ============================
- *   * A real host adapter (timer/dialog/DB/HTTP) -- Async_Resume / Async_GateFeed
- *     are the seams; no adapter ships in the MVP.
+ *   * A real host adapter now SHIPS (async_omp.inc: Async_Ms/Async_Ticks over
+ *     open.mp SetTimerEx; callback-await via a public that calls Async_Resume).
+ *     Async_Resume / Async_GateFeed remain the seams for other event sources
+ *     (dialog/DB/HTTP completions).
  *   * JIT compatibility is unverified (same open question as "yield").
  *   * Multi-result "await X() -> (a, b)" binding -- a single scalar result only.
  *   * Cross-.amx await.
@@ -421,6 +416,8 @@ stock Async_ActiveCount()
  * await, before the coroutine's next await/return -- check them there. */
 stock g_asyncFailed = 0;                /* did the await the coroutine just resumed from fail? */
 stock g_asyncErr    = 0;                /* error code delivered with that failure */
+stock g_asyncPropagate    = 0;          /* an async body called Async_Fail() -> raise into its awaiter */
+stock g_asyncPropagateErr = 0;          /* the code to raise */
 
 /* __async_deliver: the shared resume core for Async_Resume / Async_ResumeError.
  * Sets the fault globals the resuming body will observe, then drives one resume
@@ -438,6 +435,7 @@ stock __async_deliver(token, value, bool:failed, err)
 
     g_asyncFailed = failed ? 1 : 0;     /* fault channel: body checks Async_Failed() after the await */
     g_asyncErr    = err;
+    g_asyncPropagate = 0;               /* bound any pending raise to a single resume cycle */
 
     g_asyncRunning[idx] = 1;            /* body is now on the stack */
     new done = __async_resume(B, value);
@@ -468,21 +466,40 @@ stock Async_ResumeError(token, err)
 #define Async_Failed() (g_asyncFailed)
 #define Async_Error()  (g_asyncErr)
 
-/* __async_clearfault(_): reset the fault channel. The compiler emits a call to
- * this on the return-to-awaiter resume path (doreturn), so a composed
- * "await asyncFn()" whose inner returns NORMALLY hands its awaiter a CLEAN
- * channel. Without it, an inner that observed a leaf fault, RECOVERED, and
- * returned a good value would leave g_asyncFailed reading a stale 1 that the
- * awaiter's own "if (Async_Failed())" would wrongly trip on -- a false-positive
- * fault (distinct from, and the inverse of, the documented no-auto-raise limit).
- * The argument is ignored; it exists only so the compiler can emit the call
- * through the same one-argument path it uses for Async_FreeByAddr. */
+/* __async_clearfault(_): the compiler emits a call to this on the return-to-
+ * awaiter resume path (doreturn). It EITHER raises a pending fault into the
+ * awaiter -- when the inner called Async_Fail(err) just before returning, so a
+ * composed "await asyncFn()" faults automatically (AUTO-RAISE) -- OR resets the
+ * channel clean, so an inner that returned NORMALLY (incl. one that observed and
+ * RECOVERED from a leaf fault) hands its awaiter Async_Failed()==0 rather than a
+ * stale 1. The argument is ignored; it exists only so the compiler can emit the
+ * call through the same one-argument path it uses for Async_FreeByAddr. */
 stock __async_clearfault(_ignored)
 {
-    g_asyncFailed = 0;
-    g_asyncErr    = 0;
+    if (g_asyncPropagate)
+    {
+        g_asyncFailed    = 1;           /* AUTO-RAISE: awaiter's await observes the fault */
+        g_asyncErr       = g_asyncPropagateErr;
+        g_asyncPropagate = 0;           /* consumed for this hop (re-raise = call Async_Fail again) */
+    }
+    else
+    {
+        g_asyncFailed = 0;              /* normal return: clean channel for the awaiter */
+        g_asyncErr    = 0;
+    }
     #pragma unused _ignored
     return 0;
+}
+
+/* Async_Fail(err): from inside an "async" body, fault THIS coroutine's awaiter --
+ * the enclosing "await asyncFn()" will see Async_Failed()/Async_Error()==err.
+ * Follow it with "return" to complete the coroutine and raise into the awaiter
+ * (PawnPlus task_set_error, but propagated up the compose chain). A top-level
+ * coroutine has no awaiter, so Async_Fail there has no observer. */
+stock Async_Fail(err)
+{
+    g_asyncPropagate    = 1;
+    g_asyncPropagateErr = err;
 }
 
 /* --- Async_Pending(): leaf awaitable (public) -------------------------------
