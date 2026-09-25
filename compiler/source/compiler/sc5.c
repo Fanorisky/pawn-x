@@ -230,7 +230,8 @@ static char *warnmsg[] = {
 /*264*/  "",  /* retired (temp variadic-emission guard removed in exp 011); slot kept blank to preserve indices */
 /*265*/  "\"await\" is only valid inside an \"async\" function\n",
 /*266*/  "\"async\" can only be applied to a function\n",
-/*267*/  "\"foreach\" cannot iterate an \"async\" function (it is driven by a scheduler via \"await\", not \"foreach\")\n"
+/*267*/  "\"foreach\" cannot iterate an \"async\" function (it is driven by a scheduler via \"await\", not \"foreach\")\n",
+/*268*/  "array/reference parameter cannot cross an \"await\": it points into the caller's frame (pass by value or copy in)\n"
 };
 
 static char *noticemsg[] = {

@@ -1,6 +1,6 @@
 {
   'test_type': 'output_check',
   'errors': """
-async_err_array_across.pwn(11) : error 255: a generator ("yield") may not take an array parameter yet
+async_err_array_across.pwn(11) : error 268: array/reference parameter cannot cross an "await": it points into the caller's frame (pass by value or copy in)
 """
 }

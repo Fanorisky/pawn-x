@@ -3366,7 +3366,12 @@ static void generator_emit_prologue(void)
   for (sym=loctab.next; sym!=NULL; sym=sym->next) {
     assert(sym->vclass==sLOCAL);
     if (sym->ident!=iVARIABLE) {
-      if (sym->ident==iREFERENCE)
+      if ((curfunc->usage & uASYNC)!=0)
+        error(268);             /* async: an array/reference parameter points into the
+                                 * caller's frame, which is freed at "await" -- it cannot
+                                 * be lifted into the coroutine block, so reject cleanly
+                                 * (copy-in semantics are deferred). */
+      else if (sym->ident==iREFERENCE)
         error(98);              /* a generator cannot combine "yield" with a reference/cur parameter */
       else
         error(255,"a generator (\"yield\") may not take an array parameter yet");
