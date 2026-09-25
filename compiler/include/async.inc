@@ -87,8 +87,9 @@
  * and coroutines complete in ARBITRARY order. The AMX heap is LIFO (a single HEA
  * cursor moved by "modheap"/"heap"), so an arbitrary non-top block cannot be
  * released by lowering HEA without corrupting the heap. B blocks therefore come
- * from a FIXED ARENA (g_arena) in the data segment: a block is a slot, the TOKEN
- * is its 1-based index, Async_Alloc() hands out a free slot's stable address and
+ * from a FIXED, SIZE-CLASSED ARENA (g_arena0..g_arena3) in the data segment: a
+ * block is a slot, the TOKEN is its 1-based global index, Async_Alloc() hands out
+ * a free slot (right-sized to the coroutine's block) as a stable address, and
  * Async_Free() returns it to the pool (double-free is a no-op), so starting+
  * completing N coroutines reuses slots and never grows storage.
  */
@@ -96,57 +97,169 @@
 #include <core>                 /* heapspace() -- used by the lifetime test */
 
 #if !defined ASYNC_MAX
-    #define ASYNC_MAX 16            /* max simultaneously-parked coroutines */
+    #define ASYNC_MAX 16            /* count of the SMALL (class-0) coroutine slots */
 #endif
 
-/* Cells reserved per arena block. Must be >= gen_reserved(async)=4 plus the
- * largest number of lifted params+locals of any "async" function in the program.
- * DOCUMENTED CAP: an "async" function with more than (ASYNC_BLOCK_CELLS - 4)
- * lifted params+locals overflows its block; raise ASYNC_BLOCK_CELLS (before
- * including <async>) for such programs. 64 comfortably covers the MVP bodies. */
-#if !defined ASYNC_BLOCK_CELLS
-    #define ASYNC_BLOCK_CELLS 64
+/* SIZE-CLASSED ARENA (task 1: variable per-coroutine block size).
+ *
+ * The old arena was a single uniform stride -- every slot was ASYNC_BLOCK_CELLS
+ * (64) cells, so a coroutine with "new buf[100]" overflowed its block and
+ * Async_Alloc cleanly refused to start it. Right-sizing every slot to the max
+ * would balloon the static footprint (ASYNC_MAX * max_cells). Instead the arena
+ * is split into SIZE CLASSES: several small blocks, fewer large ones. A
+ * coroutine's block is served from the SMALLEST class whose cell count is >= its
+ * required blkcells (= gen_reserved(4) + lifted params/locals). Only when even
+ * the LARGEST class cannot hold the block does Async_Alloc return the clean -1
+ * no-start sentinel.
+ *
+ * Each class k is a flat 1-D array g_arenaK of (ASYNC_cK_MAX blocks * ASYNC_cK_CELLS
+ * cells). Slots are numbered in one contiguous space across classes -- class 0
+ * takes slots [0, C0), class 1 [C0, C0+C1), etc. -- so the TOKEN is still a single
+ * 1-based slot index and the g_asyncB/Alive/Running tables stay flat. A slot's
+ * block base and, in reverse, the slot owning a given block address are both
+ * derived from the per-class base+stride (via __addressof, so cell-size portable),
+ * which is what lets Async_FreeByAddr recover the right token when blocks differ
+ * in size. */
+#if !defined ASYNC_C0_CELLS
+    #define ASYNC_C0_CELLS 8            /* class 0: small scalar coroutines */
+#endif
+#if !defined ASYNC_C1_CELLS
+    #define ASYNC_C1_CELLS 32           /* class 1: a few locals / short strings */
+#endif
+#if !defined ASYNC_C2_CELLS
+    #define ASYNC_C2_CELLS 128          /* class 2: mid arrays (e.g. new buf[100]) */
+#endif
+#if !defined ASYNC_C3_CELLS
+    #define ASYNC_C3_CELLS 512          /* class 3: large arrays (the largest class) */
 #endif
 
-/* The fixed arena: ASYNC_MAX blocks laid out contiguously (a flat 1D array so
- * its address arithmetic has no indirection vector). Slot i's block base is
- * &g_arena[i*ASYNC_BLOCK_CELLS]. */
-static stock g_arena[ASYNC_MAX * ASYNC_BLOCK_CELLS];
+#if !defined ASYNC_C0_MAX
+    #define ASYNC_C0_MAX ASYNC_MAX      /* keep the historical small-coroutine count */
+#endif
+#if !defined ASYNC_C1_MAX
+    #define ASYNC_C1_MAX 8
+#endif
+#if !defined ASYNC_C2_MAX
+    #define ASYNC_C2_MAX 4
+#endif
+#if !defined ASYNC_C3_MAX
+    #define ASYNC_C3_MAX 2
+#endif
 
-static stock g_asyncB[ASYNC_MAX];       /* slot -> state block B (0 = empty) */
-static stock g_asyncAlive[ASYNC_MAX];   /* slot -> 1 while the coroutine is allocated/parked */
-static stock g_asyncRunning[ASYNC_MAX]; /* slot -> 1 while its body is ON THE STACK (reentrancy guard) */
+/* Total slots (flat token space) and the largest servable block. */
+#define ASYNC_SLOTS         (ASYNC_C0_MAX + ASYNC_C1_MAX + ASYNC_C2_MAX + ASYNC_C3_MAX)
+#define ASYNC_LARGEST_CELLS (ASYNC_C3_CELLS)
+
+/* First global slot index of each class (class 0 starts at 0). */
+#define ASYNC_C1_BASE (ASYNC_C0_MAX)
+#define ASYNC_C2_BASE (ASYNC_C0_MAX + ASYNC_C1_MAX)
+#define ASYNC_C3_BASE (ASYNC_C0_MAX + ASYNC_C1_MAX + ASYNC_C2_MAX)
+
+/* The four class arenas, each a flat 1-D array (no indirection vector). */
+static stock g_arena0[ASYNC_C0_MAX * ASYNC_C0_CELLS];
+static stock g_arena1[ASYNC_C1_MAX * ASYNC_C1_CELLS];
+static stock g_arena2[ASYNC_C2_MAX * ASYNC_C2_CELLS];
+static stock g_arena3[ASYNC_C3_MAX * ASYNC_C3_CELLS];
+
+static stock g_asyncB[ASYNC_SLOTS];       /* slot -> state block B (0 = empty) */
+static stock g_asyncAlive[ASYNC_SLOTS];   /* slot -> 1 while the coroutine is allocated/parked */
+static stock g_asyncRunning[ASYNC_SLOTS]; /* slot -> 1 while its body is ON THE STACK (reentrancy guard) */
 
 /* Slot chosen by the most recent Async_Alloc, so Async_Start can turn the
  * returned block address back into its token. -1 means the arena was full. */
 stock g_asyncAllocSlot = -1;
 
-/* Async_Alloc(): claim a free arena slot and return the STABLE data address of
- * its block (which the compiler uses as B). Records the chosen slot in
- * g_asyncAllocSlot so Async_Start can recover the token. Returns -1 (and sets
- * g_asyncAllocSlot = -1) when the arena is exhausted OR when the requested block
- * does not fit a slot -- the compiler guards on this and starts no coroutine in
- * that case. NOTE the sentinel is -1, not 0: a block can legitimately sit at data
- * address 0 (g_arena may be the first global), so 0 is a VALID block address and
- * must never mean "invalid". "blkcells" is the compiler-known size of this
- * coroutine's block (gen_reserved + lifted params/locals); it is bounds-checked
- * against ASYNC_BLOCK_CELLS so an over-large coroutine yields the clean -1
- * sentinel instead of corrupting the next slot. The block stride is computed from
- * the arena itself (__addressof differences), so it is cell-size portable. */
+/* async_slot_base(slot): the STABLE data address of the block owned by global
+ * slot index "slot", derived from its class's base + stride (via __addressof, so
+ * cell-size portable). Inverse of async_slot_of_addr. */
+stock async_slot_base(slot)
+{
+    if (slot < ASYNC_C1_BASE)           /* class 0 */
+    {
+        new b = __addressof(g_arena0[0]);
+        return b + slot * (__addressof(g_arena0[ASYNC_C0_CELLS]) - b);
+    }
+    if (slot < ASYNC_C2_BASE)           /* class 1 */
+    {
+        new b = __addressof(g_arena1[0]);
+        return b + (slot - ASYNC_C1_BASE) * (__addressof(g_arena1[ASYNC_C1_CELLS]) - b);
+    }
+    if (slot < ASYNC_C3_BASE)           /* class 2 */
+    {
+        new b = __addressof(g_arena2[0]);
+        return b + (slot - ASYNC_C2_BASE) * (__addressof(g_arena2[ASYNC_C2_CELLS]) - b);
+    }
+    new b = __addressof(g_arena3[0]);   /* class 3 (largest) */
+    return b + (slot - ASYNC_C3_BASE) * (__addressof(g_arena3[ASYNC_C3_CELLS]) - b);
+}
+
+/* async_slot_of_addr(B): the global slot index whose block base is exactly the
+ * address B, or -1 if B is not an arena block base. Each class is a separate
+ * array, so B is tested against each class's [base, base+count*stride) range and
+ * required to be slot-aligned; a non-arena address matches nothing. This is how
+ * Async_FreeByAddr recovers the PHYSICAL slot for a block regardless of its size
+ * class -- and it resolves to the arena slot even when a self-parked coroutine
+ * has ALSO aliased the same B under a second (Async_Register) slot. */
+stock async_slot_of_addr(B)
+{
+    new base, stride, off, idx;
+
+    base   = __addressof(g_arena0[0]);
+    stride = __addressof(g_arena0[ASYNC_C0_CELLS]) - base;
+    off = B - base;
+    if (off >= 0) { idx = off / stride; if (idx < ASYNC_C0_MAX && off - idx*stride == 0) return idx; }
+
+    base   = __addressof(g_arena1[0]);
+    stride = __addressof(g_arena1[ASYNC_C1_CELLS]) - base;
+    off = B - base;
+    if (off >= 0) { idx = off / stride; if (idx < ASYNC_C1_MAX && off - idx*stride == 0) return ASYNC_C1_BASE + idx; }
+
+    base   = __addressof(g_arena2[0]);
+    stride = __addressof(g_arena2[ASYNC_C2_CELLS]) - base;
+    off = B - base;
+    if (off >= 0) { idx = off / stride; if (idx < ASYNC_C2_MAX && off - idx*stride == 0) return ASYNC_C2_BASE + idx; }
+
+    base   = __addressof(g_arena3[0]);
+    stride = __addressof(g_arena3[ASYNC_C3_CELLS]) - base;
+    off = B - base;
+    if (off >= 0) { idx = off / stride; if (idx < ASYNC_C3_MAX && off - idx*stride == 0) return ASYNC_C3_BASE + idx; }
+
+    return -1;                          /* not an arena block base */
+}
+
+/* Async_Alloc(): claim a free arena slot sized for "blkcells" and return the
+ * STABLE data address of its block (which the compiler uses as B). Records the
+ * chosen slot in g_asyncAllocSlot so Async_Start can recover the token. Returns
+ * -1 (and sets g_asyncAllocSlot = -1) when the block is too large for even the
+ * largest size class, OR when every class that could hold it is full -- the
+ * compiler guards on this and starts no coroutine in that case. NOTE the sentinel
+ * is -1, not 0: a block can legitimately sit at data address 0 (an arena may be
+ * the first global), so 0 is a VALID block address and must never mean "invalid".
+ * "blkcells" is the compiler-known size of this coroutine's block (gen_reserved +
+ * lifted params/locals). A block is served from the SMALLEST class that fits; the
+ * scan starts at that class's first slot and continues upward through every
+ * larger class, so a full small class transparently falls up to a bigger one.
+ * Strides come from the arenas themselves (__addressof differences), cell-size
+ * portable. */
 stock Async_Alloc(blkcells)
 {
-    if (blkcells > ASYNC_BLOCK_CELLS)
+    if (blkcells > ASYNC_LARGEST_CELLS)
     {
         g_asyncAllocSlot = -1;
-        return -1;                      /* block too large for a slot: clean sentinel */
+        return -1;                      /* too large for even the largest class: clean sentinel */
     }
-    new base   = __addressof(g_arena[0]);
-    new stride = __addressof(g_arena[ASYNC_BLOCK_CELLS]) - base;  /* one block, in bytes */
-    for (new i = 0; i < ASYNC_MAX; i++)
+    /* first slot of the smallest class whose cell count fits blkcells */
+    new lo;
+    if (blkcells <= ASYNC_C0_CELLS)      lo = 0;
+    else if (blkcells <= ASYNC_C1_CELLS) lo = ASYNC_C1_BASE;
+    else if (blkcells <= ASYNC_C2_CELLS) lo = ASYNC_C2_BASE;
+    else                                 lo = ASYNC_C3_BASE;
+
+    for (new i = lo; i < ASYNC_SLOTS; i++)   /* fitting class, then every larger class */
     {
         if (!g_asyncAlive[i])
         {
-            new B = base + i * stride;
+            new B = async_slot_base(i);
             g_asyncAlive[i]   = 1;
             g_asyncRunning[i] = 0;
             g_asyncB[i]       = B;
@@ -155,7 +268,7 @@ stock Async_Alloc(blkcells)
         }
     }
     g_asyncAllocSlot = -1;
-    return -1;                          /* arena full (sentinel: never a valid address) */
+    return -1;                          /* no fitting slot free (arena full) */
 }
 
 /* __async_tok(B): turn the block returned by __async_start into a token. B==-1
@@ -179,7 +292,7 @@ stock __async_tok(B)
  * it just references a block that already exists. */
 stock Async_Register(B)
 {
-    for (new i = 0; i < ASYNC_MAX; i++)
+    for (new i = 0; i < ASYNC_SLOTS; i++)
     {
         if (!g_asyncAlive[i])
         {
@@ -198,7 +311,7 @@ stock Async_Register(B)
 stock Async_Free(token)
 {
     new idx = token - 1;
-    if (idx < 0 || idx >= ASYNC_MAX)
+    if (idx < 0 || idx >= ASYNC_SLOTS)
         return;                         /* out of range: no-op */
     if (!g_asyncAlive[idx])
         return;                         /* already free: double-free no-op */
@@ -215,20 +328,15 @@ stock Async_Free(token)
  * The completing coroutine calls this on its OWN B (via the compiler-emitted
  * completion path) so a coroutine that finishes through the nested return-to-
  * awaiter call.pri chain -- and is therefore never observed "done" by a top-level
- * Async_Resume -- still reclaims its slot. An address that is not an arena block
- * base (out of range, or not slot-aligned) is a safe no-op, as is a double-free. */
+ * Async_Resume -- still reclaims its slot. The slot is recovered from the address
+ * via async_slot_of_addr, which consults each size class's base/stride, so blocks
+ * of DIFFERENT sizes are freed correctly. An address that is not an arena block
+ * base is a safe no-op, as is a double-free. */
 stock Async_FreeByAddr(B)
 {
-    new base   = __addressof(g_arena[0]);
-    new stride = __addressof(g_arena[ASYNC_BLOCK_CELLS]) - base;
-    new off    = B - base;
-    if (off < 0)
-        return;                         /* below the arena: not ours */
-    new idx = off / stride;
-    if (idx >= ASYNC_MAX)
-        return;                         /* above the arena: not ours */
-    if (off - idx * stride != 0)
-        return;                         /* not a block base: defensive no-op */
+    new idx = async_slot_of_addr(B);
+    if (idx < 0)
+        return;                         /* not an arena block base: no-op */
     Async_Free(idx + 1);                /* double-free safe */
 }
 
@@ -238,7 +346,7 @@ stock Async_FreeByAddr(B)
 stock Async_ActiveCount()
 {
     new count = 0;
-    for (new i = 0; i < ASYNC_MAX; i++)
+    for (new i = 0; i < ASYNC_SLOTS; i++)
         if (g_asyncAlive[i])
             count++;
     return count;
@@ -257,7 +365,7 @@ stock Async_ActiveCount()
 stock Async_Resume(token, value)
 {
     new idx = token - 1;
-    if (idx < 0 || idx >= ASYNC_MAX)
+    if (idx < 0 || idx >= ASYNC_SLOTS)
         return;                         /* unknown token */
     if (!g_asyncAlive[idx])
         return;                         /* never parked / already completed */

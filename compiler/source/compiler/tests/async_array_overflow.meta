@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+no-start token=0 ran=0 active=0->0 ok=1
+
+async_array_overflow.amx returns 0
+"""
+}
