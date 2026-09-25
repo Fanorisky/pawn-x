@@ -3,21 +3,20 @@
 
 // MID-EXPRESSION await (operand-stack spill): an "await" may appear with live
 // operator temporaries on the stack (e.g. "p + await F()", "p*2 + await F()",
-// "p + q + await F()", or as a non-first call argument). The live temporaries
-// (the runtime region [STK, frame boundary)) are copied into the coroutine block
-// B before the suspend and copied back on resume -- a runtime-exact cell copy, so
-// any expression shape and any control flow reads back correctly. This previously
-// SILENTLY miscompiled (the other operand was lost across the suspend).
-
-foo(a, b, c) { return a + b + c; }
+// "p + q + await F()"). The live temporaries (the runtime region [STK, frame
+// boundary)) are copied into the coroutine block B before the suspend and copied
+// back on resume -- a runtime-exact cell copy, so any expression shape and any
+// control flow reads back correctly. This previously SILENTLY miscompiled (the
+// other operand was lost across the suspend). (A leaf await used INSIDE a call's
+// argument list is rejected -- error 099 -- because reverse-order argument
+// emission makes the spill's bound unreliable; hoist it to statement position.)
 
 async Branch(sel)
 {
     new p = 3, q = 7, r = 0;
     if (sel == 0) r = p + await 0;            // one temp:  3 + 100     = 103
     else if (sel == 1) r = p * 2 + await 0;   // one temp:  6 + 100     = 106
-    else if (sel == 2) r = p + q + await 0;   // two temps: 3 + 7 + 100 = 110
-    else r = foo(p, q, await 0);              // two arg temps:         = 110
+    else r = p + q + await 0;                 // two temps: 3 + 7 + 100 = 110
     printf("sel=%d r=%d\n", sel, r);
     return r;
 }
@@ -33,7 +32,7 @@ async LoopMid()
 
 main()
 {
-    for (new s = 0; s < 4; s++)
+    for (new s = 0; s < 3; s++)
     {
         new t = Async_Start(Branch, s);
         Async_Resume(t, 100);

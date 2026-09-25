@@ -91,12 +91,14 @@
  *     into the awaiter of a composed "await asyncFn()" -- fault propagation up the
  *     compose chain, no explicit re-signal at each level. See the fault-channel block.
  *   * MID-EXPRESSION await -- "await" may sit inside a larger expression with live
- *     operand temporaries ("p + await F()", "p*2 + await F()", "foo(p, q, await F())",
- *     "total = total + await F()" in a loop, ...). The live operand-stack region is
- *     spilled into B before the suspend and restored after (runtime-exact copy), so
- *     any expression shape / control flow reads back correctly. (Composed
- *     "await asyncFn()" mid-expression is the one exception -- error 099 -- put it in
- *     statement position.)
+ *     operand temporaries ("p + await F()", "p*2 + await F()", "total = total +
+ *     await F()" in a loop, ...). The live operand-stack region is spilled into B
+ *     before the suspend and restored after (runtime-exact copy), so any expression
+ *     shape / control flow reads back correctly. TWO exceptions, both rejected with
+ *     error 099 (hoist to statement position -- "new v = await F(); ..."): a
+ *     COMPOSED "await asyncFn()" mid-expression, and a leaf await used INSIDE a
+ *     function call's ARGUMENT list (reverse-order arg emission makes the spill's
+ *     bound unreliable).
  *
  * ============================ STILL UNSUPPORTED =========================
  *   * Array / "&"reference PARAMS across an await -- rejected with error 268: such

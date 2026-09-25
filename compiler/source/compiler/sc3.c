@@ -2593,10 +2593,14 @@ void fwdpopnative(int skip)
  *  Generates code to call a function. This routine handles default arguments
  *  and positional as well as named parameters.
  */
+static int callnesting=0;       /* call-argument evaluation depth (was a callfunction static); exposed via getcallnesting() so doawait() can tell an "await" is being compiled inside a call's argument list, where reverse-order argument emission makes the operand-stack spill's compile-time bound unreliable */
+SC_FUNC int getcallnesting(void)
+{
+  return callnesting;
+}
 static void callfunction(symbol *sym,value *lval_result,int matchparanthesis)
 {
 static long nest_stkusage=0L;
-static int nesting=0;
   int locheap;
   int close,lvalue;
   int argpos;       /* index in the output stream (argpos==nargs if positional parameters) */
@@ -2697,10 +2701,10 @@ static int nesting=0;
   } /* if */
   locheap=decl_heap;
 
-  nesting++;
+  callnesting++;
   assert(nest_stkusage>=0);
   #if !defined NDEBUG
-    if (nesting==1)
+    if (callnesting==1)
       assert(nest_stkusage==0);
   #endif
   sc_allowproccall=FALSE;       /* parameters may not use procedure call syntax */
@@ -3325,7 +3329,7 @@ static int nesting=0;
   assert(decl_heap>=locheap);
   modheap((locheap-decl_heap)*sizeof(cell));  /* remove heap space, so negative delta */
   decl_heap=locheap;
-  nesting--;
+  callnesting--;
 }
 
 /*  dbltest

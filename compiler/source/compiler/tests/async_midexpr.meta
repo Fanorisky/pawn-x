@@ -7,8 +7,6 @@ sel=1 r=106
 
 sel=2 r=110
 
-sel=3 r=110
-
 loop total=60
 
 active=0

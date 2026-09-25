@@ -3948,6 +3948,24 @@ SC_FUNC int doawait(value *lval)
    * itself is bounded by STK/FRM at runtime, so an over-count only over-reserves.
    * Composed "await asyncFn()" buffers its own hidden cells around the suspend and
    * does not compose with this -- it rejects mid-expression (099) in its branch. */
+  if (pc_generator && getcallnesting()>0) {
+    /* "await" being compiled INSIDE a function call's argument list. Pawn emits
+     * call arguments in REVERSE order, so a sibling argument that is textually
+     * after the await is PUSHED BEFORE it at run time -- live across the suspend
+     * but NOT reflected in pc_exprtemp (which is captured, in source order, before
+     * those siblings are compiled). The operand-stack spill's compile-time reserve
+     * would then under-count and either overflow its B region or miss the siblings
+     * entirely. Reject cleanly rather than risk that; hoist the await to statement
+     * position: "new v = await F(); foo(..., v, ...);". (A leaf await OUTSIDE any
+     * call-arg list -- an operator operand like "a + await F()" -- is spilled and
+     * fully supported below.) */
+    error(99);
+    lexclr(TRUE);
+    ldconst(0,sPRI);
+    if (lval!=NULL)
+      lval->ident=iEXPRESSION;
+    return FALSE;
+  } /* if */
   spillcount=(int)pc_exprtemp;
   spillslot=0;
   if (pc_generator && spillcount>0) {
