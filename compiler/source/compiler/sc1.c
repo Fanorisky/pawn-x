@@ -3646,7 +3646,7 @@ SC_FUNC int doawait(value *lval)
   symbol *sym,*helper;
 
   if (curfunc==NULL || (curfunc->usage & uASYNC)==0) {
-    error(255,"\"await\" is only valid inside an \"async\" function");
+    error(265);                 /* "await" is only valid inside an "async" function */
     ldconst(0,sPRI);
     return FALSE;
   } /* if */
@@ -4716,7 +4716,7 @@ static int declloc(int fstatic)
        * suspend and rebuilt on resume). It gets the next free block slot; "addr"
        * is the slot's byte offset within the block. The head slots (B[0..], see
        * gen_reserved()) precede the lifted slots: slot 0 is B[1] for a "yield"
-       * generator, B[3] for an "async" coroutine. "declared"/the stack are left
+       * generator, B[4] for an "async" coroutine (gen_reserved==4). "declared"/the stack are left
        * untouched, so the frame stays balanced across the suspend. Access is
        * emitted against the hidden "localsbase" cell (see rvalue()/store() in
        * sc4.c). */
@@ -6285,8 +6285,17 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
     } /* if */
   } /* if */
   /* check whether this is a function or a variable declaration */
-  if (!matchtoken('('))
+  if (!matchtoken('(')) {
+    /* "async" prefixes a FUNCTION declaration; if what follows is not a function
+     * (no argument list) the async marker is meaningless. Reject it here so it is
+     * caught for both the class-specifier path (declfuncvar->newfunc) and the
+     * bare "async Name" path -- both reach this early return when there is no
+     * "(". pc_async is still set (it is cleared only after the whole declaration
+     * is parsed). */
+    if (pc_async)
+      error(266);               /* "async" can only be applied to a function */
     return FALSE;
+  } /* if */
   /* so it is a function, proceed */
   funcline=fline;               /* save line at which the function is defined */
   if (symbolname[0]==PUBLIC_CHAR && !callhook_inject_idx) {
@@ -8790,6 +8799,14 @@ static int doforeach(void)
   } /* if */
 
   if (gensym!=NULL && (gensym->usage & uGENERATOR)!=0) {
+    /* An "async" function is also tagged uITERFUNC|uGENERATOR (its suspend point
+     * is "await"), but it is NOT a foreach generator: it reserves gen_reserved()
+     * ==4 head cells (not 1) and is driven by a scheduler through a different
+     * resume protocol. Iterating it here would under-allocate B (blkcells below
+     * hardcodes the yield generator's single reserved cell) and drive it wrongly,
+     * so reject it cleanly rather than miscompile. */
+    if ((gensym->usage & uASYNC)!=0)
+      error(267);               /* "foreach" cannot iterate an "async" function */
     /* --- COROUTINE PATH: foreach (new i : Gen(args...)) ---
      * Gen is a generator that uses "yield": instead of being called fresh with
      * the running state, it is RESUMED where it last suspended, until it runs

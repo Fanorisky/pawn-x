@@ -227,7 +227,10 @@ static char *warnmsg[] = {
 /*261*/  "hook body argument count does not match target \"%s\" (the body must declare the target's arguments exactly)\n",
 /*262*/  "state-scoped call hooks are not supported: remove the \"<state>\" prefix (state scoping applies to callback hooks only, not \"hook native/function/stock\")\n",
 /*263*/  "variadic call-hook body must match target arity/variadic shape: target \"%s\"\n",
-/*264*/  ""   /* retired (temp variadic-emission guard removed in exp 011); slot kept blank to preserve indices */
+/*264*/  "",  /* retired (temp variadic-emission guard removed in exp 011); slot kept blank to preserve indices */
+/*265*/  "\"await\" is only valid inside an \"async\" function\n",
+/*266*/  "\"async\" can only be applied to a function\n",
+/*267*/  "\"foreach\" cannot iterate an \"async\" function (it is driven by a scheduler via \"await\", not \"foreach\")\n"
 };
 
 static char *noticemsg[] = {
