@@ -2309,6 +2309,7 @@ SC_FUNC void lexinit(void)
 SC_FUNC int lex(cell *lexvalue,char **lexsym)
 {
   int i,toolong,newline,stringflags;
+  int prevtok;
   char **tokptr;
   const unsigned char *starttoken;
 
@@ -2318,6 +2319,17 @@ SC_FUNC int lex(cell *lexvalue,char **lexsym)
     *lexsym=_lexstr;
     return _lextok;
   } /* if */
+
+  /* Remember the previously returned token BEFORE it is cleared: it lets the
+   * reserved-word scan below treat pawn-x's ADDED keywords (async/await/yield/
+   * hook/iterfunc/foreach) as ordinary identifiers when they appear in a
+   * NAME-introducing position -- after a tag ("bool:hook"), a declaration
+   * specifier (new/static/stock/public/forward/native/const/operator), or a "."
+   * field access. A keyword cannot legally begin any of those, so this makes
+   * pawn-x compile third-party includes (e.g. PawnPlus, whose natives take a
+   * "bool:hook" parameter) that use those words as identifiers, without weakening
+   * the keywords in their own statement/expression positions. */
+  prevtok=_lextok;
 
   _lextok=0;            /* preset all values */
   _lexval=0;
@@ -2369,6 +2381,18 @@ SC_FUNC int lex(cell *lexvalue,char **lexsym)
     tokptr+=1;
   } /* while */
   while (i<=tLAST) {    /* match reserved words and compiler directives */
+    /* pawn-x soft keywords: skip matching them as keywords when the previous
+     * token puts us in a name-introducing position, so they parse as identifiers
+     * (see the note at the top of lex()). Their own statement/expression uses are
+     * unaffected because there the previous token is ';', '{', '=', '(', etc. */
+    if ((i==tASYNC || i==tAWAIT || i==tYIELD || i==tHOOK || i==tITERFUNC || i==tFOREACH)
+        && (prevtok==tLABEL || prevtok==tNEW || prevtok==tSTATIC || prevtok==tSTOCK
+            || prevtok==tPUBLIC || prevtok==tFORWARD || prevtok==tNATIVE || prevtok==tCONST
+            || prevtok==tOPERATOR || prevtok=='.')) {
+      i+=1;
+      tokptr+=1;
+      continue;
+    } /* if */
     if (*lptr==**tokptr && match(*tokptr,TRUE)) {
       _lextok=i;
       errorset(sRESET,0); /* reset error flag (clear the "panic mode")*/

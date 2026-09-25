@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+s=100 base=7
+
+interop_soft_keywords.amx returns 0
+"""
+}
