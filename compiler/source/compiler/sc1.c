@@ -2704,11 +2704,10 @@ static void callhook_parse(int modifier,int prio)
   } /* if */
 
   /* variadic ("...") targets are ACCEPTED: their variadic shape is recorded on
-   * the group below (grp->isvariadic / grp->fixedargs) and validated against the
-   * hook body. Emission for variadic groups is not yet built (Task 3); a
-   * temporary guard (error 264) at the end of this function prevents a silent
-   * miscompile until then. Error 260 is retired (its message string is kept in
-   * sc5.c but no longer emitted). */
+   * the group below (grp->isvariadic / grp->fixedargs), validated against the
+   * hook body, and emitted by callhook_emit like any fixed-arity group. Error
+   * 260 was retired in place -- its warnmsg slot is blanked rather than removed
+   * so the N-200 indexing of 261/262/263 stays intact. */
 
   grp=callhook_find(target);
   seq= (grp!=NULL) ? grp->count : 0;
