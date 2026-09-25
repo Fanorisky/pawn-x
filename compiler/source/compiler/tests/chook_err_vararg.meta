@@ -1,6 +1,0 @@
-{
-  'test_type': 'output_check',
-  'errors': """
-chook_err_vararg.pwn(6) : error 260: variadic call-target hooks are not supported: target "printf" declares "..."
-"""
-}

@@ -2703,21 +2703,12 @@ static void callhook_parse(int modifier,int prio)
     return;
   } /* if */
 
-  /* variadic targets are unsupported in v1: the synthesised wrapper/chain
-   * forward a FIXED argument count, so a "..." target cannot be forwarded
-   * faithfully. Reject before adopting the signature or compiling the body. */
-  {
-    int ai;
-    if (tsym->dim.arglist!=NULL) {
-      for (ai=0; tsym->dim.arglist[ai].ident!=0; ai++) {
-        if (tsym->dim.arglist[ai].ident==iVARARGS) {
-          error(260,target);    /* variadic call-target hooks are not supported */
-          lexclr(TRUE);
-          return;
-        } /* if */
-      } /* for */
-    } /* if */
-  }
+  /* variadic ("...") targets are ACCEPTED: their variadic shape is recorded on
+   * the group below (grp->isvariadic / grp->fixedargs) and validated against the
+   * hook body. Emission for variadic groups is not yet built (Task 3); a
+   * temporary guard (error 264) at the end of this function prevents a silent
+   * miscompile until then. Error 260 is retired (its message string is kept in
+   * sc5.c but no longer emitted). */
 
   grp=callhook_find(target);
   seq= (grp!=NULL) ? grp->count : 0;
@@ -2756,6 +2747,10 @@ static void callhook_parse(int modifier,int prio)
     while (tsym->dim.arglist[argcount].ident!=0)
       argcount++;
   grp->argcount=argcount;
+  /* variadic shape: a trailing iVARARGS means the target ends in "...". The
+   * fixed-arg count excludes that vararg slot (== argcount when not variadic). */
+  grp->isvariadic= (argcount>0 && tsym->dim.arglist[argcount-1].ident==iVARARGS) ? 1 : 0;
+  grp->fixedargs= grp->isvariadic ? argcount-1 : argcount;
   grp->tag=tsym->tag;
   grp->orig=tsym;
 
@@ -2821,16 +2816,30 @@ static void callhook_parse(int modifier,int prio)
   if (body==NULL || body->ident!=iFUNCTN)
     return;                     /* body was only a prototype or was rejected */
 
-  /* body-vs-target arity: the body carries a hidden leading "idx" parameter
-   * (callhook_inject_idx), so its user-visible arg count is (bodyargs - 1).
-   * It must equal the target's arg count, or the wrapper/chain would forward a
-   * mismatched frame (garbage args / stack skew). */
+  /* body-vs-target shape + fixed arity: the body carries a hidden leading "idx"
+   * parameter (callhook_inject_idx), so its user-visible parameters are the
+   * arglist minus that idx (and minus its own trailing "..." if variadic).
+   *   1. Variadic SHAPE must match: a variadic target needs a body that ends in
+   *      "...", a fixed target needs a body with no "..." -- otherwise the
+   *      wrapper/chain would forward a mismatched frame.
+   *   2. The FIXED portion's arity must match the target's fixedargs. */
   {
     int bodyargs=0;
+    int bodyvariadic;
+    int bodyfixed;
     if (body->dim.arglist!=NULL)
       while (body->dim.arglist[bodyargs].ident!=0)
         bodyargs++;
-    if (bodyargs-1!=argcount) {
+    bodyvariadic= (bodyargs>0 && body->dim.arglist[bodyargs-1].ident==iVARARGS) ? 1 : 0;
+    if (bodyvariadic!=grp->isvariadic) {
+      error(263,target);        /* variadic shape (body vs target) mismatch */
+      lexclr(TRUE);
+      return;
+    } /* if */
+    bodyfixed= bodyargs-1;      /* drop the injected idx */
+    if (bodyvariadic)
+      bodyfixed--;             /* drop the body's own trailing "..." slot */
+    if (bodyfixed!=grp->fixedargs) {
       error(261,target);        /* hook body argument count does not match target */
       return;
     } /* if */
@@ -2849,6 +2858,13 @@ static void callhook_parse(int modifier,int prio)
   grp->slots[grp->count].fn=body;
   grp->slots[grp->count].prio=prio;
   grp->count++;
+
+  /* TEMPORARY guard (Task 3 removes this): variadic emission is not built yet.
+   * The group is fully registered above, but callhook_emit cannot forward a
+   * "..." frame faithfully, so raise a hard error to prevent a silent
+   * miscompile of a well-formed variadic hook. */
+  if (grp->isvariadic)
+    error(264,target);          /* variadic call-hook emission not yet implemented */
 }
 
 /*  callhook_emit - synthesise the wrapper + chain dispatcher for every hooked

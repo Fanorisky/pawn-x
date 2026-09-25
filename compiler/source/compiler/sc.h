@@ -214,6 +214,8 @@ typedef struct s_callhookgroup {
   int count;                     /* number of hook bodies recorded (next seq) */
   int capacity;                  /* allocated slots in "slots" */
   int argcount;                  /* target's argument count (shared signature) */
+  int isvariadic;                /* 1 if the hooked target ends in "..." */
+  int fixedargs;                 /* count of fixed params before "..." (==argcount if not variadic) */
   int tag;                       /* target's result tag */
   callhookslot *slots;           /* hook bodies (source order; priority-sorted at emit) */
   symbol *wrapper;               /* @chook.Name.wrap : owns the call sites (redirect target) */

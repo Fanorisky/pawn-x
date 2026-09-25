@@ -225,7 +225,9 @@ static char *warnmsg[] = {
 /*259*/  "unknown hook target \"%s\": no such native or function\n",
 /*260*/  "variadic call-target hooks are not supported: target \"%s\" declares \"...\"\n",
 /*261*/  "hook body argument count does not match target \"%s\" (the body must declare the target's arguments exactly)\n",
-/*262*/  "state-scoped call hooks are not supported: remove the \"<state>\" prefix (state scoping applies to callback hooks only, not \"hook native/function/stock\")\n"
+/*262*/  "state-scoped call hooks are not supported: remove the \"<state>\" prefix (state scoping applies to callback hooks only, not \"hook native/function/stock\")\n",
+/*263*/  "variadic call-hook body must match target arity/variadic shape: target \"%s\"\n",
+/*264*/  "variadic call-hook emission not yet implemented (pending): target \"%s\"\n"
 };
 
 static char *noticemsg[] = {
