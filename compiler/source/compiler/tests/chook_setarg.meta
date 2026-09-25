@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+r=123
+
+chook_setarg.amx returns 0
+"""
+}

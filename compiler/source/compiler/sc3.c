@@ -2614,11 +2614,26 @@ static int nesting=0;
    * isvariadic. chook_full is set once an empty "continue()" is detected. */
   callhookgroup *chook_grp;
   int chook_full=FALSE;
+  /* Task 5: correct the Core arg-introspection natives inside a call-hook body.
+   * The body carries a hidden leading idx (arg 0), which skews these natives:
+   * numargs() counts the idx (arity+1) and getarg(n)/setarg(n) address real slot
+   * n (user arg n lives at n+1). Only while a call-hook body compiles
+   * (pc_callhook_dispatcher!=NULL) and the resolved callee is the Core native
+   * (uNATIVE + exact name; natives cannot be shadowed, so name+uNATIVE is
+   * identity), adjust: numargs -> dec.pri after the sysreq result; getarg/setarg
+   * -> +1 on the FIRST (index) arg before the call. Untouched elsewhere. */
+  int chook_argfix=0;   /* 0=none, 1=numargs (dec.pri after), 2=getarg/setarg (+1 on arg 0) */
 
   assert(sym!=NULL);
   chook_inject_idx=pc_continue_pending;
   chook_grp= chook_inject_idx ? pc_callhook_group : NULL;
   pc_continue_pending=FALSE;
+  if (pc_callhook_dispatcher!=NULL && (sym->usage & uNATIVE)!=0) {
+    if (strcmp(sym->name,"numargs")==0)
+      chook_argfix=1;
+    else if (strcmp(sym->name,"getarg")==0 || strcmp(sym->name,"setarg")==0)
+      chook_argfix=2;
+  } /* if */
   lval_result->ident=iEXPRESSION; /* preset, may be changed later */
   lval_result->constval=0;
   lval_result->tag=sym->tag;
@@ -3020,6 +3035,15 @@ static int nesting=0;
           argidx++;               /* argument done */
           break;
         } /* switch */
+        if (chook_argfix==2 && argpos==0) {
+          /* getarg/setarg inside a call-hook body: the first argument is the
+           * user's arg index; the real frame carries the hidden idx before the
+           * user args, so shift the index by +1 (real slot n+1). Emitted inside
+           * arg 0's sub-expression, so it reorders with that argument's push. */
+          stgwrite("\tadd.c ");
+          outval(1,TRUE);
+          code_idx+=opcodes(1)+opargs(1);
+        } /* if */
         pushreg(sPRI);            /* store the function argument on the stack */
         markexpr(sPARM,NULL,0);   /* mark the end of a sub-expression */
         nest_stkusage++;
@@ -3213,6 +3237,12 @@ static int nesting=0;
     } /* if */
     ffcall(callee,NULL,nargs);
   }
+  if (chook_argfix==1) {
+    /* numargs() inside a call-hook body: the sysreq returned arity+1 (the hidden
+     * idx counts as an argument); subtract 1 so the body sees its real arity. */
+    stgwrite("\tdec.pri\n");
+    code_idx+=opcodes(1);
+  } /* if */
   if (fwdpending && (sym->usage & uNATIVE)!=0) {
     /* a native function removes its parameters with a constant "stack"
      * instruction, which covers only the statically pushed arguments;

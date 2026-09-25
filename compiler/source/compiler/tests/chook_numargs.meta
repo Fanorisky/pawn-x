@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+body n=4
+
+r=16
+
+chook_numargs.amx returns 0
+"""
+}

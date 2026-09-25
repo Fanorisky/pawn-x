@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+n=2
+
+r=7
+
+chook_fixed_numargs.amx returns 0
+"""
+}

@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+n=3
+
+chook_arg_nohook.amx returns 0
+"""
+}

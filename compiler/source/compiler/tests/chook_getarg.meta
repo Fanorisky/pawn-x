@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+g1=5 g2=6 g3=7
+
+r=28
+
+chook_getarg.amx returns 0
+"""
+}
