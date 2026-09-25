@@ -876,8 +876,8 @@ SC_FUNC int matchtag(int formaltag,int actualtag,int allowcoerce);
 SC_FUNC int checktag(int tags[],int numtags,int exprtag);
 SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult);
 SC_FUNC int doawait(value *lval);       /* "await <expr>" (exp 012 async spike) */
-SC_FUNC void doasyncstart(void);        /* "__async_start(handle,Func,args...)" */
-SC_FUNC void doasyncresume(void);       /* "__async_resume(handle,Func,value)" */
+SC_FUNC int doasyncstart(value *lval);  /* "__async_start(Func,args...)" -> B (exp 012) */
+SC_FUNC int doasyncresume(value *lval); /* "__async_resume(B,value)" -> completed? (exp 012) */
 SC_FUNC int parse_foreach_operand(value *lval,cell *heapsize);
 SC_FUNC int sc_getstateid(constvalue **automaton,constvalue **state);
 SC_FUNC cell array_totalsize(symbol *sym);

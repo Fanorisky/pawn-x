@@ -2219,6 +2219,19 @@ static int primary(value *lval)
      * value in PRI. */
     return doawait(lval);
   } /* if */
+  if (tok==t__ASYNCSTART) {
+    /* "__async_start(Fn, args...)" (exp 012): allocate a coroutine state block,
+     * run it to its first "await", and yield the block B in PRI. Used in
+     * expression position so the in-script registry can wrap it:
+     * "Async_Register(__async_start(Fn, args))". */
+    return doasyncstart(lval);
+  } /* if */
+  if (tok==t__ASYNCRESUME) {
+    /* "__async_resume(B, value)" (exp 012): generic token-dispatched resume via
+     * "call.pri" through B[ASYNC_ENTRY_SLOT]; yields 1 in PRI if the coroutine
+     * completed on this resume, else 0. */
+    return doasyncresume(lval);
+  } /* if */
   if (tok==tCONTINUE) {
     /* "continue(...)" inside a call-site hook body (experiment 010) is the
      * chain-advance intrinsic: it lowers to a call to the target's chain

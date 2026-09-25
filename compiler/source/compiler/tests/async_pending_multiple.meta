@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(parked)
+
+B id=2 got=222 sum=9222
+
+A id=1 got=111 sum=7111
+
+async_pending_multiple.amx returns 0
+"""
+}
