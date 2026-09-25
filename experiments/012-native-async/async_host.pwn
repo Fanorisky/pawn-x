@@ -98,6 +98,15 @@ async LoopTimer()
 forward Baseline();
 public Baseline() { printf("[async] lifetime: active coroutines now = %d (expect 0)", Async_ActiveCount()); }
 
+/* --- 7) MID-EXPRESSION await: operand temps survive a REAL timer suspend ----- */
+async MidExpr()
+{
+    new a = 40, b = 2;
+    new r = a + b + await Async_Ms(160);   // a, b are live temps across the timer
+    printf("[async] midexpr: a+b survived the timer, r=%d", r);   // 40+2+0 = 42
+    return r;
+}
+
 public OnGameModeInit()
 {
     print(">>> async host-adapter test: starting coroutines");
@@ -107,6 +116,7 @@ public OnGameModeInit()
     Async_Start(ArrayAcross);
     Async_Start(RaiseOuter);
     Async_Start(LoopTimer);
+    Async_Start(MidExpr);
     printf(">>> started; %d coroutines parked on REAL timers; control returned", Async_ActiveCount());
     SetTimer("Baseline", 900, false);      // after all awaits have resolved
     return 1;

@@ -3707,6 +3707,194 @@ static void async_emit_clearfault(void)
   ffcall(clrsym,NULL,1);
 }
 
+/* async_bcell_addr - PRI = &B[slot] (data address of the slot-th cell of this
+ * coroutine's block), via the reloaded localsbase. */
+static void async_bcell_addr(int slot)
+{
+  stgwrite("\tload.s.pri ");
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");
+  outval((cell)(gen_reserved(curfunc)+slot)*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+}
+
+/* async_bcell_load - PRI = B[slot]. */
+static void async_bcell_load(int slot)
+{
+  async_bcell_addr(slot);
+  stgwrite("\tload.i\n");
+  code_idx+=opcodes(1);
+}
+
+/* async_bcell_store - B[slot] = PRI (clobbers ALT; preserves nothing else). */
+static void async_bcell_store(int slot)
+{
+  stgwrite("\tpush.pri\n");        /* save the value */
+  code_idx+=opcodes(1);
+  async_bcell_addr(slot);          /* PRI = &B[slot] */
+  stgwrite("\tmove.alt\n");        /* ALT = &B[slot] */
+  code_idx+=opcodes(1);
+  stgwrite("\tpop.pri\n");         /* PRI = value */
+  code_idx+=opcodes(1);
+  stgwrite("\tstor.i\n");          /* B[slot] = value */
+  code_idx+=opcodes(1);
+}
+
+/* async_emit_boundary - PRI = FRM - pc_gen_baseline*cell: the address just above
+ * the live operand-stack temporaries (the bottom of the lifted frame's reserved
+ * cells). Everything in [STK, boundary) is a live temporary at this point. */
+static void async_emit_boundary(void)
+{
+  stgwrite("\tlctrl 5\n");         /* PRI = FRM */
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");            /* PRI = FRM - baseline*cell */
+  outval(-(cell)pc_gen_baseline*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+}
+
+/* async_emit_spill - MID-EXPRESSION await support. Copy the live operand-stack
+ * temporaries (all cells in [STK, boundary)) into B, RUNTIME-EXACT via a cell loop
+ * bounded by STK/FRM (never a static count, which over/under-shoots and corrupts).
+ * B[spillslot]=bytecount (for restore), B[spillslot+1]=src, B[spillslot+2]=dst,
+ * B[spillslot+3..]=the copied cells. PRI/ALT are free here (the await operand is
+ * ignored by the async suspend). */
+static void async_emit_spill(int spillslot)
+{
+  int lblcopy=getlabel(),lbldone=getlabel();
+  int cnt=spillslot,src=spillslot+1,dst=spillslot+2,data=spillslot+3;
+
+  /* bytecount = boundary - STK */
+  stgwrite("\tlctrl 4\n");         /* PRI = STK */
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");        /* ALT = STK */
+  code_idx+=opcodes(1);
+  async_emit_boundary();           /* PRI = boundary */
+  stgwrite("\tsub\n");             /* PRI = boundary - STK = bytecount */
+  code_idx+=opcodes(1);
+  async_bcell_store(cnt);
+  /* src = STK */
+  stgwrite("\tlctrl 4\n");         /* PRI = STK */
+  code_idx+=opcodes(1)+opargs(1);
+  async_bcell_store(src);
+  /* dst = &B[data] */
+  async_bcell_addr(data);          /* PRI = &B[data] */
+  async_bcell_store(dst);
+  /* loop: while src < boundary: *dst = *src; src+=cell; dst+=cell */
+  setlabel(lblcopy);
+  async_bcell_load(src);           /* PRI = src */
+  stgwrite("\tpush.pri\n");        /* save src */
+  code_idx+=opcodes(1);
+  async_emit_boundary();           /* PRI = boundary */
+  stgwrite("\tmove.alt\n");        /* ALT = boundary */
+  code_idx+=opcodes(1);
+  stgwrite("\tpop.pri\n");         /* PRI = src */
+  code_idx+=opcodes(1);
+  stgwrite("\tjsgeq ");            /* if src >= boundary -> done */
+  outval(lbldone,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  async_bcell_load(src);           /* PRI = src */
+  stgwrite("\tload.i\n");          /* PRI = *src */
+  code_idx+=opcodes(1);
+  stgwrite("\tpush.pri\n");        /* save value */
+  code_idx+=opcodes(1);
+  async_bcell_load(dst);           /* PRI = dst */
+  stgwrite("\tmove.alt\n");        /* ALT = dst */
+  code_idx+=opcodes(1);
+  stgwrite("\tpop.pri\n");         /* PRI = value */
+  code_idx+=opcodes(1);
+  stgwrite("\tstor.i\n");          /* *dst = value */
+  code_idx+=opcodes(1);
+  async_bcell_load(src);           /* PRI = src */
+  stgwrite("\tadd.c ");            /* PRI = src + cell */
+  outval((cell)sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  async_bcell_store(src);
+  async_bcell_load(dst);           /* PRI = dst */
+  stgwrite("\tadd.c ");            /* PRI = dst + cell */
+  outval((cell)sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  async_bcell_store(dst);
+  stgwrite("\tjump ");
+  outval(lblcopy,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  setlabel(lbldone);
+}
+
+/* async_emit_restore - inverse of async_emit_spill: after the resume, the temps
+ * were discarded (STK is at boundary). Lower STK by the saved bytecount, copy the
+ * cells back from B[spillslot+3..], then leave the resume value (inbox) in PRI. */
+static void async_emit_restore(int spillslot)
+{
+  int lblcopy=getlabel(),lbldone=getlabel();
+  int cnt=spillslot,src=spillslot+1,dst=spillslot+2,data=spillslot+3;
+
+  /* STK = boundary - bytecount  (re-allocate the temp region) */
+  async_emit_boundary();           /* PRI = boundary */
+  stgwrite("\tmove.alt\n");        /* ALT = boundary */
+  code_idx+=opcodes(1);
+  async_bcell_load(cnt);           /* PRI = bytecount */
+  stgwrite("\tsub.alt\n");         /* PRI = boundary - bytecount (ALT - PRI) */
+  code_idx+=opcodes(1);
+  stgwrite("\tsctrl 4\n");         /* STK = PRI */
+  code_idx+=opcodes(1)+opargs(1);
+  /* src = &B[data]; dst = new STK */
+  async_bcell_addr(data);          /* PRI = &B[data] */
+  async_bcell_store(src);
+  stgwrite("\tlctrl 4\n");         /* PRI = STK */
+  code_idx+=opcodes(1)+opargs(1);
+  async_bcell_store(dst);
+  /* loop: while dst < boundary: *dst = *src; src+=cell; dst+=cell */
+  setlabel(lblcopy);
+  async_bcell_load(dst);           /* PRI = dst */
+  stgwrite("\tpush.pri\n");
+  code_idx+=opcodes(1);
+  async_emit_boundary();           /* PRI = boundary */
+  stgwrite("\tmove.alt\n");        /* ALT = boundary */
+  code_idx+=opcodes(1);
+  stgwrite("\tpop.pri\n");         /* PRI = dst */
+  code_idx+=opcodes(1);
+  stgwrite("\tjsgeq ");            /* if dst >= boundary -> done */
+  outval(lbldone,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  async_bcell_load(src);           /* PRI = src */
+  stgwrite("\tload.i\n");          /* PRI = *src */
+  code_idx+=opcodes(1);
+  stgwrite("\tpush.pri\n");
+  code_idx+=opcodes(1);
+  async_bcell_load(dst);           /* PRI = dst */
+  stgwrite("\tmove.alt\n");        /* ALT = dst */
+  code_idx+=opcodes(1);
+  stgwrite("\tpop.pri\n");         /* PRI = value */
+  code_idx+=opcodes(1);
+  stgwrite("\tstor.i\n");          /* *dst = value */
+  code_idx+=opcodes(1);
+  async_bcell_load(src);
+  stgwrite("\tadd.c ");
+  outval((cell)sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  async_bcell_store(src);
+  async_bcell_load(dst);
+  stgwrite("\tadd.c ");
+  outval((cell)sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  async_bcell_store(dst);
+  stgwrite("\tjump ");
+  outval(lblcopy,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  setlabel(lbldone);
+  /* PRI = B[inbox] = resume value (the value of the await expression) */
+  stgwrite("\tload.s.pri ");
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");
+  outval((cell)ASYNC_INBOX_SLOT*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.i\n");
+  code_idx+=opcodes(1);
+}
+
+
 /*  doawait - parse "await <expr>" and emit the suspend (experiment 012 spike).
  *
  *  "await" is the async coroutine's suspend point, the analogue of "yield" but
@@ -3729,6 +3917,7 @@ static void async_emit_clearfault(void)
 SC_FUNC int doawait(value *lval)
 {
   int ident,tag,localstaging,index;
+  int spillcount,spillslot;
   cell val;
   symbol *sym,*helper;
 
@@ -3747,19 +3936,23 @@ SC_FUNC int doawait(value *lval)
     ldconst(0,sPRI);
     return FALSE;
   } /* if */
-  /* MID-EXPRESSION await guard (fix #1): in an "async" body every local is LIFTED
-   * into B, so "declared" never rises above the baseline and the check above is
-   * blind to OPERATOR temporaries (the "a" pushed by "a + await F()"). Those temps
-   * live on the stack and are discarded by @yield.emit's "sctrl 4" unwind, so
-   * awaiting with any live temporary silently miscompiled (the other operand read
-   * back as garbage). pc_exprtemp is the pushreg/popreg balance since the statement
-   * started; if it is non-zero a temporary is live across this suspend -- reject
-   * cleanly instead of miscompiling. (A bare "new x = await E;" or a single-arg
-   * "await F(x)" has no live temp here and is unaffected.) */
-  if (pc_generator && pc_exprtemp>0) {
-    error(99);
-    ldconst(0,sPRI);
-    return FALSE;
+  /* MID-EXPRESSION await (operand-stack spill): in an "async" body every local is
+   * LIFTED into B, so "declared" never rises and the check above is blind to
+   * OPERATOR temporaries (the "base" pushed by "base + await F()"). Those temps
+   * would be discarded by @yield.emit's "sctrl 4" unwind. To support them, the
+   * general path SPILLS the live temporaries (the runtime region [STK, boundary))
+   * into B before the suspend and RESTORES them after -- a runtime-exact cell copy
+   * (async_emit_spill/restore), correct for any expression shape. pc_exprtemp (the
+   * pushreg/popreg balance for this statement) is a safe UPPER BOUND on the temp
+   * count, used only to RESERVE B cells (3 scratch + pc_exprtemp data); the copy
+   * itself is bounded by STK/FRM at runtime, so an over-count only over-reserves.
+   * Composed "await asyncFn()" buffers its own hidden cells around the suspend and
+   * does not compose with this -- it rejects mid-expression (099) in its branch. */
+  spillcount=(int)pc_exprtemp;
+  spillslot=0;
+  if (pc_generator && spillcount>0) {
+    spillslot=curfunc->genlocals;
+    curfunc->genlocals=spillslot+spillcount+3;   /* 3 scratch (cnt/src/dst) + data */
   } /* if */
   /* NOTE: "await" inside a while/for/do loop is SUPPORTED. The completion detection
    * in doasyncresume tests PRI==generator_iterstop (the epilogue's sentinel), not
@@ -3816,6 +4009,18 @@ SC_FUNC int doawait(value *lval)
       cell argaddr[sMAXARGS],save_decl,btemp;
       int nuser,ai,blkcells,lbl_full;
       markusage(fsym,uREAD);
+      if (spillcount>0) {
+        /* mid-expression "await asyncFn()" -- the compose path buffers its own
+         * hidden cells around the suspend and does not compose with the operand-
+         * stack spill; reject cleanly (a leaf await mid-expression IS supported via
+         * the spill). Use the composed call in statement position instead. */
+        error(99);
+        lexclr(TRUE);
+        ldconst(0,sPRI);
+        if (lval!=NULL)
+          lval->ident=iEXPRESSION;
+        return FALSE;
+      } /* if */
       if (wqptr!=wq) {
         /* COMPOSED "await asyncFn()" inside a while/for/do loop is rejected
          * (error 269). A LEAF await in a loop is fine (the coroutine re-parks each
@@ -3945,7 +4150,11 @@ SC_FUNC int doawait(value *lval)
   } /* if */
 
   helper=generator_helper();
+  if (spillcount>0)
+    async_emit_spill(spillslot);     /* mid-expression: save live temps into B */
   async_emit_suspend(helper);
+  if (spillcount>0)
+    async_emit_restore(spillslot);   /* ...and bring them back (leaves inbox in PRI) */
 
   errorset(sEXPRRELEASE,0);
   if (localstaging) {

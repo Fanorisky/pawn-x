@@ -32,8 +32,9 @@ cd openmp/Server && ./omp-server        # Ctrl-C after ~1s
 ```
 >>> async host-adapter test: starting coroutines
 [async] countdown: start
->>> started; 8 coroutines parked on REAL timers; control returned
+>>> started; 9 coroutines parked on REAL timers; control returned
 [async] loop: iteration 1 done, sum=1
+[async] midexpr: a+b survived the timer, r=42
 [async] countdown: tick @200ms
 [async] loop: iteration 2 done, sum=3
 [async] fault: caught err=404 (recovered)
@@ -51,10 +52,10 @@ cd openmp/Server && ./omp-server        # Ctrl-C after ~1s
 - **Suspend/return/resume** across a real `SetTimerEx` timer: `OnGameModeInit`
   starts the coroutines, they park on real timers, control returns, the tick loop
   resumes each in place.
-- **Correct chronological interleaving** of independent coroutines by timer delay
-  (120 → 200 → 240 → 250 → 280 → 300 → 350 → 360 → 400 ms), all from one tick loop.
 - **Loop-carried await**: `await Async_Ms(120)` inside a `for` loop re-arms a real
   timer each iteration (a periodic async task, `sum=6` over 3 iterations).
+- **Mid-expression await**: `a + b + await Async_Ms(160)` — the operand temporaries
+  `a`,`b` are spilled into B and survive the real-timer suspend (`r=42`).
 - **Scalar locals** (`base=1000`) survive across two real-timer awaits.
 - **Array locals** (`buf[8]`) lifted into the coroutine block survive a real-timer
   await (`sum=140`).

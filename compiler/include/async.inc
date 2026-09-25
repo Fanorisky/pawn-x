@@ -90,6 +90,13 @@
  *   * Async_Fail(err) inside an async body, followed by "return", AUTO-RAISES err
  *     into the awaiter of a composed "await asyncFn()" -- fault propagation up the
  *     compose chain, no explicit re-signal at each level. See the fault-channel block.
+ *   * MID-EXPRESSION await -- "await" may sit inside a larger expression with live
+ *     operand temporaries ("p + await F()", "p*2 + await F()", "foo(p, q, await F())",
+ *     "total = total + await F()" in a loop, ...). The live operand-stack region is
+ *     spilled into B before the suspend and restored after (runtime-exact copy), so
+ *     any expression shape / control flow reads back correctly. (Composed
+ *     "await asyncFn()" mid-expression is the one exception -- error 099 -- put it in
+ *     statement position.)
  *
  * ============================ STILL UNSUPPORTED =========================
  *   * Array / "&"reference PARAMS across an await -- rejected with error 268: such
@@ -103,13 +110,12 @@
  *     SUPPORTED (loop state is lifted and survives; the coroutine re-parks each
  *     iteration). Lift the composed call out of the loop, or drive the repetition
  *     from the resumer.
- *   * "await" MID-EXPRESSION with a live operand temporary (e.g. "base + await F()"
- *     -- the operator pushes "base" before the await) -- rejected with error 099:
- *     the temporary would be discarded by the suspend's frame unwind. Put the await
- *     in statement position ("new v = await F(); new x = base + v;"). ("await F()" as
- *     a whole RHS, or as a single call argument, is fine.) A suspend at arbitrary
- *     call-stack depth inside a non-async helper is likewise unsupported (it would
- *     need whole-frame handling).
+ *   * Composed "await asyncFn()" MID-EXPRESSION (e.g. "x = a + await Fn()") --
+ *     rejected with error 099: the compose path buffers its own hidden cells around
+ *     the suspend and does not compose with the operand-stack spill. Put a composed
+ *     await in statement position ("new v = await Fn(); x = a + v;"). A LEAF await
+ *     mid-expression is supported (see above). A suspend at arbitrary call-stack
+ *     depth inside a non-async helper is unsupported (needs whole-frame handling).
  *   * IMPLICIT fault auto-raise: a leaf fault an inner IGNORED does not raise by
  *     itself -- the inner must call Async_Fail(err) to propagate (explicit raise IS
  *     supported and shipped; see below). A normally-returning inner (incl. one that

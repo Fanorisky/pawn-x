@@ -153,9 +153,10 @@ the arena returning to baseline — no plugin, no leak (see
 PawnPlus's remaining breadth: IMPLICIT fault auto-raise (a leaf fault an inner
 ignored does not raise by itself — the inner calls `Async_Fail(err)` to propagate,
 which IS supported and propagates up the compose chain), suspending at arbitrary
-call-stack depth (nested non-async frames) or mid-expression, and COMPOSED
-`await asyncFn()` inside a loop (error 269 — a LEAF await in a loop IS supported),
-plus JIT compatibility, all remain roadmap/non-goal.
+call-stack depth (nested non-async frames), and COMPOSED `await asyncFn()` either
+inside a loop or mid-expression (error 269/099 — a LEAF await is supported in both
+positions, incl. mid-expression via an operand-stack spill into B), plus JIT
+compatibility, all remain roadmap/non-goal.
 
 
 
