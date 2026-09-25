@@ -131,16 +131,20 @@ save/restore of the surrounding stack/heap. That is leaner and plugin-free; the
 trade-off is the documented compile-time limits above (no by-`&`ref/array PARAM
 across an `await`, and mid-expression temporaries are not preserved).
 
-**Combinators are now native too** — `Async_All(n)` / `Async_Any(n)` fan several
-outstanding operations into one awaiting coroutine (PawnPlus `task_all` /
-`task_any` parity): a coroutine creates a gate, kicks off its operations, and
-`await Async_Wait(g)` parks until all (sum of results) or the first (its result)
-complete. Like everything else this is pure library code over the
-`Async_GateFeed(g, value)` seam — no plugin, no compiler change, no new opcode.
-pawn-x still does **not** match PawnPlus's remaining breadth: timer/callback
-awaitables, fault/exception propagation across `await`, suspending at arbitrary
-call-stack depth (nested non-async frames) or mid-expression, plus JIT
-compatibility and a real host adapter, all remain roadmap/non-goal.
+**Combinators and faults are now native too.** `Async_All(n)` / `Async_Any(n)` +
+`await Async_Wait(g)` fan several outstanding operations into one awaiting
+coroutine (PawnPlus `task_all` / `task_any` parity): a coroutine creates a gate,
+kicks off its operations, and parks until all (sum of results) or the first (its
+result) complete. Faults map `task_set_error`: `Async_ResumeError(token, err)` /
+`Async_GateFail(gate, err)` report failure, which the coroutine observes with
+`Async_Failed()`/`Async_Error()` right after the await (leaf-await model). Like
+everything else this is pure library code over the `Async_GateFeed(g, value)` /
+`Async_Resume` seam — no plugin, no compiler change, no new opcode. pawn-x still
+does **not** match PawnPlus's remaining breadth: timer/callback awaitables, fault
+AUTO-RAISE across a composed `await asyncFn()` chain (the leaf channel ships; the
+cascade is a compiler-level follow-on), suspending at arbitrary call-stack depth
+(nested non-async frames) or mid-expression, plus JIT compatibility and a real
+host adapter, all remain roadmap/non-goal.
 
 
 

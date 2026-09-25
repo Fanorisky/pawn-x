@@ -80,18 +80,37 @@
  *     so a class configured with a single slot would index one element out of
  *     bounds -- keep every ASYNC_C0..C3_MAX at 2 or more.
  *
+ * ============================ COMBINATORS & FAULTS ======================
+ *   * Async_All(n) / Async_Any(n) + "await Async_Wait(g)" fan several outstanding
+ *     operations into one awaiter (task_all / task_any parity); Async_GateFeed(g,
+ *     value) reports each completion. See the COMBINATORS block below.
+ *   * Async_ResumeError(token, err) / Async_GateFail(gate, err) report FAILURE; the
+ *     coroutine checks Async_Failed()/Async_Error() right after the await
+ *     (task_set_error parity, leaf-await model). See the fault-channel block below.
+ *
  * ============================ STILL UNSUPPORTED =========================
  *   * Array / "&"reference PARAMS across an await -- rejected with error 268: such
  *     a parameter points into the CALLER's frame, which is gone once the coroutine
  *     suspends, so it cannot be lifted (pass by value / copy in instead).
  *   * "await" inside a "foreach" -- rejected (error 099); "foreach" over an async
  *     fn -- rejected (error 267).
- *   * Linear bodies (sequential awaits, if, simple loops).
+ *   * "await" mid-expression / at arbitrary call-stack depth (a non-async helper
+ *     the coroutine calls cannot suspend it) -- these need generic frame handling.
+ *   * FAULT AUTO-RAISE across a composed "await asyncFn()" chain. SPIKE FINDING: a
+ *     leaf-await fault channel (Async_ResumeError -> Async_Failed/Async_Error) is
+ *     pure library and shipped here; making an inner async fn's failure AUTO-
+ *     propagate up the awaiter chain (so the outer await also faults without an
+ *     explicit re-signal) needs the COMPILER to carry a fault bit through the
+ *     return-to-awaiter path and abort the awaiter's await -- a dedicated slot in
+ *     B (gen_reserved 4->5, a layout change) plus a branch in doawait's resume
+ *     landing. Tractable but compiler-touching; deferred to its own task so the
+ *     current green suite is not risked. Until then, an awaiter of a fallible inner
+ *     re-checks Async_Failed() after its own await and returns/handles explicitly.
  *   * Single compilation unit (one .amx).
  *
  * ============================ NON-GOALS (MVP) ============================
- *   * A real host adapter (timer/dialog/DB/HTTP) -- Async_Resume is the seam; no
- *     adapter ships in the MVP.
+ *   * A real host adapter (timer/dialog/DB/HTTP) -- Async_Resume / Async_GateFeed
+ *     are the seams; no adapter ships in the MVP.
  *   * JIT compatibility is unverified (same open question as "yield").
  *   * Multi-result "await X() -> (a, b)" binding -- a single scalar result only.
  *   * Cross-.amx await.
@@ -381,8 +400,23 @@ stock Async_ActiveCount()
  * synchronous / re-entrant completion where the pump ends up calling Async_Resume
  * for the SAME coroutine from within its own body path -- we REJECT it (no-op)
  * instead of re-entering a live frame, which would corrupt its state. When the
- * coroutine completes on this resume its token is freed automatically. */
-stock Async_Resume(token, value)
+ * coroutine completes on this resume its token is freed automatically.
+ *
+ * FAULT CHANNEL (phase 3, task_set_error parity): a completing operation can
+ * report FAILURE instead of a value via Async_ResumeError(token, err). The
+ * coroutine observes it right after the await with Async_Failed()/Async_Error()
+ * -- the leaf-await error model. (Auto-raise propagation ACROSS a composed
+ * "await asyncFn()" chain is the compiler-level follow-on; see the spike note in
+ * the header.) g_asyncFailed/g_asyncErr are set for the resume the coroutine is
+ * about to observe and are only meaningful in the run immediately following the
+ * await, before the coroutine's next await/return -- check them there. */
+stock g_asyncFailed = 0;                /* did the await the coroutine just resumed from fail? */
+stock g_asyncErr    = 0;                /* error code delivered with that failure */
+
+/* __async_deliver: the shared resume core for Async_Resume / Async_ResumeError.
+ * Sets the fault globals the resuming body will observe, then drives one resume
+ * under the reentrancy guard and reclaims the slot on completion. Internal. */
+stock __async_deliver(token, value, bool:failed, err)
 {
     new idx = token - 1;
     if (idx < 0 || idx >= ASYNC_SLOTS)
@@ -393,6 +427,9 @@ stock Async_Resume(token, value)
         return;                         /* REENTRANCY GUARD: refuse to re-enter a running body */
     new B = g_asyncB[idx];              /* a live slot's block (0 IS a valid address, so no B==0 reject) */
 
+    g_asyncFailed = failed ? 1 : 0;     /* fault channel: body checks Async_Failed() after the await */
+    g_asyncErr    = err;
+
     g_asyncRunning[idx] = 1;            /* body is now on the stack */
     new done = __async_resume(B, value);
     if (g_asyncAlive[idx])              /* still allocated (a nested completion may have freed it) */
@@ -400,6 +437,27 @@ stock Async_Resume(token, value)
     if (done)
         Async_Free(token);             /* completed -> reclaim the slot (no-op if already freed) */
 }
+
+stock Async_Resume(token, value)
+{
+    __async_deliver(token, value, false, 0);
+}
+
+/* Async_ResumeError(token, err): resume the coroutine reporting that the awaited
+ * operation FAILED with code "err" (PawnPlus task_set_error parity). The value
+ * delivered to the await is "err"; the body detects the failure with
+ * Async_Failed() and reads the code with Async_Error() immediately after. */
+stock Async_ResumeError(token, err)
+{
+    __async_deliver(token, err, true, err);
+}
+
+/* Async_Failed() / Async_Error(): inspect the fault channel right after an await
+ * -- Async_Failed() is nonzero iff that await was completed via
+ * Async_ResumeError; Async_Error() is the code. Valid only in the run
+ * immediately following the await. */
+#define Async_Failed() (g_asyncFailed)
+#define Async_Error()  (g_asyncErr)
 
 /* --- Async_Pending(): leaf awaitable (public) -------------------------------
  * A coroutine that "await"s a value completed by an EXTERNAL event must hand its
@@ -544,4 +602,23 @@ stock Async_GateActive()
         if (g_gateAlive[i])
             count++;
     return count;
+}
+
+/* Async_GateFail(gate, err): one operation feeding the gate FAILED. Fail-fast for
+ * both policies -- the gate fires immediately as a failure, freeing itself and
+ * resuming the awaiter via the fault channel (Async_Failed()/Async_Error() are
+ * set on the resumed body). A failure to a fired/unknown/free gate is a no-op. */
+stock Async_GateFail(gate, err)
+{
+    new idx = gate - 1;
+    if (idx < 0 || idx >= ASYNC_GATES)
+        return;                         /* unknown gate */
+    if (!g_gateAlive[idx] || g_gateFired[idx])
+        return;                         /* freed, or already delivered */
+
+    new tok = g_gateAwaiter[idx];
+    g_gateFired[idx] = 1;
+    g_gateAlive[idx] = 0;               /* release the gate slot before resuming */
+    if (tok)
+        Async_ResumeError(tok, err);    /* wake the awaiter as a failure */
 }
