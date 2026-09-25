@@ -2639,7 +2639,7 @@ static void callhook_parse(int modifier,int prio)
   char *str;
   int seq,argcount;
   symbol *tsym,*body,*wrapper,*chain,*save_disp;
-  callhookgroup *grp;
+  callhookgroup *grp,*save_grp;
 
   /* Size-stability of native call sites, and the forward-reference machinery.
    *
@@ -2804,12 +2804,15 @@ static void callhook_parse(int modifier,int prio)
   callhook_inject_idx=1;
   save_disp=pc_callhook_dispatcher;
   pc_callhook_dispatcher=chain;
+  save_grp=pc_callhook_group;
+  pc_callhook_group=grp;
   if (!newfunc(hidden,tsym->tag,FALSE,FALSE,FALSE)) {
     error(10);                  /* illegal function or declaration */
     lexclr(TRUE);
     litidx=0;
   } /* if */
   pc_callhook_dispatcher=save_disp;
+  pc_callhook_group=save_grp;
   callhook_inject_idx=0;
 
   body=findglb(hidden,sGLOBAL);

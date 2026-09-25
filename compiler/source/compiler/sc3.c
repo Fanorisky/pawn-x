@@ -2605,9 +2605,19 @@ static int nesting=0;
    * targets the chain dispatcher. Captured and cleared at entry so nested
    * argument calls do not inherit it. */
   int chook_inject_idx;
+  /* abstract bare "continue()" (empty argument list) inside a call-hook body:
+   * synthesise a full forward of the body's CURRENT arguments to the chain --
+   * each fixed param read from its frame slot (so a pre-continue modification is
+   * forwarded) + the variadic tail (if any) + the injected idx+1. chook_grp is
+   * the current call-hook group (reached via pc_callhook_group, set alongside
+   * pc_callhook_dispatcher while the body is compiled); it yields fixedargs /
+   * isvariadic. chook_full is set once an empty "continue()" is detected. */
+  callhookgroup *chook_grp;
+  int chook_full=FALSE;
 
   assert(sym!=NULL);
   chook_inject_idx=pc_continue_pending;
+  chook_grp= chook_inject_idx ? pc_callhook_group : NULL;
   pc_continue_pending=FALSE;
   lval_result->ident=iEXPRESSION; /* preset, may be changed later */
   lval_result->constval=0;
@@ -2680,6 +2690,17 @@ static int nesting=0;
       if (!close)
         lexpush();                /* reset the '.' */
     } /* if */
+  } /* if */
+  if (chook_inject_idx && chook_grp!=NULL && close) {
+    /* abstract bare "continue()": an empty argument list. Forward every current
+     * argument of the body to the chain (see the emission just before the idx
+     * injection below). Mark the dispatcher's fixed parameters as handled so the
+     * default-argument loops neither push defaults nor report error 202 for
+     * them; the args are supplied at run time from the body's own frame. */
+    int ai;
+    chook_full=TRUE;
+    for (ai=0; arg[ai].ident!=0 && arg[ai].ident!=iVARARGS; ai++)
+      arglist[ai]=ARG_DONE;
   } /* if */
   if (!close) {
     fwdnamed=fwdnamedargs();
@@ -3123,6 +3144,36 @@ static int nesting=0;
     arglist[argidx]=ARG_DONE;
   } /* for */
   stgmark(sENDREORDER);         /* mark end of reversed evaluation */
+  if (chook_full) {
+    /* Abstract bare "continue()": emit the full forward of the body's current
+     * arguments to the chain, mirroring callhook_emit()'s chain->body case
+     * (sc1.c) but targeting the chain and advancing the index (idx+1, pushed by
+     * the injection block below). Body frame layout: idx at 3*cell, fixed arg a
+     * at (a+4)*cell, varargs start at (fixedargs+4)*cell. Emitted here, after
+     * the (empty) reorder region and before the idx injection, so the push order
+     * is tail (deepest) -> fixed (reverse) -> idx (arg 0, pushed last). */
+    int fixedargs=chook_grp->fixedargs;
+    int a;
+    if (chook_grp->isvariadic) {
+      /* copy the body's variadic tail; skip=fixedargs+1 because the body frame
+       * carries idx before its fixed args, so the tail begins fixedargs+1 cells
+       * in (matches fwdpushloop's (fixedargs+4)*cell source offset). */
+      fwdpushloop((cell)(fixedargs+4)*sizeof(cell));
+      fwdpending=TRUE;
+      fwdskip=fixedargs+1;
+      /* the forwarded tail is a run-time-unknown number of cells: book the same
+       * conservative margin the ordinary "___" forwarding books (sMAXARGS). */
+      fwdstk+=sMAXARGS;
+      nest_stkusage+=sMAXARGS;
+    } /* if */
+    for (a=fixedargs-1; a>=0; a--) {  /* forward the body's fixed args (reverse) */
+      stgwrite("\tpush.s ");
+      outval((a+4)*sizeof(cell),TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      nest_stkusage++;
+    } /* for */
+    nargs=fixedargs;              /* the idx injection below adds +1 -> fixedargs+1 */
+  } /* if */
   if (chook_inject_idx) {
     /* push the hidden chain index (idx+1) as the dispatcher's leading argument.
      * Emitted after the reorder region so it is pushed last -> lands as arg 0.

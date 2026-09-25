@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+r=70
+
+chook_fixed_abstract.amx returns 0
+"""
+}

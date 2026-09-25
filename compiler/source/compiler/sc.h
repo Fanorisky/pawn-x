@@ -1135,6 +1135,7 @@ SC_VDECL int pc_loopcond;     /* equals to 'tFOR', 'tWHILE' or 'tDO' if the curr
 SC_VDECL int pc_numloopvars;  /* number of variables used inside a loop condition */
 /* call-site hook ("hook function/native/stock", experiment 010) parse/emit state */
 SC_VDECL symbol *pc_callhook_dispatcher; /* while compiling a call-hook body: its chain dispatcher (for "continue(...)"); NULL otherwise */
+SC_VDECL callhookgroup *pc_callhook_group; /* while compiling a call-hook body: its group (for abstract "continue()" full-forward); NULL otherwise */
 SC_VDECL int pc_continue_pending; /* set by primary() when "continue(...)" is lowered, consumed by callfunction() to inject the hidden idx+1 leading argument */
 SC_VDECL int pc_emit_orig;    /* set while callhook_emit() emits the dispatcher's tail-call to the ORIGINAL, so that call is not itself redirected (recursion guard) */
 
