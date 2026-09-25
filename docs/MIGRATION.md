@@ -139,12 +139,22 @@ result) complete. Faults map `task_set_error`: `Async_ResumeError(token, err)` /
 `Async_GateFail(gate, err)` report failure, which the coroutine observes with
 `Async_Failed()`/`Async_Error()` right after the await (leaf-await model). Like
 everything else this is pure library code over the `Async_GateFeed(g, value)` /
-`Async_Resume` seam — no plugin, no compiler change, no new opcode. pawn-x still
-does **not** match PawnPlus's remaining breadth: timer/callback awaitables, fault
-AUTO-RAISE across a composed `await asyncFn()` chain (the leaf channel ships; the
-cascade is a compiler-level follow-on), suspending at arbitrary call-stack depth
-(nested non-async frames) or mid-expression, plus JIT compatibility and a real
-host adapter, all remain roadmap/non-goal.
+`Async_Resume` seam — no plugin, no compiler change, no new opcode.
+
+**A real host adapter now ships and is validated on a live open.mp server.**
+`async_omp.inc` bridges the resume seam to open.mp `SetTimerEx`, giving real
+awaitables — `await Async_Ms(1000)` suspends on an actual server timer, and a
+`public` callback resuming via `Async_Resume`/`Async_GateFeed` is the callback-await
+pattern. Validated on open.mp 1.5.8 (Timers.so): five coroutines park on real
+timers, resume in correct chronological order off the tick loop, with scalar +
+array locals surviving the suspend, combinators and the fault channel working, and
+the arena returning to baseline — no plugin, no leak (see
+`experiments/012-native-async/HOST-VALIDATION.md`). pawn-x still does **not** match
+PawnPlus's remaining breadth: fault AUTO-RAISE across a composed `await asyncFn()`
+chain (the leaf channel ships; the cascade is a compiler-level follow-on),
+suspending at arbitrary call-stack depth (nested non-async frames), mid-expression
+or loop-carried awaits (error 269/099), plus JIT compatibility, all remain
+roadmap/non-goal.
 
 
 
