@@ -2212,6 +2212,13 @@ static int primary(value *lval)
     ldconst(0,sPRI);
     return FALSE;       /* not an lvalue */
   } /* if */
+  if (tok==tAWAIT) {
+    /* "await <expr>" (experiment 012 spike): the async coroutine's suspend
+     * point, used in expression position. doawait() evaluates the awaitable,
+     * suspends via the generator engine, and on resume leaves the delivered
+     * value in PRI. */
+    return doawait(lval);
+  } /* if */
   if (tok==tCONTINUE) {
     /* "continue(...)" inside a call-site hook body (experiment 010) is the
      * chain-advance intrinsic: it lowers to a call to the target's chain

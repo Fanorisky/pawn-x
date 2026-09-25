@@ -308,6 +308,12 @@ typedef struct s_callhookgroup {
  * it persists into the next pass (reduce_referrers only clears uREAD|uWRITTEN),
  * which is what makes the redirect decl-order-independent and pass-stable. */
 #define uCALLHOOK   0x40000
+/* async coroutine function (experiment 012, spike): compiled on the uGENERATOR
+ * engine, but its suspend point is "await" and it is driven by a scheduler
+ * rather than by "foreach". Set at declaration ("async Name(...)") so
+ * generator_isgen() answers TRUE pass-stably, and so gen_reserved() reserves the
+ * extra head slot (B[1], the await-result inbox) in the state block. */
+#define uASYNC      0x80000
 /* uRETNONE is not stored in the "usage" field of a symbol. It is
  * used during parsing a function, to detect a mix of "return;" and
  * "return value;" in a few special cases.
@@ -489,7 +495,11 @@ enum {
 
   /* reserved words (statements) */
   t__ADDRESSOF,
+  t__ASYNCRESUME,
+  t__ASYNCSTART,
   tASSERT,
+  tASYNC,
+  tAWAIT,
   tBEGIN,
   tBREAK,
   tCASE,
@@ -865,6 +875,9 @@ SC_FUNC int check_userop(void (*oper)(void),int tag1,int tag2,int numparam,
 SC_FUNC int matchtag(int formaltag,int actualtag,int allowcoerce);
 SC_FUNC int checktag(int tags[],int numtags,int exprtag);
 SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult);
+SC_FUNC int doawait(value *lval);       /* "await <expr>" (exp 012 async spike) */
+SC_FUNC void doasyncstart(void);        /* "__async_start(handle,Func,args...)" */
+SC_FUNC void doasyncresume(void);       /* "__async_resume(handle,Func,value)" */
 SC_FUNC int parse_foreach_operand(value *lval,cell *heapsize);
 SC_FUNC int sc_getstateid(constvalue **automaton,constvalue **state);
 SC_FUNC cell array_totalsize(symbol *sym);

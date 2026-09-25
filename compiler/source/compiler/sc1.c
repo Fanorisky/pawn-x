@@ -1796,6 +1796,12 @@ static int getclassspec(int initialtok,int *fpublic,int *fstatic,int *fstock,int
  * foreach drives with a call-loop; see doforeach) */
 static int pc_iterfunc=FALSE;
 
+/* set while parsing a function that was prefixed with the "async" keyword
+ * (experiment 012 spike), so newfunc() tags its symbol uITERFUNC|uASYNC: it is
+ * compiled on the coroutine-generator engine but its suspend point is "await"
+ * and a scheduler (not "foreach") resumes it. */
+static int pc_async=FALSE;
+
 /* set while parsing a coroutine generator: an "iterfunc" that "foreach" drives
  * by resuming it where it last suspended (see the "yield" support below). It is
  * decided at the top of the function (from the uGENERATOR flag or the declared
@@ -2007,6 +2013,29 @@ static void parse(void)
         } /* if */
       } /* switch */
       pc_iterfunc=FALSE;
+      break;
+    case tASYNC:
+      /* "async Name(args) body" (experiment 012 spike): parsed exactly like an
+       * "iterfunc" (it is compiled on the coroutine-generator engine), but tagged
+       * uASYNC so its suspend point is "await" and a scheduler resumes it. */
+      pc_async=TRUE;
+      tok=lex(&val,&str);
+      switch (tok) {
+      case tSTOCK:
+      case tSTATIC:
+      case tPUBLIC:
+        if (getclassspec(tok,&fpublic,&fstatic,&fstock,&fconst))
+          declfuncvar(fpublic,fstatic,fstock,fconst);
+        break;
+      default:
+        lexpush();              /* no class specifier -- hand the name to newfunc */
+        if (!newfunc(NULL,-1,FALSE,FALSE,FALSE)) {
+          error(10);            /* illegal function or declaration */
+          lexclr(TRUE);
+          litidx=0;
+        } /* if */
+      } /* switch */
+      pc_async=FALSE;
       break;
     case tHOOK:
       /* "hook Name(args) body": one of possibly several handlers for callback
@@ -3147,6 +3176,8 @@ static int generator_isgen(symbol *sym)
 {
   if ((sym->usage & uGENERATOR)!=0)
     return TRUE;
+  if ((sym->usage & uASYNC)!=0)
+    return TRUE;                /* an "async" function is always a coroutine (exp 012) */
   if ((sym->usage & uITERFUNC)==0)
     return FALSE;
   /* no parameters: there is no "cur"/"&state" argument for the re-entrant
@@ -3161,6 +3192,19 @@ static int generator_isgen(symbol *sym)
    * v1 (a parameterless classic iterfunc has no state channel to drive it), but
    * any future no-param iterfunc inherits this coroutine semantics. */
   return sym->dim.arglist==NULL || sym->dim.arglist[0].ident==0;
+}
+
+/*  gen_reserved - number of reserved head cells at the base of a coroutine's
+ *  state block B, i.e. the count of B slots that precede the lifted param/local
+ *  slots. A "yield" generator reserves 1 (B[0] = continuation CIP). An "async"
+ *  coroutine (exp 012) reserves 2 (B[0] = continuation, B[1] = the await-result
+ *  inbox that the scheduler writes before resuming). Lifted slot i therefore
+ *  lives at byte offset (gen_reserved(sym)+i)*sizeof(cell). This must be
+ *  pass-stable, and it is: uASYNC is set at declaration. */
+#define ASYNC_INBOX_SLOT 1      /* B[1] holds the value delivered to "await" on resume */
+static int gen_reserved(const symbol *sym)
+{
+  return (sym!=NULL && (sym->usage & uASYNC)!=0) ? 2 : 1;
 }
 
 /*  generator_helper - the symbol of the hidden "@yield.emit" helper, creating
@@ -3309,7 +3353,7 @@ static void generator_emit_prologue(void)
                                  * bounds symmetric */
     slot=curfunc->genlocals;
     parmphys[nparm]=sym->addr+(cell)sizeof(cell); /* B shifts every user arg up one cell */
-    parmslot[nparm]=(cell)(slot+1)*sizeof(cell);  /* B[0] is the continuation */
+    parmslot[nparm]=(cell)(slot+gen_reserved(curfunc))*sizeof(cell);  /* head slots precede locals */
     sym->addr=parmslot[nparm];  /* body access now indexes the block (see sc4.c) */
     sym->usage|=uLIFTED;
     curfunc->genlocals=slot+1;
@@ -3447,6 +3491,277 @@ static void doyield(void)
     stgout(index);
     stgset(FALSE);                  /* stop staging */
   } /* if */
+  needtoken(tTERM);
+}
+
+/*  doawait - parse "await <expr>" and emit the suspend (experiment 012 spike).
+ *
+ *  "await" is the async coroutine's suspend point, the analogue of "yield" but
+ *  used as an EXPRESSION. It evaluates its operand (an awaitable that arranges
+ *  its own later completion and leaves a token in PRI), then suspends through the
+ *  SAME shared "@yield.emit" helper the generator engine already provides: the
+ *  helper records the resume CIP in B[0] and unwinds the frame, so the token is
+ *  returned to whatever called the coroutine (the scheduler's start glue). On
+ *  RESUME the scheduler has written the awaited value into B[ASYNC_INBOX_SLOT];
+ *  the code emitted right after the suspend loads it, so it becomes the value of
+ *  the "await" expression. Leaves that value in PRI (a non-lvalue rvalue).
+ */
+SC_FUNC int doawait(value *lval)
+{
+  int ident,tag,localstaging,index;
+  cell val;
+  symbol *sym,*helper;
+
+  if (curfunc==NULL || (curfunc->usage & uASYNC)==0) {
+    error(255,"\"await\" is only valid inside an \"async\" function");
+    ldconst(0,sPRI);
+    return FALSE;
+  } /* if */
+  if (!pc_generator) {          /* mirror doyield()'s first-suspend reparse */
+    pc_generator=TRUE;
+    curfunc->usage|=uGENERATOR;
+    sc_reparse=TRUE;
+  } /* if */
+  if (pc_generator && declared>pc_gen_baseline) {
+    error(99);                  /* live stack storage cannot span a suspend (mirror yield) */
+    ldconst(0,sPRI);
+    return FALSE;
+  } /* if */
+
+  localstaging=FALSE;
+  if (!staging) {
+    stgset(TRUE);
+    localstaging=TRUE;
+    assert(stgidx==0);
+  } /* if */
+  index=stgidx;
+  errorset(sEXPRMARK,0);
+
+  sym=NULL;
+  ident=expression(&val,&tag,&sym,FALSE);   /* the awaitable -> token in PRI */
+  if (ident==iARRAY || ident==iREFARRAY) {
+    error(33,(sym!=NULL) ? sym->name : "-unknown-");
+    ldconst(0,sPRI);
+  } else if (ident==iCONSTEXPR) {
+    ldconst(val,sPRI);
+  } /* if */
+
+  helper=generator_helper();
+  if (helper!=NULL) {
+    pushreg(sPRI);                  /* token (second argument: pushed first) */
+    stgwrite("\tload.s.pri ");      /* PRI = B (hidden first argument) */
+    outval(3*sizeof(cell),TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    pushreg(sPRI);                  /* B */
+    pushval(2*sizeof(cell));
+    markusage(helper,uREAD);
+    ffcall(helper,NULL,2);
+  } /* if */
+
+  /* RESUME lands here (this is @yield.emit's saved return address). Deliver the
+   * value the scheduler stored in the inbox slot: PRI = *(B + ASYNC_INBOX_SLOT). */
+  stgwrite("\tload.s.pri ");        /* PRI = B (localsbase cell) */
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");             /* PRI = B + inbox */
+  outval((cell)ASYNC_INBOX_SLOT*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.i\n");           /* PRI = B[inbox] = awaited value */
+  code_idx+=opcodes(1);
+
+  errorset(sEXPRRELEASE,0);
+  if (localstaging) {
+    stgout(index);
+    stgset(FALSE);
+  } /* if */
+  if (lval!=NULL)
+    lval->ident=iEXPRESSION;
+  return FALSE;                     /* not an lvalue */
+}
+
+/*  doasyncstart - "__async_start(handle, AsyncFunc, args...)" (exp 012 spike).
+ *
+ *  The scheduler-side START glue: it allocates and zero-fills a coroutine state
+ *  block B on the heap (size gen_reserved + genlocals cells), stores B into the
+ *  user "handle" variable (the caller keeps it to resume later), and does the
+ *  FRESH call AsyncFunc(B, args...). That fresh call runs the body to its first
+ *  "await", which suspends and returns here; B (parked on the heap) survives.
+ *
+ *  This is the async analogue of the block-alloc + first call that doforeach()
+ *  emits for a "yield" generator, but a single call (not a loop) whose block is
+ *  owned by the caller, not freed on return. A production version would fold this
+ *  into the normal call path and register B with a runtime scheduler by token;
+ *  the spike keeps it an explicit intrinsic so the mechanism is isolated.
+ */
+SC_FUNC void doasyncstart(void)
+{
+  symbol *hsym,*fsym;
+  cell val,argaddr[sMAXARGS];
+  char *str;
+  int tok,nuser,ai,blkcells;
+  cell save_decl;
+
+  save_decl=declared;
+  needtoken('(');
+  tok=lex(&val,&str);           /* the handle variable */
+  hsym=NULL;
+  if (tok==tSYMBOL) {
+    hsym=findloc(str);
+    if (hsym==NULL)
+      hsym=findglb(str,sGLOBAL);
+  } /* if */
+  if (hsym==NULL || hsym->ident!=iVARIABLE) {
+    error(255,"__async_start: first argument must be a scalar handle variable");
+    lexclr(TRUE);
+    return;
+  } /* if */
+  needtoken(',');
+  tok=lex(&val,&str);           /* the async function */
+  fsym=(tok==tSYMBOL) ? findglb(str,sGLOBAL) : NULL;
+  if (fsym==NULL || fsym->ident!=iFUNCTN || (fsym->usage & uASYNC)==0) {
+    error(255,"__async_start: second argument must name an \"async\" function");
+    lexclr(TRUE);
+    return;
+  } /* if */
+  markusage(fsym,uREAD);
+
+  /* user args: evaluate ONCE, buffer each in a hidden stack cell (as doforeach
+   * does), so they can be pushed in reverse just before the call. */
+  nuser=0;
+  if (matchtoken(',')) {
+    do {
+      int id;
+      if (nuser>=sMAXARGS-1) { error(45); break; }
+      id=expression(&val,NULL,NULL,FALSE);
+      if (id==iCONSTEXPR)
+        ldconst(val,sPRI);
+      declared+=1;
+      argaddr[nuser]=-declared*(cell)sizeof(cell);
+      modstk(-(int)sizeof(cell));
+      if (curfunc->x.stacksize<declared+1)
+        curfunc->x.stacksize=declared+1;
+      stgwrite("\tstor.s.pri ");
+      outval(argaddr[nuser],TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      nuser++;
+    } while (matchtoken(','));
+  } /* if */
+  needtoken(')');
+
+  /* allocate + zero the state block; modheap leaves the old heap top (B) in ALT */
+  blkcells=gen_reserved(fsym)+fsym->genlocals;
+  modheap(blkcells*(int)sizeof(cell));
+  ldconst(0,sPRI);
+  stgwrite("\tfill ");
+  outval((cell)blkcells*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  moveto1();                    /* PRI = ALT = B */
+  if (hsym->vclass==sLOCAL)      /* handle = B */
+    stgwrite("\tstor.s.pri ");
+  else
+    stgwrite("\tstor.pri ");
+  outval(hsym->addr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  markusage(hsym,uWRITTEN|uREAD);
+
+  /* call AsyncFunc(B, args...): user args pushed in reverse, B (arg0) pushed last */
+  for (ai=nuser-1; ai>=0; ai--) {
+    stgwrite("\tpush.s ");
+    outval(argaddr[ai],TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+  } /* for */
+  if (hsym->vclass==sLOCAL)
+    stgwrite("\tpush.s ");
+  else
+    stgwrite("\tpush ");
+  outval(hsym->addr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  pushval((cell)(nuser+1)*sizeof(cell));
+  ffcall(fsym,NULL,nuser+1);
+
+  /* free the hidden arg-buffer cells; the call already popped its own arguments */
+  if (declared>save_decl) {
+    modstk((int)((declared-save_decl)*sizeof(cell)));
+    declared=save_decl;
+  } /* if */
+  needtoken(tTERM);
+}
+
+/*  doasyncresume - "__async_resume(handle, AsyncFunc, value)" (exp 012 spike).
+ *
+ *  The scheduler-side RESUME glue: it writes "value" into the parked block's
+ *  inbox slot (B[ASYNC_INBOX_SLOT], where doawait() reads it) and re-calls the
+ *  coroutine with the parked B as arg0. The prologue loads B[0]!=0 and "sctrl 6"
+ *  jumps straight back to the instruction after the suspended "await", from THIS
+ *  (foreign) call context -- proving a generator resumes outside "foreach".
+ *
+ *  Naming the function keeps the resume a static "call"; the general scheduler
+ *  would instead store the coroutine's entry address in B and use "call.pri", so
+ *  one pump can resume any parked coroutine by token. That is left for the MVP.
+ */
+SC_FUNC void doasyncresume(void)
+{
+  symbol *hsym,*fsym;
+  cell val;
+  char *str;
+  int tok;
+
+  needtoken('(');
+  tok=lex(&val,&str);           /* handle variable */
+  hsym=NULL;
+  if (tok==tSYMBOL) {
+    hsym=findloc(str);
+    if (hsym==NULL)
+      hsym=findglb(str,sGLOBAL);
+  } /* if */
+  if (hsym==NULL || hsym->ident!=iVARIABLE) {
+    error(255,"__async_resume: first argument must be the handle variable");
+    lexclr(TRUE);
+    return;
+  } /* if */
+  needtoken(',');
+  tok=lex(&val,&str);           /* the async function */
+  fsym=(tok==tSYMBOL) ? findglb(str,sGLOBAL) : NULL;
+  if (fsym==NULL || fsym->ident!=iFUNCTN || (fsym->usage & uASYNC)==0) {
+    error(255,"__async_resume: second argument must name the \"async\" function");
+    lexclr(TRUE);
+    return;
+  } /* if */
+  markusage(fsym,uREAD);
+  needtoken(',');
+
+  /* compute &B[inbox] and stash it, then evaluate the value, then store it there */
+  if (hsym->vclass==sLOCAL)     /* PRI = B */
+    stgwrite("\tload.s.pri ");
+  else
+    stgwrite("\tload.pri ");
+  outval(hsym->addr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  markusage(hsym,uREAD);
+  stgwrite("\tadd.c ");         /* PRI = B + inbox */
+  outval((cell)ASYNC_INBOX_SLOT*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  pushreg(sPRI);                /* save &B[inbox] */
+  {
+    int id=expression(&val,NULL,NULL,FALSE);   /* value -> PRI */
+    if (id==iCONSTEXPR)
+      ldconst(val,sPRI);        /* a constant is not auto-loaded */
+  }
+  stgwrite("\tpop.alt\n");      /* ALT = &B[inbox] */
+  code_idx+=opcodes(1);
+  stgwrite("\tstor.i\n");       /* B[inbox] = value */
+  code_idx+=opcodes(1);
+  needtoken(')');
+
+  /* resume: call AsyncFunc(B) -- the prologue's "sctrl 6" jumps back into the body */
+  if (hsym->vclass==sLOCAL)
+    stgwrite("\tpush.s ");
+  else
+    stgwrite("\tpush ");
+  outval(hsym->addr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  pushval((cell)sizeof(cell));
+  ffcall(fsym,NULL,1);
   needtoken(tTERM);
 }
 
@@ -4043,7 +4358,7 @@ static int declloc(int fstatic)
        * frame stays balanced across the suspend. Access is emitted against the
        * hidden "localsbase" cell (see rvalue()/store() in sc4.c). */
       int slot=curfunc->genlocals;
-      sym=addvariable(name,(slot+1)*sizeof(cell),ident,sLOCAL,
+      sym=addvariable(name,(slot+gen_reserved(curfunc))*sizeof(cell),ident,sLOCAL,
                       tag,dim,numdim,idxtag,pc_nestlevel);
       sym->usage|=uLIFTED;
       curfunc->genlocals=slot+1;
@@ -5625,6 +5940,8 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
     return TRUE;                /* it was recognized as a function declaration, but not as a valid one */
   if (pc_iterfunc)
     sym->usage|=uITERFUNC;      /* declared with the "iterfunc" keyword: a lazy generator */
+  if (pc_async)
+    sym->usage|=uITERFUNC|uASYNC; /* "async Name(...)": coroutine driven by a scheduler, not foreach */
   if (fpublic && opertok==0)
     sym->usage|=uPUBLIC;
   if (fstatic)
@@ -7441,6 +7758,14 @@ static void statement(int *lastindent,int allow_decl)
     /* the generator is suspended, not finished: the statement after the
      * "yield" is reached when the generator is resumed */
     lastst=tYIELD;
+    break;
+  case t__ASYNCSTART:           /* exp 012 spike: scheduler START glue */
+    doasyncstart();
+    lastst=tEXPR;
+    break;
+  case t__ASYNCRESUME:          /* exp 012 spike: scheduler RESUME glue */
+    doasyncresume();
+    lastst=tEXPR;
     break;
   case tBREAK:
     dobreak();
