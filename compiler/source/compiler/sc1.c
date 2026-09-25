@@ -4206,7 +4206,11 @@ SC_FUNC int doasyncresume(value *lval)
    * is robust for a body that LOOPS back to the same "await" -- the old heuristic
    * (B[0] unchanged across the call) mis-read that as completion, because
    * @yield.emit rewrites B[0] to the SAME resume point each iteration. PRI is live
-   * straight out of call.pri, so the check reads it before any clobber. */
+   * straight out of call.pri, so the check reads it before any clobber. (The
+   * sentinel also survives local DESTRUCTORS at the coroutine's "return":
+   * destructsymbols() saves/restores PRI around the "~" operator calls -- sc1.c
+   * ~7935/7980 -- exactly so a return value survives, and this sentinel rides that
+   * same preservation.) */
   stgwrite("\tconst.alt ");     /* ALT = the completion sentinel */
   outval(generator_iterstop,TRUE);
   code_idx+=opcodes(1)+opargs(1);
