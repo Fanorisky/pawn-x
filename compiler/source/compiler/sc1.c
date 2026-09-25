@@ -3946,8 +3946,9 @@ SC_FUNC int doawait(value *lval)
    * pushreg/popreg balance for this statement) is a safe UPPER BOUND on the temp
    * count, used only to RESERVE B cells (3 scratch + pc_exprtemp data); the copy
    * itself is bounded by STK/FRM at runtime, so an over-count only over-reserves.
-   * Composed "await asyncFn()" buffers its own hidden cells around the suspend and
-   * does not compose with this -- it rejects mid-expression (099) in its branch. */
+   * Composed "await asyncFn()" buffers its own hidden inner-start cells BELOW these
+   * operator temporaries and frees them before the suspend, so it uses the SAME
+   * spill/restore (the enclosing temporaries are all that remain live). */
   if (pc_generator && getcallnesting()>0) {
     /* "await" being compiled INSIDE a function call's argument list. Pawn emits
      * call arguments in REVERSE order, so a sibling argument that is textually
@@ -4027,18 +4028,13 @@ SC_FUNC int doawait(value *lval)
       cell argaddr[sMAXARGS],save_decl,btemp;
       int nuser,ai,blkcells,lbl_full;
       markusage(fsym,uREAD);
-      if (spillcount>0) {
-        /* mid-expression "await asyncFn()" -- the compose path buffers its own
-         * hidden cells around the suspend and does not compose with the operand-
-         * stack spill; reject cleanly (a leaf await mid-expression IS supported via
-         * the spill). Use the composed call in statement position instead. */
-        error(99);
-        lexclr(TRUE);
-        ldconst(0,sPRI);
-        if (lval!=NULL)
-          lval->ident=iEXPRESSION;
-        return FALSE;
-      } /* if */
+      /* MID-EXPRESSION "await asyncFn()" (spillcount>0) IS supported: the compose
+       * path allocates its hidden inner-start cells BELOW the enclosing operator
+       * temporaries and FREES them before the suspend, so at the suspend point only
+       * those operator temporaries are live -- identical to a leaf mid-expression
+       * await. They are spilled into B before the suspend and restored after (see
+       * the async_emit_spill/restore calls at the suspend below). spillslot was
+       * reserved above from pc_exprtemp, the same upper bound the leaf path uses. */
       if (wqptr!=wq) {
         /* COMPOSED "await asyncFn()" inside a while/for/do loop is rejected
          * (error 269). A LEAF await in a loop is fine (the coroutine re-parks each
@@ -4054,6 +4050,23 @@ SC_FUNC int doawait(value *lval)
         return FALSE;
       } /* if */
       save_decl=declared;
+      /* MID-EXPRESSION compose: the enclosing operator temporaries (the "base" in
+       * "base + await F()") sit on the operand stack BELOW the last "declared"
+       * cell, but pushreg never bumped "declared" for them. The compose's hidden
+       * inner-start cells are addressed FRM-relative as -declared*cell, which would
+       * land ON those temporaries and corrupt them. So before any hidden allocation:
+       * spill the temps into B (runtime-exact copy of [STK, boundary)), then raise
+       * STK to the boundary to clear them off the operand stack. The compose then
+       * runs on a clean stack exactly as in statement position, and async_emit_restore
+       * (after the suspend) copies the temps back and reloads the inbox into PRI. The
+       * discard is STK=boundary (runtime-exact), never a spillcount-based modstk, so
+       * an over-counted reserve can never over-pop the frame. */
+      if (spillcount>0) {
+        async_emit_spill(spillslot);   /* B[spillslot..] = the live operand temps */
+        async_emit_boundary();         /* PRI = FRM - baseline*cell (top of temps) */
+        stgwrite("\tsctrl 4\n");       /* STK = boundary: drop the temps */
+        code_idx+=opcodes(1)+opargs(1);
+      } /* if */
       needtoken('(');
       /* user args: evaluate ONCE, buffer each in a hidden stack cell (as
        * doasyncstart does), so they can be pushed in reverse just before the
@@ -4134,17 +4147,20 @@ SC_FUNC int doawait(value *lval)
 
       /* the inner ran to its first "await" and parked; free our hidden cells
        * BEFORE the suspend so the outer suspends at the generator baseline (the
-       * resume rebuilds the frame with only the prologue cell). */
+       * resume rebuilds the frame with only the prologue cell). Any enclosing
+       * operator temporaries were already spilled and cleared above. */
       if (declared>save_decl) {
         modstk((int)((declared-save_decl)*sizeof(cell)));
         declared=save_decl;
       } /* if */
 
       /* suspend the OUTER; on resume the inner's "return" has written our inbox
-       * with its result, which async_emit_suspend() delivers into PRI. */
+       * with its result, which async_emit_suspend()/restore delivers into PRI. */
       ldconst(0,sPRI);               /* yield value (ignored by our caller) */
       helper=generator_helper();
       async_emit_suspend(helper);
+      if (spillcount>0)
+        async_emit_restore(spillslot);  /* re-establish the temps; inbox -> PRI */
       if (localstaging) {
         stgout(index);
         stgset(FALSE);
