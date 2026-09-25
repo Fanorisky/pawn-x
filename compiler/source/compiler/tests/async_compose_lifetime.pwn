@@ -14,7 +14,7 @@ new g_completed = 0;
 
 async Inner(x)
 {
-    new bump = await __pending();     // external suspension: main resumes it
+    new bump = await Async_Pending();     // external suspension: main resumes it
     return x + bump;                  // return-to-awaiter: resumes Outer with this
 }
 

@@ -85,7 +85,40 @@ real native (kind-checked, reached by a direct SYSREQ), while
 `hook function`/`hook stock` require a pawn function/stock. A wrong modifier is
 a compile error (see the call-site-hook gotcha below).
 
-## Gotchas
+## Async / await (`y_async` → native `async`/`await`)
+
+**YSI never shipped `y_async`.** It is an *abandoned sketch*: `y_async_impl.inc`
+has an empty `_Async_A()` stub and bare design-note statements at file scope that
+do not compile; the enabling macros are half-built and Y_Less stopped maintaining
+YSI. So there is no working YSI runtime to migrate *from* — pawn-x is the first to
+actually implement `async`/`await`. The table below maps YSI's *intended* syntax
+(from its docs/sketch) to what pawn-x provides.
+
+Add the include (it is not part of the umbrella `<pawn-x>`):
+
+```pawn
+#include <async>
+```
+
+| YSI `y_async` (sketched) | pawn-x (native, working) |
+|---|---|
+| `async Func() { }` | `async Func() { }` (compiler keyword) |
+| `new r = await Op();` | `new r = await Op();` — suspend, resume with the result |
+| `await AsyncFunc(args)` (compose) | `await AsyncFunc(args)` — inner `return` resumes the awaiter |
+| *(scheduler unspecified)* | `new t = Async_Start(Fn, args);` — start, get a token |
+| *(completion unspecified)* | `Async_Resume(token, value)` — deliver result, resume |
+| *(no accounting)* | `Async_ActiveCount()` — live-coroutine count (lifetime check) |
+| leaf awaitable | `await Async_Pending()` (self-register) or `await 0` (resumed by the start token) |
+| `await X() -> (a, b, …)` (multi-result bind) | **not in MVP** — single scalar result only |
+
+Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests
+today; a real timer/dialog/DB/HTTP host adapter is a thin wrapper that calls the
+same entry (out of MVP scope). `async`/`await` is single-`.amx`, scalar-local,
+linear-body in this MVP; the same v1 limits as `yield` apply (array/string across
+an `await` → error 096; `await` inside a `foreach` → error 099; `foreach` over an
+`async` function → error 267). See the header comment in `include/async.inc`.
+
+
 
 - **Don't mix.** Including any YSI `y_va`/`y_iterate`/`y_hooks` alongside pawn-x
   is a hard compile error (guarded in the includes).

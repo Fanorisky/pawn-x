@@ -2,7 +2,7 @@
 #include <async>
 
 // Three-level composition (experiment 012, task 2): A awaits B awaits C. Only
-// the innermost coroutine (C) parks on an external "__pending()"; when main
+// the innermost coroutine (C) parks on an external "Async_Pending()"; when main
 // completes it, each "return" resumes its awaiter in turn via the return-to-
 // awaiter path, and the value propagates all the way up to A. The "y * 10"
 // argument exercises an ergonomic-await arg of the form <lifted local> OP <const>.
@@ -11,7 +11,7 @@
 //   A:     await B(3) -> 133
 async C(z)
 {
-    new v = await __pending();        // the only real suspension in the chain
+    new v = await Async_Pending();        // the only real suspension in the chain
     return z + v;
 }
 
@@ -29,7 +29,7 @@ async A()
 
 main()
 {
-    Async_Start(A);                   // A -> B -> C all park on C's __pending()
+    Async_Start(A);                   // A -> B -> C all park on C's Async_Pending()
     printf("(chain parked)\n");
     Async_ResumeInner(100);           // complete C; 130 -> 133 unwinds up to A
 }

@@ -27,13 +27,15 @@ Two pillars, split by *when the information exists*:
 | `foreach` + `set*` natives (+ multi-dim) | `y_iterate` / `y_foreach` | exp 002/003/005 |
 | `iterfunc` generators | y_iterate custom iterators | exp 003 |
 | `yield` coroutine generators | `#define Iterator@N iteryield` + `yield` | tests `yield_*` |
+| `async`/`await` coroutines | `y_async` (*abandoned sketch — never shipped*) | tests `async_*` |
 | `hook` keyword (+ `hook:N` priority) | `y_hooks` (compile-time) | exp 004/005 |
 | `hook native`/`function`/`stock` + `continue` (call-site, incl. variadic `...` targets) | `y_hooks` real fn/native hooking | tests `chook_*` |
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
 
-Most rows were run on a real `omp-server` and diffed against YSI (the `yield`
-and `hook native`/`function`/`stock` rows are proven by the `yield_*` / `chook_*`
-compiler tests, not a live server run); see `experiments/*/RESULT.md`.
+Most rows were run on a real `omp-server` and diffed against YSI (the `yield`,
+`async`/`await`, and `hook native`/`function`/`stock` rows are proven by the
+`yield_*` / `async_*` / `chook_*` compiler tests, not a live server run — and
+`async`/`await` has no host adapter yet); see `experiments/*/RESULT.md`.
 
 ## Quickstart
 
@@ -93,6 +95,25 @@ iterfunc stock Fib(&acc, cur, lim) { ... }   // leading &ref = persistent state 
 iterfunc Count(n) { for (new i = 0; i != n; ++i) yield return i; }   // scalar locals only
 foreach (new v : Count(3)) { }               // v = 0, 1, 2; `return;` ends the sequence
 ```
+
+**Native `async`/`await` (`#include <async>`)** — write sequential code over callback-style ops; the function suspends at each `await` and resumes when the op completes. Single-threaded (a coroutine transform, not parallelism), single-`.amx`, scalar locals, linear bodies (MVP). YSI only ever *sketched* `y_async` — pawn-x is the first to actually implement it:
+```pawn
+#include <async>
+
+async GetScore(playerid)
+{
+    new base = 100;
+    new s = await AddScore(playerid, base);   // suspend; resumes with the result
+    printf("score=%d\n", s + base);           // 'base' survives the await -> 207
+}
+
+main()
+{
+    new t = Async_Start(GetScore, 7);         // starts; suspends at the await
+    Async_Resume(t, AddScore(7, 100));        // a pump/host completion resumes it
+}
+```
+`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests, a thin timer/dialog/DB adapter on a live host (out of MVP scope). See `docs/MIGRATION.md` for the `y_async` mapping.
 
 **Entity iterators** — ready-made connected-players / tracked-vehicle sets:
 ```pawn

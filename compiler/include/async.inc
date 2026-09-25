@@ -3,31 +3,94 @@
 #endif
 #define _inc_async
 
-/* async.inc -- in-script scheduler registry + fixed arena for native
- * async/await (experiment 012, tasks 1-3).
+/* async.inc -- native async/await runtime library (pawn-x experiment 012).
  *
- * The compiler emits an "async" function as a coroutine whose whole state lives
- * in a heap-like "state block" B. Three intrinsics drive it:
- *   __async_start(Fn, args...) -> B      obtain a B block from the arena
- *                                        (Async_Alloc), run Fn to its first
- *                                        "await", record Fn's code entry in B,
- *                                        return B (0 if the arena is full).
- *   __async_resume(B, value)   -> done?  deliver "value" to the parked coroutine
- *                                        and resume it by its stored code entry
- *                                        via the "call.pri" indirect call; yields
- *                                        1 if the coroutine completed, else 0.
- *   __async_self()             -> B      the running coroutine's own B block.
+ * pawn on SA-MP/open.mp is single-threaded, so async/await here is NOT
+ * parallelism: it is a coroutine transform. An "async" function suspends at each
+ * "await", control returns to its caller, and when the awaited operation
+ * completes the function resumes exactly where it left off with the result bound.
+ * The compiler emits the state machine; this file is the small in-script
+ * scheduler that owns each coroutine's state block and drives its resume.
  *
- * TASK 3 -- lifetime & safety.  A coroutine's B outlives the frame that started
- * it, and coroutines complete in ARBITRARY order.  The AMX heap is LIFO (a single
- * HEA cursor moved by "modheap"/"heap"), so an arbitrary non-top block CANNOT be
- * released by lowering HEA without corrupting the heap.  We therefore stop using
- * the heap for B entirely: B blocks come from a FIXED ARENA (g_arena) that lives
- * in the data segment.  A block is just a slot in that array; the TOKEN is the
- * slot index (1-based).  Async_Alloc() hands out a free slot's stable address,
- * Async_Free() returns a slot to the free pool (double-free is a no-op), so
- * starting+completing N coroutines in sequence reuses slots and never grows
- * storage.  This sidesteps the LIFO-heap problem completely.
+ * ============================ PUBLIC API =================================
+ *
+ *   Async_Start(Fn, args...) -> token
+ *       Start "async" function Fn: allocate its state block, run the body to its
+ *       first "await", and return a token naming the parked coroutine (0 if the
+ *       arena is full). "Fn" must name an "async" function.
+ *
+ *   Async_Resume(token, value)
+ *       Deliver "value" to the coroutine parked under "token" and resume it; the
+ *       value becomes the result of the "await" it was suspended on. When the
+ *       coroutine completes, its slot is freed automatically. Resuming an
+ *       unknown/already-completed token is a safe no-op. THIS is the entry a real
+ *       host adapter (timer/dialog/DB/HTTP completion) would call -- writing such
+ *       an adapter is out of MVP scope; tests drive it from a synthetic pump.
+ *
+ *   Async_ActiveCount() -> count
+ *       Number of coroutines currently allocated (parked or running). Baseline 0;
+ *       returns to 0 after every started coroutine completes (lifetime contract).
+ *
+ *   Async_Pending() -> token          (use as: new v = await Async_Pending();)
+ *       LEAF AWAITABLE. Called inside an "async" body, it self-registers the
+ *       RUNNING coroutine with the scheduler and evaluates to its token, so an
+ *       external event source can later resume it via Async_Resume(token, value).
+ *       Use it when the coroutine was started as an inner of a composition (its
+ *       Async_Start token belongs to the chain); a plain top-level coroutine can
+ *       instead "await 0" and be resumed by the token Async_Start returned.
+ *
+ *   Async_ResumeInner(value)
+ *       Pump helper: resume the most-recently self-parked coroutine (the last
+ *       Async_Pending()) with "value". A convenience for single-pending
+ *       demos/tests; a real event source keeps its own token and calls
+ *       Async_Resume(token, value) directly.
+ *
+ * ============================ WRITING ASYNC CODE =========================
+ *
+ *   async GetScore(playerid)              // mark the function "async"
+ *   {
+ *       new base = 100;                   // scalar locals survive an await
+ *       new s = await AddScore(playerid, base);   // suspend; resume w/ result
+ *       printf("score=%d\n", s + base);   // 'base' still holds 100 here
+ *       return s + base;                  // delivers to this fn's awaiter
+ *   }
+ *
+ *   new t = Async_Start(GetScore, 7);     // runs to the await, returns here
+ *   Async_Resume(t, 107);                 // a pump/host completion resumes it
+ *
+ *   "await asyncFn(args)" composes: it starts asyncFn and parks the caller until
+ *   asyncFn's "return" delivers its value straight back (return-to-awaiter).
+ *
+ * ============================ v1 LIMITS ==================================
+ *   * Scalar locals only across an await (array/string live across a suspend is
+ *     rejected -- error 096, same envelope as "yield" v1).
+ *   * Linear bodies (sequential awaits, if, simple loops). "await" inside a
+ *     "foreach" is rejected (error 099); "foreach" over an async fn is rejected
+ *     (error 267).
+ *   * Single compilation unit (one .amx).
+ *
+ * ============================ NON-GOALS (MVP) ============================
+ *   * A real host adapter (timer/dialog/DB/HTTP) -- Async_Resume is the seam; no
+ *     adapter ships in the MVP.
+ *   * JIT compatibility is unverified (same open question as "yield").
+ *   * Multi-result "await X() -> (a, b)" binding -- a single scalar result only.
+ *   * Cross-.amx await.
+ *
+ * ============================ INTERNALS ==================================
+ * Everything below whose name starts with "__async_" (the compiler intrinsics
+ * __async_start / __async_resume / __async_self) or that is documented "internal"
+ * (Async_Alloc, Async_Register, Async_Free, Async_FreeByAddr, __async_tok, the
+ * g_async* tables) is machinery used by the compiler-emitted code and the public
+ * wrappers above -- not part of the surface user code should call directly.
+ *
+ * Lifetime & safety (task 3): a coroutine's B outlives the frame that started it,
+ * and coroutines complete in ARBITRARY order. The AMX heap is LIFO (a single HEA
+ * cursor moved by "modheap"/"heap"), so an arbitrary non-top block cannot be
+ * released by lowering HEA without corrupting the heap. B blocks therefore come
+ * from a FIXED ARENA (g_arena) in the data segment: a block is a slot, the TOKEN
+ * is its 1-based index, Async_Alloc() hands out a free slot's stable address and
+ * Async_Free() returns it to the pool (double-free is a no-op), so starting+
+ * completing N coroutines reuses slots and never grows storage.
  */
 
 #include <core>                 /* heapspace() -- used by the lifetime test */
@@ -210,16 +273,16 @@ stock Async_Resume(token, value)
         Async_Free(token);             /* completed -> reclaim the slot (no-op if already freed) */
 }
 
-/* --- self-parking helper (task 2: return-to-awaiter composition) ------------
+/* --- Async_Pending(): leaf awaitable (public) -------------------------------
  * A coroutine that "await"s a value completed by an EXTERNAL event must hand its
  * own state block to the scheduler, so the event source can resume it by token.
- * __pending() does that from inside an "async" body: it registers the RUNNING
- * coroutine -- named by the "__async_self()" intrinsic -- remembers the token in
- * g_asyncPending, and evaluates to that token. It MUST be a macro, not a stock:
- * "__async_self()" has to be emitted INLINE in the coroutine's own frame. */
+ * "await Async_Pending()" does that from inside an "async" body: it registers the
+ * RUNNING coroutine -- named by the "__async_self()" intrinsic -- remembers the
+ * token in g_asyncPending, and evaluates to that token. It MUST be a macro, not a
+ * stock: "__async_self()" has to be emitted INLINE in the coroutine's own frame. */
 stock g_asyncPending = 0;               /* token of the most recently self-parked coroutine */
 
-#define __pending() (g_asyncPending = Async_Register(__async_self()))
+#define Async_Pending() (g_asyncPending = Async_Register(__async_self()))
 
 /* Async_ResumeInner(value): resume the most recently self-parked coroutine with
  * "value". A convenience for single-pending demos/tests; a real event source

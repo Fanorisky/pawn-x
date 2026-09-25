@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(chain started)
+
+chain: a=6 b=16 c=116 final=143
+
+async_two_awaits.amx returns 0
+"""
+}

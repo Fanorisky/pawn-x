@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(started; suspended at await, control returned to caller)
+
+score=207
+
+async_basic.amx returns 0
+"""
+}
