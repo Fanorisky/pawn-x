@@ -1,6 +1,8 @@
 {
   'test_type': 'runtime',
   'output': """
+hooked=20
+
 early 20
 
 hooked=7

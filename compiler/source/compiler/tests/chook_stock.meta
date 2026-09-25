@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+r 8
+
+chook_stock.amx returns 0
+"""
+}
