@@ -224,6 +224,21 @@ static int skipinput  = 0;      /* number of lines to skip from the first input 
 static int optproccall = TRUE;  /* support "procedure call" */
 static int verbosity  = 1;      /* verbosity level, 0=quiet, 1=normal, 2=verbose */
 static int sc_reparse = 0;      /* needs 3th parse because of changed prototypes? */
+/* one-shot reparse gate for a forward-referenced async callee. "await asyncFn()"
+ * and "__async_start(asyncFn,...)" decide their whole codegen by findglb()+uASYNC
+ * on the callee. If the callee is declared AFTER the call site, the (single)
+ * addressing pass sees findglb==NULL and picks the normal-call path, while the
+ * write pass sees the persisted uASYNC symbol and picks the ergonomic/start path
+ * -- divergent code_idx/labels -> silent miscompile (segfault), no diagnostic
+ * (the phase-error assert is compiled out in Release). Like "yield" (uGENERATOR)
+ * and the call-hook seen-set, we force ONE extra addressing pass so the callee
+ * symbol (which persists across passes with uASYNC; reduce_referrers/delete_symbols
+ * keep non-native functions) is resolvable on the reparse and both passes emit the
+ * same path. This flag is monotonic and set at most once per compilation, so a
+ * genuinely-undefined callee cannot spin the reparse loop: after that one extra
+ * pass every async function that CAN be resolved IS, and any still-unresolved name
+ * falls through to the ordinary undefined-symbol / non-async error path. */
+static int pc_async_fwd_reparsed = FALSE;
 static int sc_parsenum = 0;     /* number of the extra parses */
 static int wq[wqTABSZ];         /* "while queue", internal stack for nested loops */
 static int *wqptr;              /* pointer to next entry */
@@ -642,6 +657,7 @@ int pc_compile(int argc, char *argv[])
   sc_status=statFIRST;
   /* do the first pass through the file (or possibly two or more "first passes") */
   sc_parsenum=0;
+  pc_async_fwd_reparsed=FALSE;   /* reset the forward-async reparse gate once per compilation */
   inpfmark=pc_getpossrc(inpf_org);
   do {
     /* reset "defined" flag of all functions and global variables */
@@ -3383,6 +3399,37 @@ static void generator_emit_prologue(void)
   code_idx+=opcodes(1)+opargs(1);
   setlabel(lbl_fresh);
 
+  /* FRESH path only, ASYNC coroutines: authoritatively record this coroutine's
+   * own code entry in B[ASYNC_ENTRY_SLOT], so a later generic Async_Resume can
+   * dispatch back into it via "call.pri". The STARTER (doasyncstart / the
+   * ergonomic await in doawait) also writes this slot, but its value is a raw
+   * const.pri of the callee's address that is STALE for a forward-referenced
+   * callee (declared after the start site): the write pass places the callee at
+   * a different address than the addressing pass, and a plain const operand is
+   * not relocated. Here we overwrite it from curfunc->addr -- read in the
+   * coroutine's OWN body, so it is the current pass's real entry every pass and
+   * is correct regardless of declaration order. This runs on the fresh call
+   * before any suspend, hence before any resume can read the slot; on a resume
+   * the prologue "sctrl 6" jumps past this to the continuation, which is fine
+   * because the fresh call already set the (pass-stable) value. It is emitted
+   * only for uASYNC coroutines -- a plain "yield"/foreach generator is never
+   * resumed by call.pri and has no entry slot (gen_reserved==1). */
+  if ((curfunc->usage & uASYNC)!=0) {
+    stgwrite("\tload.s.pri ");  /* PRI = B */
+    outval(localsbase,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tadd.c ");       /* PRI = &B[entry] */
+    outval((cell)ASYNC_ENTRY_SLOT*sizeof(cell),TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tmove.alt\n");   /* ALT = &B[entry] (destination) */
+    code_idx+=opcodes(1);
+    stgwrite("\tconst.pri ");   /* PRI = this coroutine's own entry (same-pass, never stale) */
+    outval(curfunc->addr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tstor.i\n");     /* B[entry] = own code address */
+    code_idx+=opcodes(1);
+  } /* if */
+
   /* FRESH path only: copy each incoming user parameter into its block slot, so
    * it is readable in the body and survives resumption. ALT/PRI are free here.
    *   ALT = B + slot   (destination);   PRI = incoming arg;   *(ALT) = PRI */
@@ -3578,7 +3625,18 @@ static int async_emit_arena_alloc(symbol *fsym,cell btemp,int blkcells,int lbl_f
   stgwrite("\tfill ");
   outval((cell)blkcells*sizeof(cell),TRUE);
   code_idx+=opcodes(1)+opargs(1);
-  /* B[ASYNC_ENTRY_SLOT] = fsym code entry (raw const.pri for length stability). */
+  /* B[ASYNC_ENTRY_SLOT] = fsym code entry (raw const.pri for length stability).
+   * NOTE: fsym->addr is a RAW literal here, so for a FORWARD-referenced callee
+   * (declared after this start site) it is the callee's address from the previous
+   * pass, which is stale -- the write pass lays the callee out at a different
+   * address than the addressing pass (dead-code elimination shrinks the write
+   * pass), and there is no relocation for a plain const operand (only "call
+   * .name" is resolved at assemble time; cf. __addressof rejecting forward refs).
+   * This store is therefore NOT authoritative: the callee re-establishes its own
+   * B[ASYNC_ENTRY_SLOT] from curfunc->addr (a same-pass, always-correct value) at
+   * the top of its prologue (see generator_emit_prologue), before any generic
+   * call.pri resume can read it. Keeping this store keeps the emitted sequence
+   * (and thus code_idx) identical for the declared-before and forward cases. */
   stgwrite("\tload.s.pri ");        /* PRI = B */
   outval(btemp,TRUE);
   code_idx+=opcodes(1)+opargs(1);
@@ -3587,7 +3645,7 @@ static int async_emit_arena_alloc(symbol *fsym,cell btemp,int blkcells,int lbl_f
   code_idx+=opcodes(1)+opargs(1);
   stgwrite("\tmove.alt\n");         /* ALT = &B[entry] (destination) */
   code_idx+=opcodes(1);
-  stgwrite("\tconst.pri ");         /* PRI = fsym code address */
+  stgwrite("\tconst.pri ");         /* PRI = fsym code address (provisional; see above) */
   outval(fsym->addr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
   stgwrite("\tstor.i\n");           /* B[entry] = code address */
@@ -3688,6 +3746,23 @@ SC_FUNC int doawait(value *lval)
     symbol *fsym;
     ftok=lex(&ftval,&fstr);
     fsym=(ftok==tSYMBOL) ? findglb(fstr,sGLOBAL) : NULL;
+    /* Forward-referenced async callee: if, during an addressing pass, the operand
+     * names something we cannot yet resolve as an async function (findglb==NULL,
+     * or a function symbol whose "async" declaration has not been parsed yet so
+     * uASYNC is not set), request ONE extra addressing pass. On the reparse the
+     * callee symbol persists (reduce_referrers/delete_symbols keep non-native
+     * functions across passes) with uASYNC, so this pass then emits the SAME
+     * ergonomic path the write pass will -- no code_idx/label divergence. The
+     * gate is monotonic (set at most once per compilation), so a genuinely
+     * undefined or non-async operand does not loop: after that single pass it
+     * falls through to the ordinary general-await/undefined-symbol path below.
+     * A resolved non-function operand (a normal awaitable variable) can never
+     * become async, so it is excluded and awaits normally without a reparse. */
+    if (sc_status==statFIRST && !pc_async_fwd_reparsed && ftok==tSYMBOL
+        && (fsym==NULL || (fsym->ident==iFUNCTN && (fsym->usage & uASYNC)==0))) {
+      pc_async_fwd_reparsed=TRUE;
+      sc_reparse=TRUE;
+    } /* if */
     if (fsym!=NULL && fsym->ident==iFUNCTN && (fsym->usage & uASYNC)!=0) {
       cell argaddr[sMAXARGS],save_decl,btemp;
       int nuser,ai,blkcells,lbl_full;
@@ -3853,8 +3928,39 @@ SC_FUNC int doasyncstart(value *lval)
   tok=lex(&val,&str);           /* the async function */
   fsym=(tok==tSYMBOL) ? findglb(str,sGLOBAL) : NULL;
   if (fsym==NULL || fsym->ident!=iFUNCTN || (fsym->usage & uASYNC)==0) {
-    error(255,"__async_start: first argument must name an \"async\" function");
-    lexclr(TRUE);
+    /* Forward-referenced async callee (same two-pass hazard as ergonomic await):
+     * if the operand is a name we cannot yet resolve as an async function during
+     * an addressing pass, request ONE reparse instead of erroring, so a later
+     * "async Fn(...)" declaration is resolvable on the next pass (its symbol
+     * persists with uASYNC). The gate is monotonic, so a genuinely undefined or
+     * non-async first argument falls through to the hard error on the reparse
+     * (or immediately if the operand is not even a symbol) rather than looping.
+     * error(255) is >=100 and thus NOT suppressed in an addressing pass, so it
+     * must be skipped while we are only deferring to the reparse. */
+    if (sc_status==statFIRST && !pc_async_fwd_reparsed && tok==tSYMBOL) {
+      /* Consume the rest of the "__async_start(...)" argument list with balanced
+       * parentheses -- NOT lexclr(TRUE), which clears to end-of-statement and
+       * would swallow the closing ")" of the enclosing "__async_tok(...)" macro
+       * wrapper, unbalancing it and provoking a FATAL cascade on this pass before
+       * the reparse can run. We have already consumed "(" and the name token, so
+       * the paren depth is 1; consume through its matching ")". The stub code is
+       * discarded because sc_reparse re-runs this pass with Fn now resolvable. */
+      int depth=1,t;
+      pc_async_fwd_reparsed=TRUE;
+      sc_reparse=TRUE;
+      while (depth>0) {
+        t=lex(&val,&str);
+        if (t==0)                 /* EOF safety: never spin */
+          break;
+        if (t=='(')
+          depth++;
+        else if (t==')')
+          depth--;
+      } /* while */
+    } else {
+      error(255,"__async_start: first argument must name an \"async\" function");
+      lexclr(TRUE);
+    } /* if */
     ldconst(0,sPRI);
     if (lval!=NULL)
       lval->ident=iEXPRESSION;

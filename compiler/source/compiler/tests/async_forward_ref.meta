@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(outer awaiting inner)
+
+outer got=262
+
+async_forward_ref.amx returns 0
+"""
+}
