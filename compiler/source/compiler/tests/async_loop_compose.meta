@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+for=36
+
+mid=36
+
+big=120
+
+bc=7
+
+active=0
+
+async_loop_compose.amx returns 0
+"""
+}

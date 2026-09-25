@@ -4035,20 +4035,15 @@ SC_FUNC int doawait(value *lval)
        * await. They are spilled into B before the suspend and restored after (see
        * the async_emit_spill/restore calls at the suspend below). spillslot was
        * reserved above from pc_exprtemp, the same upper bound the leaf path uses. */
-      if (wqptr!=wq) {
-        /* COMPOSED "await asyncFn()" inside a while/for/do loop is rejected
-         * (error 269). A LEAF await in a loop is fine (the coroutine re-parks each
-         * iteration), but the compose path buffers hidden stack cells (inner args +
-         * the inner-B temp) around the suspend, and re-entering that across a loop
-         * back-edge unbalances the stack (observed run-time error 7). Lift the
-         * composed call out of the loop, or drive the repetition from the resumer. */
-        error(269);
-        lexclr(TRUE);
-        ldconst(0,sPRI);
-        if (lval!=NULL)
-          lval->ident=iEXPRESSION;
-        return FALSE;
-      } /* if */
+      /* COMPOSED "await asyncFn()" inside a while/for/do loop IS supported. Each
+       * iteration allocates the inner B from the arena and frees it when the inner
+       * completes (return-to-awaiter), and the hidden inner-start cells are freed
+       * within the iteration before the suspend, so the operand stack balances
+       * across the loop back-edge. (This was once rejected with error 269 as a
+       * conservative measure after the "spurious completion after one iteration"
+       * miscompile; that root cause was the B[0]-unchanged completion heuristic,
+       * fixed by testing PRI==generator_iterstop in doasyncresume -- which repairs
+       * the composed loop as well as the leaf loop. Covered by async_loop_compose.) */
       save_decl=declared;
       /* MID-EXPRESSION compose: the enclosing operator temporaries (the "base" in
        * "base + await F()") sit on the operand stack BELOW the last "declared"

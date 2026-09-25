@@ -232,7 +232,7 @@ static char *warnmsg[] = {
 /*266*/  "\"async\" can only be applied to a function\n",
 /*267*/  "\"foreach\" cannot iterate an \"async\" function (it is driven by a scheduler via \"await\", not \"foreach\")\n",
 /*268*/  "array/reference parameter cannot cross an \"await\": it points into the caller's frame (pass by value or copy in)\n",
-/*269*/  "composed \"await asyncFn()\" inside a loop is not supported: it unbalances the stack across the loop back-edge (a LEAF await in a loop is fine; lift the composed call out of the loop or drive the repetition from the resumer)\n"
+/*269*/  ""  /* retired (composed "await asyncFn()" inside a loop is now supported; the completion heuristic that made it miscompile was fixed to PRI==generator_iterstop); slot kept blank to preserve indices */
 };
 
 static char *noticemsg[] = {
