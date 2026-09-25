@@ -2381,14 +2381,28 @@ SC_FUNC int lex(cell *lexvalue,char **lexsym)
     tokptr+=1;
   } /* while */
   while (i<=tLAST) {    /* match reserved words and compiler directives */
-    /* pawn-x soft keywords: skip matching them as keywords when the previous
-     * token puts us in a name-introducing position, so they parse as identifiers
-     * (see the note at the top of lex()). Their own statement/expression uses are
-     * unaffected because there the previous token is ';', '{', '=', '(', etc. */
-    if ((i==tASYNC || i==tAWAIT || i==tYIELD || i==tHOOK || i==tITERFUNC || i==tFOREACH)
-        && (prevtok==tLABEL || prevtok==tNEW || prevtok==tSTATIC || prevtok==tSTOCK
-            || prevtok==tPUBLIC || prevtok==tFORWARD || prevtok==tNATIVE || prevtok==tCONST
-            || prevtok==tOPERATOR || prevtok=='.')) {
+    /* pawn-x soft keywords: skip matching them as keywords when the previous token
+     * puts us in a name-introducing position, so they parse as identifiers (see the
+     * note at the top of lex()). Their own statement/expression uses are unaffected
+     * because there the previous token is ';', '{', '=', '(', etc.
+     *
+     * Two tiers, because the lexer emits tLABEL not only for a tag prefix
+     * ("bool:hook") but also for a statement label ("retry:") and a bare tag
+     * override on an expression ("Float:await ..."). "hook", "async" and "iterfunc"
+     * are DECLARATION-only keywords -- they can never be a statement or an
+     * expression operand -- so after tLABEL they can only be a name, and are safe to
+     * downgrade. "await", "yield" and "foreach" CAN follow a label or a tag override
+     * as genuine keywords ("retry: await ...", "loop: foreach ...", "Float:await"),
+     * so they are downgraded only after the unambiguous declaration specifiers, not
+     * after tLABEL. */
+    if (((i==tHOOK || i==tASYNC || i==tITERFUNC)
+            && (prevtok==tLABEL || prevtok==tNEW || prevtok==tSTATIC || prevtok==tSTOCK
+                || prevtok==tPUBLIC || prevtok==tFORWARD || prevtok==tNATIVE
+                || prevtok==tCONST || prevtok==tOPERATOR || prevtok=='.'))
+        || ((i==tAWAIT || i==tYIELD || i==tFOREACH)
+            && (prevtok==tNEW || prevtok==tSTATIC || prevtok==tSTOCK || prevtok==tPUBLIC
+                || prevtok==tFORWARD || prevtok==tNATIVE || prevtok==tCONST
+                || prevtok==tOPERATOR || prevtok=='.'))) {
       i+=1;
       tokptr+=1;
       continue;
