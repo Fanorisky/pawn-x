@@ -17,7 +17,10 @@ async BadComposeLoop()
 {
     new total = 0;
     for (new k = 0; k < 3; k++)
-        total += await Inner(k);      // error 269: composed await inside a loop
+    {
+        new r = await Inner(k);       // error 269: composed await inside a loop (bare, so
+        total += r;                   // it is the compose-in-loop guard, not the mid-expr one)
+    }
     printf("%d\n", total);
     return total;
 }

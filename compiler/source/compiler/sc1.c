@@ -3747,6 +3747,20 @@ SC_FUNC int doawait(value *lval)
     ldconst(0,sPRI);
     return FALSE;
   } /* if */
+  /* MID-EXPRESSION await guard (fix #1): in an "async" body every local is LIFTED
+   * into B, so "declared" never rises above the baseline and the check above is
+   * blind to OPERATOR temporaries (the "a" pushed by "a + await F()"). Those temps
+   * live on the stack and are discarded by @yield.emit's "sctrl 4" unwind, so
+   * awaiting with any live temporary silently miscompiled (the other operand read
+   * back as garbage). pc_exprtemp is the pushreg/popreg balance since the statement
+   * started; if it is non-zero a temporary is live across this suspend -- reject
+   * cleanly instead of miscompiling. (A bare "new x = await E;" or a single-arg
+   * "await F(x)" has no live temp here and is unaffected.) */
+  if (pc_generator && pc_exprtemp>0) {
+    error(99);
+    ldconst(0,sPRI);
+    return FALSE;
+  } /* if */
   /* NOTE: "await" inside a while/for/do loop is SUPPORTED. The completion detection
    * in doasyncresume tests PRI==generator_iterstop (the epilogue's sentinel), not
    * the old "B[0] unchanged" heuristic, so a body that loops back to the same
@@ -8211,6 +8225,7 @@ static void statement(int *lastindent,int allow_decl)
     return;
   } /* if */
   errorset(sRESET,0);
+  pc_exprtemp=0;                /* new statement: no live operand-stack temporaries yet */
 
   tok=lex(&val,&st);
   if ((emit_flags & efBLOCK)!=0) {

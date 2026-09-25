@@ -1095,6 +1095,7 @@ SC_VDECL int stgidx;          /* index to the staging buffer */
 SC_VDECL int sc_labnum;       /* number of (internal) labels */
 SC_VDECL int staging;         /* true if staging output */
 SC_VDECL cell declared;       /* number of local cells declared */
+SC_VDECL cell pc_exprtemp;    /* live operand-stack temporaries in the current statement (pushreg/popreg balance); read by doawait to reject a mid-expression suspend */
 SC_VDECL cell pc_genlocalsbase;/* frame offset of a coroutine generator's hidden
                                * "localsbase" cell (base of its state block);
                                * used to emit lifted-local access (see sc4.c) */

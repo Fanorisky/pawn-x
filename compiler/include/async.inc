@@ -103,8 +103,13 @@
  *     SUPPORTED (loop state is lifted and survives; the coroutine re-parks each
  *     iteration). Lift the composed call out of the loop, or drive the repetition
  *     from the resumer.
- *   * "await" mid-expression / at arbitrary call-stack depth (a non-async helper
- *     the coroutine calls cannot suspend it) -- these need generic frame handling.
+ *   * "await" MID-EXPRESSION with a live operand temporary (e.g. "base + await F()"
+ *     -- the operator pushes "base" before the await) -- rejected with error 099:
+ *     the temporary would be discarded by the suspend's frame unwind. Put the await
+ *     in statement position ("new v = await F(); new x = base + v;"). ("await F()" as
+ *     a whole RHS, or as a single call argument, is fine.) A suspend at arbitrary
+ *     call-stack depth inside a non-async helper is likewise unsupported (it would
+ *     need whole-frame handling).
  *   * IMPLICIT fault auto-raise: a leaf fault an inner IGNORED does not raise by
  *     itself -- the inner must call Async_Fail(err) to propagate (explicit raise IS
  *     supported and shipped; see below). A normally-returning inner (incl. one that

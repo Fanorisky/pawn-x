@@ -771,6 +771,7 @@ SC_FUNC void pushreg(regid reg)
     break;
   } /* switch */
   code_idx+=opcodes(1);
+  pc_exprtemp++;                /* one more live operand-stack temporary */
 }
 
 /*
@@ -797,6 +798,8 @@ SC_FUNC void popreg(regid reg)
     break;
   } /* switch */
   code_idx+=opcodes(1);
+  if (pc_exprtemp>0)
+    pc_exprtemp--;              /* a live operand-stack temporary consumed */
 }
 
 /*
