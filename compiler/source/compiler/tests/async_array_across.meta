@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(started; suspended at await)
+
+got=99
+
+after: 10 20 30 40 sum=100
+
+msg=hello
+
+async_array_across.amx returns 0
+"""
+}

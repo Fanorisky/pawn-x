@@ -639,6 +639,20 @@ SC_FUNC void memcopy(cell size)
 SC_FUNC void copyarray(symbol *sym,cell size)
 {
   assert(sym!=NULL);
+  if (lifted_local(sym)) {
+    /* a lifted array (async coroutine local): destination is B+addr, an absolute
+     * data address in the state block. The source address is already in PRI and
+     * must be preserved (lifted_slotaddr_pri clobbers PRI), so stash it. */
+    stgwrite("\tpush.pri\n");        /* save source address */
+    code_idx+=opcodes(1);
+    lifted_slotaddr_pri(sym);        /* PRI = B + addr (destination) */
+    stgwrite("\tmove.alt\n");        /* ALT = B + addr */
+    stgwrite("\tpop.pri\n");         /* PRI = source address again */
+    code_idx+=opcodes(2);
+    markusage(sym,uWRITTEN);
+    memcopy(size);
+    return;
+  } /* if */
   /* the symbol can be a local array, a global array, or an array
    * that is passed by reference.
    */
@@ -665,6 +679,23 @@ SC_FUNC void fillarray(symbol *sym,cell size,cell value)
   ldconst(value,sPRI);  /* load value in PRI */
 
   assert(sym!=NULL);
+  if (lifted_local(sym)) {
+    /* a lifted array (async coroutine local): destination is B+addr, an absolute
+     * data address in the state block. Preserve PRI (the fill value) across the
+     * slot-address computation. */
+    stgwrite("\tpush.pri\n");        /* save fill value */
+    code_idx+=opcodes(1);
+    lifted_slotaddr_pri(sym);        /* PRI = B + addr (destination) */
+    stgwrite("\tmove.alt\n");        /* ALT = B + addr */
+    stgwrite("\tpop.pri\n");         /* PRI = fill value again */
+    code_idx+=opcodes(2);
+    markusage(sym,uWRITTEN);
+    assert(size>0);
+    stgwrite("\tfill ");
+    outval(size,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    return;
+  } /* if */
   /* the symbol can be a local array, a global array, or an array
    * that is passed by reference.
    */

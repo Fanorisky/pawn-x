@@ -1,13 +1,14 @@
 #include <console>
 #include <async>
 
-/* An array/string local of a coroutine cannot be lifted into the state block
- * (only scalars fit a slot in v1), so it would be lost across an "await"
- * suspend. Declaring one inside an "async" body must be rejected. */
+/* A 1-D array/string local of an "async" coroutine is now LIFTED into the state
+ * block and survives an "await" (see async_array_across). A MULTI-DIMENSIONAL
+ * array is not lifted yet, so declaring one live across an "await" must still be
+ * rejected rather than silently miscompiled. */
 async Bad()
 {
-    new arr[4];
-    new v = await arr[0];
+    new grid[2][2];
+    new v = await grid[0][0];
     printf("%d\n", v);
 }
 
