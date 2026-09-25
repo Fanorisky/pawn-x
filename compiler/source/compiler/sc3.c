@@ -2219,8 +2219,13 @@ static int primary(value *lval)
      * injected in callfunction() via pc_continue_pending. The loop statement
      * "continue;" never reaches here -- it is handled in statement()/docont(),
      * so only the call form in expression position arrives at the parser. */
-    if (pc_callhook_dispatcher==NULL || !matchtoken('(')) {
-      error(29);        /* expression error: continue() only valid in a call-hook body */
+    if (pc_callhook_dispatcher==NULL) {
+      error(257);       /* "continue(...)" only valid inside a hook body */
+      ldconst(0,sPRI);
+      return FALSE;
+    } /* if */
+    if (!matchtoken('(')) {
+      error(29);        /* invalid expression: "continue" here needs "(...)" */
       ldconst(0,sPRI);
       return FALSE;
     } /* if */

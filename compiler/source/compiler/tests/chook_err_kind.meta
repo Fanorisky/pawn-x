@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+chook_err_kind.pwn(8) : error 258: hook modifier does not match the kind of target "ScoreFor" (use "hook native" for a native, "hook function" or "hook stock" for a pawn function/stock)
+"""
+}

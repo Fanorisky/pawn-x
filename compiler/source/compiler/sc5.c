@@ -219,7 +219,12 @@ static char *warnmsg[] = {
 /*253*/  "\"___\" used in a function without variable arguments (\"...\")\n",
 /*254*/  "\"___\" used in a position that does not accept variable arguments\n",
 /*255*/  "%s\n",
-/*256*/  "hooks for callback \"%s\" must all have the same argument signature\n"
+/*256*/  "hooks for callback \"%s\" must all have the same argument signature\n",
+/*257*/  "\"continue(...)\" is only valid inside a hook native/function/stock body\n",
+/*258*/  "hook modifier does not match the kind of target \"%s\" (use \"hook native\" for a native, \"hook function\" or \"hook stock\" for a pawn function/stock)\n",
+/*259*/  "unknown hook target \"%s\": no such native or function\n",
+/*260*/  "variadic call-target hooks are not supported: target \"%s\" declares \"...\"\n",
+/*261*/  "hook body argument count does not match target \"%s\" (the body must declare the target's arguments exactly)\n"
 };
 
 static char *noticemsg[] = {

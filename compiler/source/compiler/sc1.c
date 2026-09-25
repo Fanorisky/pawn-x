@@ -2667,7 +2667,7 @@ static void callhook_parse(int modifier,int prio)
    * persistent seen-set + a reparse (see below). */
   tsym=findglb(target,sGLOBAL);
   if (tsym==NULL || tsym->ident!=iFUNCTN) {
-    error(17,target);           /* undefined symbol */
+    error(259,target);          /* unknown hook target: no such native or function */
     lexclr(TRUE);
     return;
   } /* if */
@@ -2675,23 +2675,38 @@ static void callhook_parse(int modifier,int prio)
   /* the modifier must match the target's kind, or we would miscompile the
    * original-endpoint (a native needs a SYSREQ, a pawn function a "call").
    * A "stock" is an ordinary pawn function that carries uSTOCK, so its endpoint
-   * is a plain "call" -- identical to "hook function"; both refuse a native.
-   * Task 5 owns the polished diagnostic; here we only refuse to miscompile. */
+   * is a plain "call" -- identical to "hook function"; both refuse a native. */
   if (modifier==CHOOK_NATIVE && (tsym->usage & uNATIVE)==0) {
-    error(255, "hook native target is not a native function");
+    error(258,target);          /* hook modifier does not match target kind */
     lexclr(TRUE);
     return;
   } /* if */
   if (modifier==CHOOK_FUNCTION && (tsym->usage & uNATIVE)!=0) {
-    error(255, "hook function target is a native (use \"hook native\")");
+    error(258,target);          /* hook modifier does not match target kind */
     lexclr(TRUE);
     return;
   } /* if */
   if (modifier==CHOOK_STOCK && (tsym->usage & uNATIVE)!=0) {
-    error(255, "hook stock target is a native (use \"hook native\")");
+    error(258,target);          /* hook modifier does not match target kind */
     lexclr(TRUE);
     return;
   } /* if */
+
+  /* variadic targets are unsupported in v1: the synthesised wrapper/chain
+   * forward a FIXED argument count, so a "..." target cannot be forwarded
+   * faithfully. Reject before adopting the signature or compiling the body. */
+  {
+    int ai;
+    if (tsym->dim.arglist!=NULL) {
+      for (ai=0; tsym->dim.arglist[ai].ident!=0; ai++) {
+        if (tsym->dim.arglist[ai].ident==iVARARGS) {
+          error(260,target);    /* variadic call-target hooks are not supported */
+          lexclr(TRUE);
+          return;
+        } /* if */
+      } /* for */
+    } /* if */
+  }
 
   grp=callhook_find(target);
   seq= (grp!=NULL) ? grp->count : 0;
@@ -2794,6 +2809,21 @@ static void callhook_parse(int modifier,int prio)
   body=findglb(hidden,sGLOBAL);
   if (body==NULL || body->ident!=iFUNCTN)
     return;                     /* body was only a prototype or was rejected */
+
+  /* body-vs-target arity: the body carries a hidden leading "idx" parameter
+   * (callhook_inject_idx), so its user-visible arg count is (bodyargs - 1).
+   * It must equal the target's arg count, or the wrapper/chain would forward a
+   * mismatched frame (garbage args / stack skew). */
+  {
+    int bodyargs=0;
+    if (body->dim.arglist!=NULL)
+      while (body->dim.arglist[bodyargs].ident!=0)
+        bodyargs++;
+    if (bodyargs-1!=argcount) {
+      error(261,target);        /* hook body argument count does not match target */
+      return;
+    } /* if */
+  }
 
   if (grp->count>=grp->capacity) {
     callhookslot *grown;
@@ -10427,6 +10457,18 @@ static void dobreak(void)
 static void docont(void)
 {
   int *ptr;
+
+  /* Distinguish the call-hook chain-advance intrinsic "continue(...)" (which
+   * takes a parenthesised argument list) from the loop statement "continue;".
+   * Outside a call-hook body the call form is invalid: catch it here with a
+   * dedicated diagnostic instead of the misleading "out of context" error.
+   * The check is short-circuited on pc_callhook_dispatcher first, so a plain
+   * "continue;" (no '(') is never disturbed. */
+  if (pc_callhook_dispatcher==NULL && matchtoken('(')) {
+    error(257);         /* "continue(...)" only valid inside a hook body */
+    lexclr(TRUE);       /* skip the argument list, resync at the terminator */
+    return;
+  } /* if */
 
   ptr=readwhile();      /* readwhile() gives an error if not in loop */
   needtoken(tTERM);

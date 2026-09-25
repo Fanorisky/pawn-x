@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+chook_err_arity.pwn(8) : error 261: hook body argument count does not match target "Compute" (the body must declare the target's arguments exactly)
+"""
+}

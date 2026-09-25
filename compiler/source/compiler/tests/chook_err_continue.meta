@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+chook_err_continue.pwn(9) : error 257: "continue(...)" is only valid inside a hook native/function/stock body
+"""
+}
