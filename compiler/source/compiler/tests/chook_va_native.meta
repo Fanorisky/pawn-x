@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+x=7 y=9
+
+chook_va_native.amx returns 0
+"""
+}

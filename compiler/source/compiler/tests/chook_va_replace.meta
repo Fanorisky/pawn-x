@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+r=999
+
+chook_va_replace.amx returns 0
+"""
+}

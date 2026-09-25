@@ -223,11 +223,11 @@ static char *warnmsg[] = {
 /*257*/  "\"continue(...)\" is only valid inside a hook native/function/stock body\n",
 /*258*/  "hook modifier does not match the kind of target \"%s\" (use \"hook native\" for a native, \"hook function\" or \"hook stock\" for a pawn function/stock)\n",
 /*259*/  "unknown hook target \"%s\": no such native or function\n",
-/*260*/  "variadic call-target hooks are not supported: target \"%s\" declares \"...\"\n",
+/*260*/  "",  /* retired (variadic call-target hooks are now supported); slot kept blank so 261..264 keep their N-200 indices */
 /*261*/  "hook body argument count does not match target \"%s\" (the body must declare the target's arguments exactly)\n",
 /*262*/  "state-scoped call hooks are not supported: remove the \"<state>\" prefix (state scoping applies to callback hooks only, not \"hook native/function/stock\")\n",
 /*263*/  "variadic call-hook body must match target arity/variadic shape: target \"%s\"\n",
-/*264*/  "variadic call-hook emission not yet implemented (pending): target \"%s\"\n"
+/*264*/  ""   /* retired (temp variadic-emission guard removed in exp 011); slot kept blank to preserve indices */
 };
 
 static char *noticemsg[] = {

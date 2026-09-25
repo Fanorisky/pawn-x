@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+hi
+
+chook_va_zero.amx returns 0
+"""
+}

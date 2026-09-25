@@ -2858,13 +2858,6 @@ static void callhook_parse(int modifier,int prio)
   grp->slots[grp->count].fn=body;
   grp->slots[grp->count].prio=prio;
   grp->count++;
-
-  /* TEMPORARY guard (Task 3 removes this): variadic emission is not built yet.
-   * The group is fully registered above, but callhook_emit cannot forward a
-   * "..." frame faithfully, so raise a hard error to prevent a silent
-   * miscompile of a well-formed variadic hook. */
-  if (grp->isvariadic)
-    error(264,target);          /* variadic call-hook emission not yet implemented */
 }
 
 /*  callhook_emit - synthesise the wrapper + chain dispatcher for every hooked
@@ -2876,6 +2869,18 @@ static void callhook_parse(int modifier,int prio)
  *    wrapper (args)        arg a at (a+3)*cell
  *    chain   (idx,args)    idx at 3*cell, target arg a at (a+4)*cell
  *    body    (idx,args)    same as chain
+ *
+ *  Variadic targets (grp->isvariadic): only the "fixedargs" fixed cells are
+ *  pushed statically; the trailing "..." is copied at run time with the same
+ *  fwdpushloop/fwdbytecount/fwdpopnative helpers the ordinary "___" forwarding
+ *  uses (sc3.c). The tail sits at the HIGHEST callee offsets, so it is pushed
+ *  FIRST (deepest); idx/fixed follow. Variadic frame layout:
+ *    wrapper  fixed a at (a+3)*cell, varargs at (fixedargs+3)*cell
+ *    chain    idx at 3*cell, fixed a at (a+4)*cell, varargs at (fixedargs+4)*cell
+ *    body     same as chain
+ *  NOTE: grp->argcount is the FULL arglist count INCLUDING the "..." slot;
+ *  grp->fixedargs is the fixed count (== argcount when non-variadic,
+ *  == argcount-1 when variadic). Variadic pushes use fixedargs, never argcount.
  */
 static void callhook_emit(void)
 {
@@ -2893,6 +2898,8 @@ static void callhook_emit(void)
     symbol *chain=grp->dispatcher;
     symbol *orig=grp->orig;
     int argcount=grp->argcount;
+    int isva=grp->isvariadic;
+    int fixedargs=grp->fixedargs;   /* fixed cells to push (== argcount when non-variadic) */
     int *lbls;
 
     if (wrapper==NULL || chain==NULL || orig==NULL)
@@ -2927,18 +2934,38 @@ static void callhook_emit(void)
     /* ---- wrapper @chook.Name.wrap(args): return chain(0, args) ---- */
     wrapper->addr=code_idx;
     curfunc=wrapper;
-    if (wrapper->x.stacksize<argcount+4)
-      wrapper->x.stacksize=argcount+4;
+    if (wrapper->x.stacksize<argcount+4+(isva?sMAXARGS:0))
+      wrapper->x.stacksize=argcount+4+(isva?sMAXARGS:0);
     begcseg();
     startfunc(wrapper->name,TRUE);        /* proc */
-    for (a=argcount-1; a>=0; a--) {       /* forward the wrapper's own args (reverse) */
-      stgwrite("\tpush.s ");
-      outval((a+3)*sizeof(cell),TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-    } /* for */
-    pushval(0);                           /* idx = 0 (leading argument) */
-    pushval(argbytes_body);               /* argument-count marker (in bytes) */
-    ffcall(chain,NULL,argcount+1);        /* result in PRI */
+    if (isva) {
+      /* Variadic wrapper: forward this wrapper's own varargs to the chain, then
+       * the fixed args, then idx=0, then a run-time byte-count marker. Push
+       * order is the runtime frame order reversed: the tail lands at the
+       * HIGHEST callee offsets (chain varargs at (fixedargs+4)*cell), so it is
+       * pushed FIRST (deepest); idx lands at chain arg 0 (3*cell), so it is
+       * pushed LAST before the marker. fixedargs (not argcount) is the fixed
+       * cell count -- argcount also counts the trailing "..." slot. */
+      fwdpushloop((cell)(fixedargs+3)*sizeof(cell)); /* copy wrapper varargs (deepest) */
+      for (a=fixedargs-1; a>=0; a--) {    /* fixed args (reverse) */
+        stgwrite("\tpush.s ");
+        outval((a+3)*sizeof(cell),TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* for */
+      pushval(0);                         /* idx = 0 (leading argument) */
+      fwdbytecount(fixedargs+1,fixedargs);/* marker = fixed + idx + tail; skip=fixedargs
+                                           * (the wrapper frame carries no idx) */
+      ffcall(chain,NULL,fixedargs+1);     /* result in PRI */
+    } else {
+      for (a=argcount-1; a>=0; a--) {     /* forward the wrapper's own args (reverse) */
+        stgwrite("\tpush.s ");
+        outval((a+3)*sizeof(cell),TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* for */
+      pushval(0);                         /* idx = 0 (leading argument) */
+      pushval(argbytes_body);             /* argument-count marker (in bytes) */
+      ffcall(chain,NULL,argcount+1);      /* result in PRI */
+    } /* if */
     ffret(TRUE);                          /* return chain(0, args) */
     endfunc();
     wrapper->codeaddr=code_idx;
@@ -2946,8 +2973,8 @@ static void callhook_emit(void)
     /* ---- chain dispatcher @chook.Name.chain(idx, args) ---- */
     chain->addr=code_idx;
     curfunc=chain;
-    if (chain->x.stacksize<argcount+4)
-      chain->x.stacksize=argcount+4;
+    if (chain->x.stacksize<argcount+4+(isva?sMAXARGS:0))
+      chain->x.stacksize=argcount+4+(isva?sMAXARGS:0);
     begcseg();
     startfunc(chain->name,TRUE);          /* proc */
     lbls=(int*)malloc((grp->count>0 ? grp->count : 1)*sizeof(int));
@@ -2970,12 +2997,28 @@ static void callhook_emit(void)
     /* default: tail-call the ORIGINAL. pc_emit_orig guards the redirect so this
      * call is not itself routed back through the wrapper (recursion guard). */
     pc_emit_orig=1;
-    for (a=argcount-1; a>=0; a--) {       /* forward the chain's target args (reverse) */
-      stgwrite("\tpush.s ");
-      outval((a+4)*sizeof(cell),TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-    } /* for */
-    pushval(argbytes_orig);
+    if (isva) {
+      /* Variadic default -> original (NO idx to the original). Tail first
+       * (highest offsets), then the fixed args. skip=fixedargs+1 because the
+       * CHAIN's own frame carries idx before its fixed args, so the tail begins
+       * fixedargs+1 cells into the frame -- this must match fwdpushloop's own
+       * skip ((fixedargs+4)*cell => fixedargs+1 leading cells) and, for a
+       * native, fwdpopnative below. */
+      fwdpushloop((cell)(fixedargs+4)*sizeof(cell)); /* copy chain varargs */
+      for (a=fixedargs-1; a>=0; a--) {
+        stgwrite("\tpush.s ");
+        outval((a+4)*sizeof(cell),TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* for */
+      fwdbytecount(fixedargs,fixedargs+1);/* marker = fixed + tail (NO idx) */
+    } else {
+      for (a=argcount-1; a>=0; a--) {     /* forward the chain's target args (reverse) */
+        stgwrite("\tpush.s ");
+        outval((a+4)*sizeof(cell),TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* for */
+      pushval(argbytes_orig);
+    } /* if */
     /* For a NATIVE original, ffcall emits "sysreq.c <id>" and assigns the native
      * id lazily (sc4.c), in the write pass, only while uREAD is clear. Two cases:
      *   - uREAD clear: no non-redirected call site emitted a sysreq for this
@@ -2988,7 +3031,10 @@ static void callhook_emit(void)
      *     out-of-bounds write in the natives table, sc6.c, and a runtime error 19).
      * Redirected call sites deliberately do not set uREAD on the original
      * (sc3.c), so uREAD here means exactly "a real sysreq already exists". */
-    ffcall(orig,NULL,argcount);           /* pawn -> call, native -> sysreq (ffcall decides) */
+    ffcall(orig,NULL,isva?fixedargs:argcount); /* pawn -> call, native -> sysreq (ffcall decides).
+                                           * For a variadic native, ffcall's constant "stack"
+                                           * pops only the fixedargs static cells + marker; the
+                                           * forwarded tail is popped by fwdpopnative below. */
     if ((orig->usage & uNATIVE)!=0) {
       markusage(orig,uREAD);              /* count the native in the natives table */
       /* count the library this native belongs to, mirroring the ordinary call
@@ -2998,6 +3044,10 @@ static void callhook_emit(void)
        * increment is harmless. */
       if (orig->x.lib!=NULL)
         orig->x.lib->value+=1;
+      if (isva)
+        fwdpopnative(fixedargs+1);        /* pop the forwarded tail; skip=fixedargs+1 matches
+                                           * the chain frame's idx+fixed header, so exactly the
+                                           * cells fwdpushloop pushed are popped */
     } /* if */
     pc_emit_orig=0;
     ffret(TRUE);
@@ -3005,17 +3055,34 @@ static void callhook_emit(void)
     for (k=0; k<grp->count; k++) {
       symbol *body=grp->slots[k].fn;
       setlabel(lbls[k]);
-      for (a=argcount-1; a>=0; a--) {     /* forward target args (reverse) */
-        stgwrite("\tpush.s ");
-        outval((a+4)*sizeof(cell),TRUE);
+      if (isva) {
+        /* Variadic case -> body(idx, fixed..., tail...). Tail first (deepest),
+         * then fixed, then idx (chain arg 0 at 3*cell). skip=fixedargs+1: the
+         * chain frame carries idx before its fixed args, so the tail begins
+         * fixedargs+1 cells in (matches fwdpushloop's (fixedargs+4)*cell). */
+        fwdpushloop((cell)(fixedargs+4)*sizeof(cell)); /* copy chain varargs */
+        for (a=fixedargs-1; a>=0; a--) {
+          stgwrite("\tpush.s ");
+          outval((a+4)*sizeof(cell),TRUE);
+          code_idx+=opcodes(1)+opargs(1);
+        } /* for */
+        stgwrite("\tpush.s ");            /* forward idx as body's leading param */
+        outval(3*sizeof(cell),TRUE);
         code_idx+=opcodes(1)+opargs(1);
-      } /* for */
-      stgwrite("\tpush.s ");              /* forward idx as body's leading param */
-      outval(3*sizeof(cell),TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      pushval(argbytes_body);
+        fwdbytecount(fixedargs+1,fixedargs+1); /* marker = idx + fixed + tail */
+      } else {
+        for (a=argcount-1; a>=0; a--) {   /* forward target args (reverse) */
+          stgwrite("\tpush.s ");
+          outval((a+4)*sizeof(cell),TRUE);
+          code_idx+=opcodes(1)+opargs(1);
+        } /* for */
+        stgwrite("\tpush.s ");            /* forward idx as body's leading param */
+        outval(3*sizeof(cell),TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+        pushval(argbytes_body);
+      } /* if */
       markusage(body,uREAD);
-      ffcall(body,NULL,argcount+1);
+      ffcall(body,NULL,isva?fixedargs+1:argcount+1);
       ffret(TRUE);
     } /* for */
     free(lbls);
