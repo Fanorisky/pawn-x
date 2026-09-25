@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+r=36
+
+chook_va_2fixed.amx returns 0
+"""
+}

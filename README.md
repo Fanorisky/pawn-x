@@ -28,7 +28,7 @@ Two pillars, split by *when the information exists*:
 | `iterfunc` generators | y_iterate custom iterators | exp 003 |
 | `yield` coroutine generators | `#define Iterator@N iteryield` + `yield` | tests `yield_*` |
 | `hook` keyword (+ `hook:N` priority) | `y_hooks` (compile-time) | exp 004/005 |
-| `hook native`/`function`/`stock` + `continue` (call-site) | `y_hooks` real fn/native hooking | tests `chook_*` |
+| `hook native`/`function`/`stock` + `continue` (call-site, incl. variadic `...` targets) | `y_hooks` real fn/native hooking | tests `chook_*` |
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
 
 Most rows were run on a real `omp-server` and diffed against YSI (the `yield`
@@ -110,11 +110,13 @@ hook:100 OnFoo(a) { ...; return HOOK_STOP;     }   // higher priority first; -1 
 hook default OnPlayerCommandText = 0;              // fall-through default (like YSI HOOK_RET)
 ```
 
-**Call-site hooks (`hook native`/`function`/`stock` + `continue`)** — intercept every in-script call to a real native or pawn function/stock (v1: fixed-arity, single-`.amx`):
+**Call-site hooks (`hook native`/`function`/`stock` + `continue`)** — intercept every in-script call to a real native or pawn function/stock (single-`.amx`; fixed-arity or variadic `...` targets):
 ```pawn
 hook function ComputeScore(p) { return continue(p) + 1; }  // continue = next hook, else the original
 hook native random(range)     { return continue(range) % 8; }
+hook function Sum(base, ...)  { return continue(base, ___); } // variadic: forward the tail with ___ (or bare continue())
 // continue: 0×=replace, 1×=pass-through, N×=call original N times; args forwardable.
+// In a variadic body numargs()/getarg(n)/setarg(n) use the user index; the hidden chain index is invisible.
 // Forward references (a call before the hook) are redirected too.
 ```
 

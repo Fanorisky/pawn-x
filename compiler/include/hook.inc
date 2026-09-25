@@ -116,11 +116,37 @@
  *  Forward references are honoured: a call written textually BEFORE the `hook`
  *  declaration is still redirected through the chain.
  *
+ *  Variadic (`...`) targets:
+ *
+ *    Sum(base, ...) { new n = numargs(), s = base;
+ *                     for (new i = 1; i < n; i++) s += getarg(i); return s; }
+ *
+ *    hook function Sum(base, ...)
+ *    {
+ *        new r = continue(base, ___);   // forward the fixed arg + the whole tail
+ *        return r * 2;
+ *    }
+ *
+ *  A variadic target is call-site-hookable: declare the hook body with the same
+ *  `fixed…, ...` shape as the target (a shape mismatch — variadic body on a
+ *  fixed target or vice versa — is error 263). Inside a variadic hook body:
+ *   - `numargs()` / `getarg(n)` / `setarg(n)` see the USER argument list; `n`
+ *     is the user index (the hidden per-hook chain index is invisible, so
+ *     `numargs()` and the indices match what the original target sees).
+ *   - `getarg`/`setarg` are meaningful only on the variadic TAIL. Fixed
+ *     by-value params are read by their name (`base` above), as in standard
+ *     Pawn — not through `getarg`.
+ *   - forward the tail with `continue(fixed…, ___)`: pass each fixed arg
+ *     (its current, possibly-modified value) then `___` to splice the entire
+ *     variable-argument tail onto the next hook / the original.
+ *   - or forward EVERYTHING with a bare `continue()`: it re-forwards all of the
+ *     current arguments (fixed params by their current value + the full tail),
+ *     equivalent to `continue(fixed…, ___)` without spelling the fixed args out.
+ *
  *  v1 limits (all enforced at compile time — the misuse is a hard error):
- *   - Fixed-arity targets only. A variadic (`...`) target is rejected; you
- *     cannot call-site-hook `printf` and friends.
- *   - The hook body's argument list must match the target's signature exactly;
- *     an arity mismatch is rejected.
+ *   - The hook body's argument list must match the target's signature exactly,
+ *     including its variadic shape (`fixed…, ...` vs `fixed…`); an arity or
+ *     shape mismatch is rejected.
  *   - Using the wrong modifier for the target's kind is rejected, as is an
  *     unknown target (no such native or function).
  *   - Single compilation unit (in-`.amx`), like the callback `hook` — cross-.amx

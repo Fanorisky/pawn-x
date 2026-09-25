@@ -72,6 +72,9 @@ iterated element is safe in `foreach` (it hangs under YSI on this stack).
 | `hook native Name(args) { }` — YSI alias of `hook function` (target kind not enforced) | `hook native Name(args) { }` |
 | `hook stock Name(args) { }` — YSI alias of `hook function` (target kind not enforced) | `hook stock Name(args) { }` |
 | `continue(args)` (call the original / next) | `continue(args)` (0×=replace, 1×=pass-through, N×=call original N times; args forwardable) |
+| `hook native Name(fmt[], ...) { }` (variadic target) | `hook function Name(fmt[], ...) { }` (variadic call-hook — same `fixed…, ...` shape as the target) |
+| `continue(a, va_start<1>)` (forward the tail) | `continue(a, ___)` — pass fixed args then `___` to splice the whole tail; bare `continue()` forwards everything |
+| `Hooks_NumArgs()` (chain arg count, hides the wrapper's extra param) | `numargs()` (already corrected: the hidden per-hook chain index is invisible, so `numargs()`/`getarg(n)`/`setarg(n)` use the USER index) |
 | *(no runtime equivalent)* | `dynhook_add/remove/replace` + `dynhook_intercept` |
 
 In YSI 5.10 `hook native` and `hook stock` are **documented synonyms** of
@@ -88,11 +91,15 @@ a compile error (see the call-site-hook gotcha below).
   is a hard compile error (guarded in the includes).
 - **`dynhook` needs the companion plugin** loaded on the server; the compiler
   `hook` keyword and everything else need no plugin.
-- **Call-site hooks (`hook native/function/stock`) are v1 fixed-arity,
-  single-`.amx`.** Variadic targets (e.g. `printf`) are rejected, the body's
-  arg list must match the target exactly, and the modifier must match the
-  target's kind — all are compile errors. Cross-`.amx` call-site hooking is out
-  of scope (like the callback `hook`).
+- **Call-site hooks (`hook native/function/stock`) are single-`.amx`.** Both
+  fixed-arity and variadic (`...`) targets are supported: the body's arg list
+  must match the target's signature exactly, including its variadic shape
+  (`fixed…, ...` vs `fixed…`), and the modifier must match the target's kind —
+  all mismatches are compile errors. Inside a variadic body forward the tail
+  with `continue(fixed…, ___)` or everything with bare `continue()`;
+  `numargs()`/`getarg(n)`/`setarg(n)` use the user index (the hidden chain index
+  is invisible). Cross-`.amx` call-site hooking is out of scope (like the
+  callback `hook`).
 - **Other YSI libraries** (`y_commands`, `y_ini`, `y_inline`, `y_timers`,
   `y_groups`, …) are out of scope — keep using them or an open.mp alternative;
   they don't clash with pawn-x.

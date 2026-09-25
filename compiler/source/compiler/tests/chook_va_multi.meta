@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+r=16
+
+chook_va_multi.amx returns 0
+"""
+}
