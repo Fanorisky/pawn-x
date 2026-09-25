@@ -1,6 +1,6 @@
 {
   'test_type': 'output_check',
   'errors': """
-async_err_array_across.pwn(10) : error 096: a local array cannot span a "yield"
+async_err_array_across.pwn(11) : error 255: a generator ("yield") may not take an array parameter yet
 """
 }

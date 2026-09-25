@@ -4838,33 +4838,43 @@ static int declloc(int fstatic)
       assert(stgidx==0);
       staging_start=stgidx;
     } else if (pc_generator && ident==iARRAY
-               && (curfunc->usage & uASYNC)!=0 && numdim==1) {
-      /* SPIKE (exp 012, full-context de-risk): a 1-D array/string local of an
-       * "async" coroutine is LIFTED into the state block, exactly like a scalar
-       * local -- it just occupies "size" consecutive block cells instead of one.
-       * Because the block B is a stable arena slot in the data segment, the
-       * array's cells LIVE there permanently: they need NO save/restore across a
-       * suspend (the discarded stack frame never held them). address() in sc4.c
-       * already computes a lifted symbol's base as B+addr, an absolute data
-       * address, so indexing/passing/fill/copy all work unchanged; only the
-       * initializer path (fillarray/copyarray) is taught the lifted base below.
-       * "declared"/the stack are untouched, so the frame stays at the generator
-       * baseline and the "live stack storage across a suspend" guard is happy. */
+               && (curfunc->usage & uASYNC)!=0) {
+      /* An array/string local of an "async" coroutine is LIFTED into the state
+       * block, exactly like a scalar local -- it just occupies "size" consecutive
+       * block cells instead of one. Because the block B is a stable arena slot in
+       * the data segment, the array's cells LIVE there permanently: they need NO
+       * save/restore across a suspend (the discarded stack frame never held them).
+       * address() in sc4.c already computes a lifted symbol's base as B+addr, an
+       * absolute data address, so indexing/passing/fill/copy all work unchanged;
+       * only the initializer path (fillarray/copyarray) is taught the lifted base
+       * below. "declared"/the stack are untouched, so the frame stays at the
+       * generator baseline and the "live stack storage across a suspend" guard is
+       * happy.
+       *
+       * MULTI-DIMENSIONAL arrays (Task 2, exp 012) lift too: "size" is the FULL
+       * flattened cell count (indirection vector + data), so reserving "size"
+       * block cells covers the whole array. A multi-dim array's indirection
+       * vector holds byte offsets RELATIVE TO THE ARRAY BASE (see
+       * adjust_indirectiontables()) -- position-independent -- and the vector is
+       * built into the block by the same copyarray() path as the data, so
+       * indexing grid[i][j] (base B+addr from address(), plus a relative offset
+       * read back from the vector via load.i) follows with no further work. */
       int slot=curfunc->genlocals;
       sym=addvariable(name,(slot+gen_reserved(curfunc))*sizeof(cell),ident,sLOCAL,
                       tag,dim,numdim,idxtag,pc_nestlevel);
       sym->usage|=uLIFTED;
-      curfunc->genlocals=slot+(int)size;   /* reserve "size" block cells */
+      curfunc->genlocals=slot+(int)size;   /* reserve "size" block cells (flattened) */
       /* fall through to the array initializer path (fillarray/copyarray), which
        * now emits against the lifted base; do NOT allocate on the stack. */
     } else if (pc_generator && ident==iARRAY) {
-      /* array/string locals are not lifted for a plain "yield" generator, and
-       * multi-dimensional lifting is out of the spike scope. Emitting the
-       * on-stack allocation below would unbalance the frame across a suspend and
-       * crash at run time, so reject it now; the error fails the compile, so no
-       * broken binary is produced. Register the symbol (so later references to it
-       * resolve rather than cascading an "undefined symbol" error) but skip the
-       * on-stack alloc/init path below. */
+      /* array/string locals are not lifted for a plain "yield"/foreach generator
+       * (only "async" coroutines lift arrays -- see the branch above, which now
+       * covers both 1-D and multi-dimensional arrays). Emitting the on-stack
+       * allocation below would unbalance the frame across a suspend and crash at
+       * run time, so reject it now; the error fails the compile, so no broken
+       * binary is produced. Register the symbol (so later references to it resolve
+       * rather than cascading an "undefined symbol" error) but skip the on-stack
+       * alloc/init path below. */
       error(96);                /* a local array cannot span a "yield" */
       addvariable(name,-(declared+1)*sizeof(cell),ident,sLOCAL,
                   tag,dim,numdim,idxtag,pc_nestlevel);

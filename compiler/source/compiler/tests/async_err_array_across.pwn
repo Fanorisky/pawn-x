@@ -1,15 +1,16 @@
 #include <console>
 #include <async>
 
-/* A 1-D array/string local of an "async" coroutine is now LIFTED into the state
- * block and survives an "await" (see async_array_across). A MULTI-DIMENSIONAL
- * array is not lifted yet, so declaring one live across an "await" must still be
- * rejected rather than silently miscompiled. */
-async Bad()
+/* Local array/string locals of an "async" coroutine -- 1-D (async_array_across)
+ * AND multi-dimensional (async_array_multi) -- are now LIFTED into the state
+ * block and survive an "await". The remaining array-across-await limit is an
+ * array PASSED AS A PARAMETER: it is a pointer into the CALLER's storage, which
+ * cannot be lifted into this coroutine's block and may not outlive the suspend.
+ * That must still be rejected at compile time rather than silently miscompiled. */
+async Bad(const grid[])
 {
-    new grid[2][2];
-    new v = await grid[0][0];
+    new v = await grid[0];
     printf("%d\n", v);
 }
 
-main() { Async_Start(Bad); }
+main() { new a[3]; a[0] = 1; Async_Start(Bad, a); }
