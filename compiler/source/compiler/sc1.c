@@ -3747,16 +3747,12 @@ SC_FUNC int doawait(value *lval)
     ldconst(0,sPRI);
     return FALSE;
   } /* if */
-  if (wqptr!=wq) {              /* lexically inside a while/for/do loop body */
-    /* An "async" coroutine has a SINGLE resume landing (its saved CIP); a loop
-     * back-edge would jump over that suspend on the second iteration, and the
-     * completion detection misfires -- the coroutine silently runs one iteration
-     * then spuriously completes (verified). Reject cleanly rather than miscompile;
-     * making loop-carried awaits work is a documented follow-on. */
-    error(269);
-    ldconst(0,sPRI);
-    return FALSE;
-  } /* if */
+  /* NOTE: "await" inside a while/for/do loop is SUPPORTED. The completion detection
+   * in doasyncresume tests PRI==generator_iterstop (the epilogue's sentinel), not
+   * the old "B[0] unchanged" heuristic, so a body that loops back to the same
+   * "await" re-suspends correctly instead of being mis-read as complete. Loop-
+   * carried leaf AND composed awaits are covered by tests (async_loop*). Only
+   * mid-expression temporaries across a suspend remain rejected (error 099 above). */
 
   /* Stage the whole await (both the ergonomic and general operand paths) so the
    * peephole optimizer's stgdel() works: without an active stage buffer, an
@@ -3806,6 +3802,20 @@ SC_FUNC int doawait(value *lval)
       cell argaddr[sMAXARGS],save_decl,btemp;
       int nuser,ai,blkcells,lbl_full;
       markusage(fsym,uREAD);
+      if (wqptr!=wq) {
+        /* COMPOSED "await asyncFn()" inside a while/for/do loop is rejected
+         * (error 269). A LEAF await in a loop is fine (the coroutine re-parks each
+         * iteration), but the compose path buffers hidden stack cells (inner args +
+         * the inner-B temp) around the suspend, and re-entering that across a loop
+         * back-edge unbalances the stack (observed run-time error 7). Lift the
+         * composed call out of the loop, or drive the repetition from the resumer. */
+        error(269);
+        lexclr(TRUE);
+        ldconst(0,sPRI);
+        if (lval!=NULL)
+          lval->ident=iEXPRESSION;
+        return FALSE;
+      } /* if */
       save_decl=declared;
       needtoken('(');
       /* user args: evaluate ONCE, buffer each in a hidden stack cell (as
@@ -4122,7 +4132,7 @@ SC_FUNC int doasyncstart(value *lval)
 SC_FUNC int doasyncresume(value *lval)
 {
   symbol *hsym;
-  cell val,prevcip;
+  cell val;
   char *str;
   int tok,lbl_done,lbl_end;
 
@@ -4167,24 +4177,6 @@ SC_FUNC int doasyncresume(value *lval)
   code_idx+=opcodes(1);
   needtoken(')');
 
-  /* prevCIP = B[0]; buffer it in a hidden stack cell so it survives the call */
-  declared+=1;
-  prevcip=-declared*(cell)sizeof(cell);
-  modstk(-(int)sizeof(cell));
-  if (curfunc->x.stacksize<declared+1)
-    curfunc->x.stacksize=declared+1;
-  if (hsym->vclass==sLOCAL)
-    stgwrite("\tload.s.pri ");  /* PRI = B */
-  else
-    stgwrite("\tload.pri ");
-  outval(hsym->addr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tload.i\n");       /* PRI = B[0] (current continuation) */
-  code_idx+=opcodes(1);
-  stgwrite("\tstor.s.pri ");    /* prevCIP = B[0] */
-  outval(prevcip,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-
   /* generic resume: push B (arg0), then dispatch through B[ASYNC_ENTRY_SLOT]. */
   if (hsym->vclass==sLOCAL)
     stgwrite("\tpush.s ");      /* arg0 = B */
@@ -4207,22 +4199,20 @@ SC_FUNC int doasyncresume(value *lval)
   stgwrite("\tcall.pri\n");     /* indirect call (opcode 50): resume the coroutine */
   code_idx+=opcodes(1);
 
-  /* completed? PRI = (B[0] == prevCIP) ? 1 : 0. If @yield.emit rewrote B[0], the
-   * coroutine suspended again (not complete); if unchanged, it returned. */
-  if (hsym->vclass==sLOCAL)
-    stgwrite("\tload.s.pri ");  /* PRI = B */
-  else
-    stgwrite("\tload.pri ");
-  outval(hsym->addr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tload.i\n");       /* PRI = B[0] (post-resume continuation) */
-  code_idx+=opcodes(1);
-  stgwrite("\tload.s.alt ");    /* ALT = prevCIP */
-  outval(prevcip,TRUE);
+  /* completed? The coroutine leaves generator_iterstop in PRI when it runs off
+   * its end (the epilogue loads that sentinel), and the awaited value (never the
+   * sentinel) in PRI when it suspends again at another "await" (@yield.emit leaves
+   * "val" in PRI). So PRI == generator_iterstop iff the coroutine completed. This
+   * is robust for a body that LOOPS back to the same "await" -- the old heuristic
+   * (B[0] unchanged across the call) mis-read that as completion, because
+   * @yield.emit rewrites B[0] to the SAME resume point each iteration. PRI is live
+   * straight out of call.pri, so the check reads it before any clobber. */
+  stgwrite("\tconst.alt ");     /* ALT = the completion sentinel */
+  outval(generator_iterstop,TRUE);
   code_idx+=opcodes(1)+opargs(1);
   lbl_done=getlabel();
   lbl_end=getlabel();
-  stgwrite("\tjeq ");           /* B[0] == prevCIP -> completed */
+  stgwrite("\tjeq ");           /* PRI == generator_iterstop -> completed */
   outval(lbl_done,TRUE);
   code_idx+=opcodes(1)+opargs(1);
   ldconst(0,sPRI);              /* still parked */
@@ -4233,9 +4223,6 @@ SC_FUNC int doasyncresume(value *lval)
   ldconst(1,sPRI);              /* completed */
   setlabel(lbl_end);
 
-  /* free the hidden prevCIP cell */
-  modstk((int)sizeof(cell));
-  declared-=1;
   if (lval!=NULL)
     lval->ident=iEXPRESSION;
   return FALSE;                 /* completion flag is in PRI; not an lvalue */

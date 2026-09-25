@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+async_loop_compose_reject.pwn(20) : error 269: composed "await asyncFn()" inside a loop is not supported: it unbalances the stack across the loop back-edge (a LEAF await in a loop is fine; lift the composed call out of the loop or drive the repetition from the resumer)
+"""
+}

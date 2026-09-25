@@ -1,7 +1,0 @@
-{
-  'test_type': 'output_check',
-  'errors': """
-async_loop_reject.pwn(15) : error 269: "await" inside a loop is not supported: an "async" coroutine has a single resume point, so the loop back-edge over the suspend would miscompile (lift the loop out, or drive iteration from the resumer)
-async_loop_reject.pwn(15) : warning 215: expression has no effect
-"""
-}

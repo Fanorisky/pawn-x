@@ -32,12 +32,16 @@ cd openmp/Server && ./omp-server        # Ctrl-C after ~1s
 ```
 >>> async host-adapter test: starting coroutines
 [async] countdown: start
->>> started; 7 coroutines parked on REAL timers; control returned
+>>> started; 8 coroutines parked on REAL timers; control returned
+[async] loop: iteration 1 done, sum=1
 [async] countdown: tick @200ms
+[async] loop: iteration 2 done, sum=3
 [async] fault: caught err=404 (recovered)
 [async] auto-raise: outer caught err=902
 [async] array: buf survived the timer, sum=140
 [async] combinator: both timers fired, total=33
+[async] loop: iteration 3 done, sum=6
+[async] loop: all iterations done, sum=6
 [async] countdown: tick @400ms (base still 1000)
 [async] countdown: DONE
 [async] lifetime: active coroutines now = 0 (expect 0)
@@ -48,7 +52,9 @@ cd openmp/Server && ./omp-server        # Ctrl-C after ~1s
   starts the coroutines, they park on real timers, control returns, the tick loop
   resumes each in place.
 - **Correct chronological interleaving** of independent coroutines by timer delay
-  (200 → 250 → 280 → 300 → 350 → 400 ms), all from one tick loop.
+  (120 → 200 → 240 → 250 → 280 → 300 → 350 → 360 → 400 ms), all from one tick loop.
+- **Loop-carried await**: `await Async_Ms(120)` inside a `for` loop re-arms a real
+  timer each iteration (a periodic async task, `sum=6` over 3 iterations).
 - **Scalar locals** (`base=1000`) survive across two real-timer awaits.
 - **Array locals** (`buf[8]`) lifted into the coroutine block survive a real-timer
   await (`sum=140`).
@@ -59,7 +65,7 @@ cd openmp/Server && ./omp-server        # Ctrl-C after ~1s
 - **Fault AUTO-RAISE** (`Async_Fail`) propagates a real-timer-driven inner's fault
   up a composed `await` into its awaiter (`err=902`).
 - **Lifetime**: the arena returns to **0** after all coroutines complete — no leak
-  on the real host.
+  on the real host, even with the re-arming loop.
 - **No runtime errors**, no plugin — only the patched compiler's emitted code plus
   the script-side `async.inc` + `async_omp.inc`.
 

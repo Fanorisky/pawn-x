@@ -80,6 +80,20 @@ async RaiseOuter()
     return 0;
 }
 
+/* --- 6) LEAF await inside a loop, driven by a REAL repeating-by-rearm timer -- */
+async LoopTimer()
+{
+    new sum = 0;
+    for (new i = 1; i <= 3; i++)
+    {
+        await Async_Ms(120);               // re-arm a real timer each iteration
+        sum += i;
+        printf("[async] loop: iteration %d done, sum=%d", i, sum);
+    }
+    printf("[async] loop: all iterations done, sum=%d", sum);   // 1+2+3 = 6
+    return sum;
+}
+
 /* --- lifetime probe: after everything completes, the arena is back to 0 --- */
 forward Baseline();
 public Baseline() { printf("[async] lifetime: active coroutines now = %d (expect 0)", Async_ActiveCount()); }
@@ -92,8 +106,9 @@ public OnGameModeInit()
     Async_Start(MayFail);
     Async_Start(ArrayAcross);
     Async_Start(RaiseOuter);
+    Async_Start(LoopTimer);
     printf(">>> started; %d coroutines parked on REAL timers; control returned", Async_ActiveCount());
-    SetTimer("Baseline", 700, false);      // after all awaits (<=400ms) have resolved
+    SetTimer("Baseline", 900, false);      // after all awaits have resolved
     return 1;
 }
 

@@ -97,11 +97,12 @@
  *     suspends, so it cannot be lifted (pass by value / copy in instead).
  *   * "await" inside a "foreach" -- rejected (error 099); "foreach" over an async
  *     fn -- rejected (error 267).
- *   * "await" inside a while/for/do LOOP body -- rejected with error 269: a
- *     coroutine has a single resume landing, so a loop back-edge over the suspend
- *     would miscompile (it silently ran one iteration then spuriously completed).
- *     Rejected cleanly for now; lift the loop out of the coroutine or drive the
- *     iteration from the resumer. Loop-carried awaits are a documented follow-on.
+ *   * COMPOSED "await asyncFn()" inside a while/for/do loop -- rejected with error
+ *     269: the compose path buffers hidden stack cells around the suspend, which
+ *     unbalances the stack across the loop back-edge. A LEAF await in a loop is
+ *     SUPPORTED (loop state is lifted and survives; the coroutine re-parks each
+ *     iteration). Lift the composed call out of the loop, or drive the repetition
+ *     from the resumer.
  *   * "await" mid-expression / at arbitrary call-stack depth (a non-async helper
  *     the coroutine calls cannot suspend it) -- these need generic frame handling.
  *   * IMPLICIT fault auto-raise: a leaf fault an inner IGNORED does not raise by
