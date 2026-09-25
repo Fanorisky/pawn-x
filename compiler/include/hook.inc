@@ -66,6 +66,65 @@
  *  The automaton must be genuinely used elsewhere (a state-conditioned function
  *  or state variable), as in normal Pawn. `hook:N` priority and `<state>` may be
  *  combined: `hook:100 <running> OnFoo(a)`.
+ *
+ *  ----------------------------------------------------------------------------
+ *  Call-site hooks: hook native / hook function / hook stock
+ *  ----------------------------------------------------------------------------
+ *  The callback `hook` above intercepts a public/callback. A *call-site* hook
+ *  intercepts an ordinary in-script call to a named native, pawn function, or
+ *  stock — every call to that target within the compilation unit is routed
+ *  through the hook chain instead of straight to the target:
+ *
+ *    hook native random(range)     { ... }   // every random(...) call
+ *    hook function ComputeScore(p) { ... }   // every ComputeScore(...) call
+ *    hook stock Helper(a, b)       { ... }   // every Helper(...) call
+ *
+ *  Use the modifier that matches the target's kind: `hook native` for a real
+ *  native, `hook function` / `hook stock` for a pawn function or stock. This is
+ *  pure compile-time call redirection — the call site is emitted as a call to a
+ *  synthesised wrapper; there is no runtime bytecode scan or code-segment
+ *  rewrite. It corrects the old "pawn-x cannot hook a real native/function"
+ *  gap versus YSI 5.10 (see docs/audits/2026-09-24-hooks-vs-ysi510.md), and
+ *  does it natively rather than by rewriting the code segment.
+ *
+ *  continue(...) — invoke the rest of the chain / the original:
+ *
+ *    hook function ComputeScore(playerid)
+ *    {
+ *        new r = continue(playerid);   // run the next hook, else the original
+ *        return r + 1;
+ *    }
+ *
+ *  Inside a call-hook body, `continue(args)` calls the next hook in the chain;
+ *  past the last hook it calls the ORIGINAL (the real native via SYSREQ, or the
+ *  original pawn/stock body). Its return value is whatever the remainder of the
+ *  chain returns. You may:
+ *   - call it once for normal pass-through (optionally reading/adjusting the
+ *     result, as above);
+ *   - modify the arguments before forwarding — `continue(x * 2)` forwards the
+ *     changed value to the original;
+ *   - call it zero times to REPLACE the target entirely (return your own value,
+ *     the original never runs);
+ *   - call it more than once to invoke the original several times.
+ *  `continue(...)` is only valid inside a call-hook body; the bare `continue;`
+ *  loop statement is unaffected.
+ *
+ *  Chains + priority work exactly like callback hooks: multiple hooks on one
+ *  target run in `hook:N` priority order (higher first, equal = source order),
+ *  each `continue`-ing down to the next until the original at the tail.
+ *
+ *  Forward references are honoured: a call written textually BEFORE the `hook`
+ *  declaration is still redirected through the chain.
+ *
+ *  v1 limits (all enforced at compile time — the misuse is a hard error):
+ *   - Fixed-arity targets only. A variadic (`...`) target is rejected; you
+ *     cannot call-site-hook `printf` and friends.
+ *   - The hook body's argument list must match the target's signature exactly;
+ *     an arity mismatch is rejected.
+ *   - Using the wrong modifier for the target's kind is rejected, as is an
+ *     unknown target (no such native or function).
+ *   - Single compilation unit (in-`.amx`), like the callback `hook` — cross-.amx
+ *     call-site hooking is out of scope.
  * </library>
  */
 

@@ -28,11 +28,12 @@ Two pillars, split by *when the information exists*:
 | `iterfunc` generators | y_iterate custom iterators | exp 003 |
 | `yield` coroutine generators | `#define Iterator@N iteryield` + `yield` | tests `yield_*` |
 | `hook` keyword (+ `hook:N` priority) | `y_hooks` (compile-time) | exp 004/005 |
+| `hook native`/`function`/`stock` + `continue` (call-site) | `y_hooks` real fn/native hooking | tests `chook_*` |
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
 
 Most rows were run on a real `omp-server` and diffed against YSI (the `yield`
-row is proven by the `yield_*` compiler tests, not a live server run); see
-`experiments/*/RESULT.md`.
+and `hook native`/`function`/`stock` rows are proven by the `yield_*` / `chook_*`
+compiler tests, not a live server run); see `experiments/*/RESULT.md`.
 
 ## Quickstart
 
@@ -107,6 +108,14 @@ foreach (new id : Vehicle) { }               // (<actors> is the same pattern)
 hook OnFoo(a)     { ...; return HOOK_CONTINUE; }   // 1 run next / 0 = HOOK_CONTINUE_0
 hook:100 OnFoo(a) { ...; return HOOK_STOP;     }   // higher priority first; -1 cancels, returns 0
 hook default OnPlayerCommandText = 0;              // fall-through default (like YSI HOOK_RET)
+```
+
+**Call-site hooks (`hook native`/`function`/`stock` + `continue`)** — intercept every in-script call to a real native or pawn function/stock (v1: fixed-arity, single-`.amx`):
+```pawn
+hook function ComputeScore(p) { return continue(p) + 1; }  // continue = next hook, else the original
+hook native random(range)     { return continue(range) % 8; }
+// continue: 0×=replace, 1×=pass-through, N×=call original N times; args forwardable.
+// Forward references (a call before the hook) are redirected too.
 ```
 
 **Runtime hooks (`dynhook`, needs the companion plugin)**:

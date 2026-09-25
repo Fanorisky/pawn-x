@@ -68,6 +68,10 @@ iterated element is safe in `foreach` (it hangs under YSI on this stack).
 | `return Y_HOOKS_BREAK_RETURN_1` | `return HOOK_STOP_1` |
 | `PRE_HOOK` / `CHAIN_ORDER` priority | `hook:N Name(args) { }` (higher N first) |
 | `HOOK_RET:OnPlayerCommandText(){return 0;}` | `hook default OnPlayerCommandText = 0;` |
+| `hook function Name(args) { }` (call-site) | `hook function Name(args) { }` (native call redirection, no code-segment rewrite) |
+| `hook native Name(args) { }` (call-site) | `hook native Name(args) { }` |
+| `hook stock Name(args) { }` (call-site) | `hook stock Name(args) { }` |
+| `continue(args)` (call the original / next) | `continue(args)` (0×=replace, 1×=pass-through, N×=call original N times; args forwardable) |
 | *(no runtime equivalent)* | `dynhook_add/remove/replace` + `dynhook_intercept` |
 
 ## Gotchas
@@ -76,6 +80,11 @@ iterated element is safe in `foreach` (it hangs under YSI on this stack).
   is a hard compile error (guarded in the includes).
 - **`dynhook` needs the companion plugin** loaded on the server; the compiler
   `hook` keyword and everything else need no plugin.
+- **Call-site hooks (`hook native/function/stock`) are v1 fixed-arity,
+  single-`.amx`.** Variadic targets (e.g. `printf`) are rejected, the body's
+  arg list must match the target exactly, and the modifier must match the
+  target's kind — all are compile errors. Cross-`.amx` call-site hooking is out
+  of scope (like the callback `hook`).
 - **Other YSI libraries** (`y_commands`, `y_ini`, `y_inline`, `y_timers`,
   `y_groups`, …) are out of scope — keep using them or an open.mp alternative;
   they don't clash with pawn-x.

@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+fn 10
+
+nat 109
+
+chook_umbrella.amx returns 0
+"""
+}
