@@ -76,3 +76,23 @@ stock Async_Resume(token, value)
     if (__async_resume(B, value))       /* nonzero => coroutine ran to completion */
         Async_Complete(token);
 }
+
+/* --- self-parking helper (task 2: return-to-awaiter composition) ------------
+ * A coroutine that "await"s a value completed by an EXTERNAL event must hand its
+ * own state block to the scheduler, so the event source can resume it by token.
+ * __pending() does that from inside an "async" body: it registers the RUNNING
+ * coroutine -- named by the "__async_self()" intrinsic -- remembers the token in
+ * g_asyncPending, and evaluates to that token. It MUST be a macro, not a stock:
+ * "__async_self()" has to be emitted INLINE in the coroutine's own frame (a
+ * called stock would report its own frame, not the coroutine's state block).
+ * NOTE: not "static" -- it is referenced from the including file via __pending(),
+ * and a "static" global is file-local; "stock" alone stays globally visible yet
+ * is discarded (no unused warning) in scripts that never self-park. */
+stock g_asyncPending = 0;               /* token of the most recently self-parked coroutine */
+
+#define __pending() (g_asyncPending = Async_Register(__async_self()))
+
+/* Async_ResumeInner(value): resume the most recently self-parked coroutine with
+ * "value". A convenience for single-pending demos/tests; a real event source
+ * keeps its own token and calls Async_Resume(token, value) directly. */
+#define Async_ResumeInner(%1) Async_Resume(g_asyncPending, %1)

@@ -496,6 +496,7 @@ enum {
   /* reserved words (statements) */
   t__ADDRESSOF,
   t__ASYNCRESUME,
+  t__ASYNCSELF,
   t__ASYNCSTART,
   tASSERT,
   tASYNC,
@@ -878,6 +879,7 @@ SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult);
 SC_FUNC int doawait(value *lval);       /* "await <expr>" (exp 012 async spike) */
 SC_FUNC int doasyncstart(value *lval);  /* "__async_start(Func,args...)" -> B (exp 012) */
 SC_FUNC int doasyncresume(value *lval); /* "__async_resume(B,value)" -> completed? (exp 012) */
+SC_FUNC int doasyncself(value *lval);   /* "__async_self()" -> current coroutine's B (exp 012) */
 SC_FUNC int parse_foreach_operand(value *lval,cell *heapsize);
 SC_FUNC int sc_getstateid(constvalue **automaton,constvalue **state);
 SC_FUNC cell array_totalsize(symbol *sym);

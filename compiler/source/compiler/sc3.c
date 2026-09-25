@@ -2232,6 +2232,13 @@ static int primary(value *lval)
      * completed on this resume, else 0. */
     return doasyncresume(lval);
   } /* if */
+  if (tok==t__ASYNCSELF) {
+    /* "__async_self()" (exp 012): inside an "async" body, yields the current
+     * coroutine's own state block B in PRI, so a script can register itself with
+     * the scheduler (Async_Register(__async_self())) and be resumed by token
+     * when an external event completes the value it is awaiting. */
+    return doasyncself(lval);
+  } /* if */
   if (tok==tCONTINUE) {
     /* "continue(...)" inside a call-site hook body (experiment 010) is the
      * chain-advance intrinsic: it lowers to a call to the target's chain

@@ -117,7 +117,7 @@ SC_VDEFINE char *sc_tokens[] = {
   "*=", "/=", "%=", "+=", "-=", "<<=", ">>>=", ">>=", "&=", "^=", "|=",
   "||", "&&", "==", "!=", "<=", ">=", "<<", ">>>", ">>", "++", "--",
   "...", "..",
-  "__addressof", "__async_resume", "__async_start", "assert", "async", "await", "*begin", "break", "case", "char", "const", "continue",
+  "__addressof", "__async_resume", "__async_self", "__async_start", "assert", "async", "await", "*begin", "break", "case", "char", "const", "continue",
   "default", "defined", "foreach", "do", "else", "__emit", "*end", "enum", "exit", "for",
   "forward", "goto", "hook", "if", "iterfunc", "__nameof", "native", "new", "operator", "__pragma",
   "public", "return", "sizeof", "sleep", "state", "static", "__static_assert",

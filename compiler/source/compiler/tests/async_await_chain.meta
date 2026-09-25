@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(chain parked)
+
+chain final=133
+
+async_await_chain.amx returns 0
+"""
+}
