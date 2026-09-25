@@ -2419,7 +2419,7 @@ static int fwdnamedargs(void)
  *  Frame layout (see sc1.c): frm+0 previous frame, frm+4 return address,
  *  frm+8 byte count, frm+12 first argument.
  */
-static void fwdpushloop(cell srcoff)
+void fwdpushloop(cell srcoff)
 {
   int loop,done;
 
@@ -2473,7 +2473,7 @@ static void fwdpushloop(cell srcoff)
  *  because the current function may have received fewer arguments than the
  *  skip count of "___(skip)" skips.
  */
-static void fwdbytecount(int staticargs,int skip)
+void fwdbytecount(int staticargs,int skip)
 {
   int lbl_neg,lbl_pos;
 
@@ -2515,7 +2515,7 @@ static void fwdbytecount(int staticargs,int skip)
  *  cell is released, because the interpreter forbids access to memory at
  *  or above the heap top.
  */
-static void fwdpopnative(int skip)
+void fwdpopnative(int skip)
 {
   int lbl_neg,lbl_pos;
 

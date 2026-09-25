@@ -866,6 +866,9 @@ SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult);
 SC_FUNC int parse_foreach_operand(value *lval,cell *heapsize);
 SC_FUNC int sc_getstateid(constvalue **automaton,constvalue **state);
 SC_FUNC cell array_totalsize(symbol *sym);
+SC_FUNC void fwdpushloop(cell srcoff);
+SC_FUNC void fwdbytecount(int staticargs,int skip);
+SC_FUNC void fwdpopnative(int skip);
 
 /* function prototypes in SC4.C */
 SC_FUNC void writeleader(symbol *root);
