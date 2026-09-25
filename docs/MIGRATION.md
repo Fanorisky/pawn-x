@@ -129,10 +129,18 @@ plugin** — the compiler emits the state machine and copies only *the coroutine
 own lifted locals* into a fixed data-segment block, so there is nothing to
 save/restore of the surrounding stack/heap. That is leaner and plugin-free; the
 trade-off is the documented compile-time limits above (no by-`&`ref/array PARAM
-across an `await`, and mid-expression temporaries are not preserved). pawn-x does
-**not** yet match PawnPlus's breadth: combinators (`task_all`/`task_any`),
-timer/callback awaitables, and fault/exception propagation across `await`, plus
-JIT compatibility and a real host adapter, all remain roadmap/non-goal.
+across an `await`, and mid-expression temporaries are not preserved).
+
+**Combinators are now native too** — `Async_All(n)` / `Async_Any(n)` fan several
+outstanding operations into one awaiting coroutine (PawnPlus `task_all` /
+`task_any` parity): a coroutine creates a gate, kicks off its operations, and
+`await Async_Wait(g)` parks until all (sum of results) or the first (its result)
+complete. Like everything else this is pure library code over the
+`Async_GateFeed(g, value)` seam — no plugin, no compiler change, no new opcode.
+pawn-x still does **not** match PawnPlus's remaining breadth: timer/callback
+awaitables, fault/exception propagation across `await`, suspending at arbitrary
+call-stack depth (nested non-async frames) or mid-expression, plus JIT
+compatibility and a real host adapter, all remain roadmap/non-goal.
 
 
 

@@ -114,7 +114,7 @@ main()
     Async_Resume(t, AddScore(7, 100));        // a pump/host completion resumes it
 }
 ```
-`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests, a thin timer/dialog/DB adapter on a live host (out of MVP scope). Still compile-rejected across an `await`: array/`&`reference *params* (error 268), and `await` inside a `foreach` (error 099). Combinators, fault propagation, and a real host adapter remain roadmap. See `docs/MIGRATION.md` for the `y_async` mapping and the PawnPlus comparison.
+`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests, a thin timer/dialog/DB adapter on a live host (out of MVP scope). Combinators are native: `Async_All(n)`/`Async_Any(n)` + `await Async_Wait(g)` fan several operations into one awaiter (`task_all`/`task_any` parity), driven by the `Async_GateFeed` seam. Still compile-rejected across an `await`: array/`&`reference *params* (error 268), and `await` inside a `foreach` (error 099). Fault propagation and a real host adapter remain roadmap. See `docs/MIGRATION.md` for the `y_async` mapping and the PawnPlus comparison.
 
 **Entity iterators** — ready-made connected-players / tracked-vehicle sets:
 ```pawn

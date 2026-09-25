@@ -416,3 +416,132 @@ stock g_asyncPending = 0;               /* token of the most recently self-parke
  * "value". A convenience for single-pending demos/tests; a real event source
  * keeps its own token and calls Async_Resume(token, value) directly. */
 #define Async_ResumeInner(%1) Async_Resume(g_asyncPending, %1)
+
+/* ======================= COMBINATORS (task_all / task_any parity) ==========
+ *
+ * A GATE fans several outstanding async operations into ONE awaiting coroutine,
+ * matching PawnPlus's task_all / task_any without a plugin -- it is pure library
+ * code over the same self-park / Async_Resume seam, no compiler change, no new
+ * opcode. A coroutine creates a gate, kicks off N operations, and awaits it:
+ *
+ *     async FetchAll()
+ *     {
+ *         new g = Async_All(3);            // resume once ALL 3 complete
+ *         KickOff(op1, g); KickOff(op2, g); KickOff(op3, g);
+ *         new total = await Async_Wait(g); // park; total = sum of the 3 results
+ *         return total;
+ *     }
+ *
+ * Each operation reports its completion with Async_GateFeed(g, value) -- that is
+ * the seam a real host adapter (timer/DB/HTTP) drives, exactly like Async_Resume.
+ *   * Async_All(need)  -> gate resumes the awaiter once "need" feeds arrive;
+ *                         the delivered value is the SUM of all fed values.
+ *   * Async_Any(need)  -> gate resumes on the FIRST feed; value = that feed's;
+ *                         later feeds are ignored.
+ * CONTRACT: "await Async_Wait(g)" must run (arming the gate with the running
+ * coroutine's token) BEFORE any Async_GateFeed(g, ...) -- the normal order, since
+ * the coroutine kicks off its operations and only then awaits. A gate slot frees
+ * itself the moment its policy is met (before it resumes the awaiter), so gate
+ * storage returns to baseline just like the arena. Async_LastGate() returns the
+ * id of the most recently created gate (a pump/test handle, mirroring the
+ * g_asyncPending convenience). */
+
+#if !defined ASYNC_GATES
+    #define ASYNC_GATES 8               /* concurrent gates; override before include */
+#endif
+
+#define ASYNC_GATE_ALL 0
+#define ASYNC_GATE_ANY 1
+
+static stock g_gatePolicy[ASYNC_GATES];  /* ASYNC_GATE_ALL | ASYNC_GATE_ANY */
+static stock g_gateNeed[ASYNC_GATES];    /* feeds required before ALL fires */
+static stock g_gateDone[ASYNC_GATES];    /* feeds received so far */
+static stock g_gateAcc[ASYNC_GATES];     /* aggregate: sum (ALL) / first value (ANY) */
+static stock g_gateAwaiter[ASYNC_GATES]; /* token of the parked coroutine (0 = not armed) */
+static stock g_gateAlive[ASYNC_GATES];   /* slot in use */
+static stock g_gateFired[ASYNC_GATES];   /* policy already met+delivered (ignore late feeds) */
+stock g_gateLast = 0;                     /* id of the most recently created gate */
+
+/* Async_Gate(policy, need): claim a free gate slot and return its 1-based id, or
+ * 0 if the gate table is full. Prefer the Async_All / Async_Any wrappers. */
+stock Async_Gate(policy, need)
+{
+    for (new i = 0; i < ASYNC_GATES; i++)
+    {
+        if (!g_gateAlive[i])
+        {
+            g_gatePolicy[i]  = policy;
+            g_gateNeed[i]    = need;
+            g_gateDone[i]    = 0;
+            g_gateAcc[i]     = 0;
+            g_gateAwaiter[i] = 0;
+            g_gateAlive[i]   = 1;
+            g_gateFired[i]   = 0;
+            g_gateLast       = i + 1;
+            return i + 1;               /* 1-based gate id */
+        }
+    }
+    return 0;                           /* gate table full */
+}
+
+#define Async_All(%1) Async_Gate(ASYNC_GATE_ALL, (%1))
+#define Async_Any(%1) Async_Gate(ASYNC_GATE_ANY, (%1))
+#define Async_LastGate() (g_gateLast)
+
+/* __async_gate_arm(gate, token): record the awaiting coroutine's token on the
+ * gate and return that token so "await" suspends on it. Internal -- the operand
+ * of Async_Wait. */
+stock __async_gate_arm(gate, token)
+{
+    new idx = gate - 1;
+    if (idx >= 0 && idx < ASYNC_GATES && g_gateAlive[idx])
+        g_gateAwaiter[idx] = token;
+    return token;
+}
+
+/* Async_Wait(gate): leaf awaitable. Used as "new v = await Async_Wait(g);", it
+ * registers the RUNNING coroutine (via __async_self, like Async_Pending) and arms
+ * the gate to resume it when the policy is met. MUST be a macro so __async_self()
+ * is emitted inline in the coroutine's own frame. */
+#define Async_Wait(%1) __async_gate_arm((%1), Async_Register(__async_self()))
+
+/* Async_GateFeed(gate, value): report one operation's completion. Accumulates per
+ * policy; when the policy is met it frees the gate slot and resumes the parked
+ * coroutine ONCE with the aggregate. Feeds after firing, or to an unknown/free
+ * gate, are safe no-ops. */
+stock Async_GateFeed(gate, value)
+{
+    new idx = gate - 1;
+    if (idx < 0 || idx >= ASYNC_GATES)
+        return;                         /* unknown gate */
+    if (!g_gateAlive[idx] || g_gateFired[idx])
+        return;                         /* freed, or policy already delivered */
+
+    g_gateDone[idx]++;
+    if (g_gatePolicy[idx] == ASYNC_GATE_ALL)
+        g_gateAcc[idx] += value;        /* ALL: aggregate = sum of every feed */
+    else if (g_gateDone[idx] == 1)
+        g_gateAcc[idx] = value;         /* ANY: aggregate = the first feed */
+
+    new met = (g_gatePolicy[idx] == ASYNC_GATE_ANY) || (g_gateDone[idx] >= g_gateNeed[idx]);
+    if (met)
+    {
+        new tok = g_gateAwaiter[idx];
+        new acc = g_gateAcc[idx];
+        g_gateFired[idx] = 1;
+        g_gateAlive[idx] = 0;           /* release the gate slot BEFORE resuming */
+        if (tok)
+            Async_Resume(tok, acc);     /* wake the awaiter with the aggregate */
+    }
+}
+
+/* Async_GateActive(): number of gate slots currently in use. Baseline 0; returns
+ * to 0 after every gate has fired -- the gate lifetime contract. */
+stock Async_GateActive()
+{
+    new count = 0;
+    for (new i = 0; i < ASYNC_GATES; i++)
+        if (g_gateAlive[i])
+            count++;
+    return count;
+}
