@@ -94,6 +94,11 @@
  *     suspends, so it cannot be lifted (pass by value / copy in instead).
  *   * "await" inside a "foreach" -- rejected (error 099); "foreach" over an async
  *     fn -- rejected (error 267).
+ *   * "await" inside a while/for/do LOOP body -- rejected with error 269: a
+ *     coroutine has a single resume landing, so a loop back-edge over the suspend
+ *     would miscompile (it silently ran one iteration then spuriously completed).
+ *     Rejected cleanly for now; lift the loop out of the coroutine or drive the
+ *     iteration from the resumer. Loop-carried awaits are a documented follow-on.
  *   * "await" mid-expression / at arbitrary call-stack depth (a non-async helper
  *     the coroutine calls cannot suspend it) -- these need generic frame handling.
  *   * FAULT AUTO-RAISE across a composed "await asyncFn()" chain. SPIKE FINDING: a

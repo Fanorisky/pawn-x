@@ -3723,6 +3723,16 @@ SC_FUNC int doawait(value *lval)
     ldconst(0,sPRI);
     return FALSE;
   } /* if */
+  if (wqptr!=wq) {              /* lexically inside a while/for/do loop body */
+    /* An "async" coroutine has a SINGLE resume landing (its saved CIP); a loop
+     * back-edge would jump over that suspend on the second iteration, and the
+     * completion detection misfires -- the coroutine silently runs one iteration
+     * then spuriously completes (verified). Reject cleanly rather than miscompile;
+     * making loop-carried awaits work is a documented follow-on. */
+    error(269);
+    ldconst(0,sPRI);
+    return FALSE;
+  } /* if */
 
   /* Stage the whole await (both the ergonomic and general operand paths) so the
    * peephole optimizer's stgdel() works: without an active stage buffer, an
