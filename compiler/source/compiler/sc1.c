@@ -2267,11 +2267,23 @@ static void dohook(void)
    * symbol -- treat it as the modifier only when a target name follows (otherwise
    * it is an ordinary callback that happens to be named "function"). */
   if (tok==tNATIVE || tok==tSTOCK) {
+    if (hasstate)
+      error(262);               /* state-scoped call hooks are not supported */
     callhook_parse((tok==tNATIVE) ? CHOOK_NATIVE : CHOOK_STOCK,prio);
     return;
   } /* if */
-  if (tok==tSYMBOL && strcmp(str,"function")==0 && matchtoken(tSYMBOL)) {
+  /* Capture the symbol name NOW, before the lookahead below: matchtoken()'s
+   * internal lex() overwrites the buffer "str" points at (_lexstr), so a
+   * callback literally named "function" would otherwise be copied as an empty
+   * name on the non-modifier fall-through. */
+  if (tok==tSYMBOL) {
+    assert(strlen(str)<=sNAMEMAX);
+    strcpy(callback,str);
+  } /* if */
+  if (tok==tSYMBOL && strcmp(callback,"function")==0 && matchtoken(tSYMBOL)) {
     lexpush();                  /* put the target name back for callhook_parse() */
+    if (hasstate)
+      error(262);               /* state-scoped call hooks are not supported */
     callhook_parse(CHOOK_FUNCTION,prio);
     return;
   } /* if */
@@ -2280,8 +2292,7 @@ static void dohook(void)
     lexclr(TRUE);
     return;
   } /* if */
-  assert(strlen(str)<=sNAMEMAX);
-  strcpy(callback,str);
+  /* callback name already captured above */
 
   grp=hook_find(callback);
   seq= (grp!=NULL) ? grp->count : 0;
@@ -7351,8 +7362,8 @@ static void statement(int *lastindent,int allow_decl)
     lastst=tBREAK;
     break;
   case tCONTINUE:
-    docont();
-    lastst=tCONTINUE;
+    docont();           /* sets lastst itself (tCONTINUE for loop-continue,
+                         * tEXPR for the "continue(...)" call-hook intrinsic) */
     break;
   case tEXIT:
     doexit();
@@ -10460,18 +10471,44 @@ static void docont(void)
 
   /* Distinguish the call-hook chain-advance intrinsic "continue(...)" (which
    * takes a parenthesised argument list) from the loop statement "continue;".
-   * Outside a call-hook body the call form is invalid: catch it here with a
-   * dedicated diagnostic instead of the misleading "out of context" error.
-   * The check is short-circuited on pc_callhook_dispatcher first, so a plain
-   * "continue;" (no '(') is never disturbed. */
-  if (pc_callhook_dispatcher==NULL && matchtoken('(')) {
+   * The parenthesis peek is the sole discriminator, so a plain "continue;"
+   * (no '(') is never disturbed, inside a hook body or not. */
+  if (pc_callhook_dispatcher!=NULL) {
+    /* Inside a call-hook body, "continue(...)" written as a bare STATEMENT is
+     * the chain-advance intrinsic (e.g. calling the original for side effects).
+     * lptr sits just past the "continue" keyword statement() lexed; peek the
+     * raw line for a following '(' -- a same-line scan that never triggers a
+     * new line read, so the "continue" text stays in the current line buffer
+     * and can be safely re-lexed. When present, rewind to the keyword and route
+     * the statement through the expression path so primary()'s continue(...)
+     * lowering runs -- identical to expression position. A plain loop
+     * "continue;" (no '(') falls through to the loop handling below untouched. */
+    const unsigned char *peek=lptr;
+    while (*peek==' ' || *peek=='\t')
+      peek++;
+    if (*peek=='(') {
+      lptr-=strlen(sc_tokens[tCONTINUE-tFIRST]);  /* rewind onto the "continue" keyword */
+      lexclr(FALSE);            /* force a fresh lex from the rewound position */
+      doexpr(TRUE,TRUE,TRUE,TRUE,NULL,NULL,FALSE,NULL);
+      needtoken(tTERM);
+      /* the call form is an ordinary expression statement: control falls through
+       * to the next statement, so mark it tEXPR (NOT tCONTINUE) -- otherwise the
+       * statement following it would be wrongly reported as unreachable code. */
+      lastst=tEXPR;
+      return;
+    } /* if */
+  } else if (matchtoken('(')) {
+    /* Outside a call-hook body the call form is invalid: catch it here with a
+     * dedicated diagnostic instead of the misleading "out of context" error. */
     error(257);         /* "continue(...)" only valid inside a hook body */
     lexclr(TRUE);       /* skip the argument list, resync at the terminator */
+    lastst=tEXPR;       /* not a flow-terminating loop-continue */
     return;
   } /* if */
 
   ptr=readwhile();      /* readwhile() gives an error if not in loop */
   needtoken(tTERM);
+  lastst=tCONTINUE;     /* plain loop-continue: terminates the current flow */
   if (ptr==NULL)
     return;
   destructsymbols(&loctab,ptr[wqLVL]);

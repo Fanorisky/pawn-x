@@ -69,10 +69,18 @@ iterated element is safe in `foreach` (it hangs under YSI on this stack).
 | `PRE_HOOK` / `CHAIN_ORDER` priority | `hook:N Name(args) { }` (higher N first) |
 | `HOOK_RET:OnPlayerCommandText(){return 0;}` | `hook default OnPlayerCommandText = 0;` |
 | `hook function Name(args) { }` (call-site) | `hook function Name(args) { }` (native call redirection, no code-segment rewrite) |
-| `hook native Name(args) { }` (call-site) | `hook native Name(args) { }` |
-| `hook stock Name(args) { }` (call-site) | `hook stock Name(args) { }` |
+| `hook native Name(args) { }` — YSI alias of `hook function` (target kind not enforced) | `hook native Name(args) { }` |
+| `hook stock Name(args) { }` — YSI alias of `hook function` (target kind not enforced) | `hook stock Name(args) { }` |
 | `continue(args)` (call the original / next) | `continue(args)` (0×=replace, 1×=pass-through, N×=call original N times; args forwardable) |
 | *(no runtime equivalent)* | `dynhook_add/remove/replace` + `dynhook_intercept` |
+
+In YSI 5.10 `hook native` and `hook stock` are **documented synonyms** of
+`hook function` (see y_hooks' "Synonyms" — they share one FUNC_PARSER-based
+`HOOK_*__` expansion, so the modifier does not select or check the target's
+kind). pawn-x instead makes the modifier meaningful: `hook native` requires a
+real native (kind-checked, reached by a direct SYSREQ), while
+`hook function`/`hook stock` require a pawn function/stock. A wrong modifier is
+a compile error (see the call-site-hook gotcha below).
 
 ## Gotchas
 

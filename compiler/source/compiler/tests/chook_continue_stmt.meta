@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+orig 5
+
+loop 1
+
+orig 6
+
+r 999
+
+chook_continue_stmt.amx returns 0
+"""
+}

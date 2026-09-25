@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+chook_err_state.pwn(11) : error 262: state-scoped call hooks are not supported: remove the "<state>" prefix (state scoping applies to callback hooks only, not "hook native/function/stock")
+"""
+}
