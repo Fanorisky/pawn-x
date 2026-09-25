@@ -3683,6 +3683,30 @@ static void async_emit_free_self(void)
   ffcall(freesym,NULL,1);
 }
 
+/*  async_emit_clearfault - reset the include's fault channel (g_asyncFailed /
+ *  g_asyncErr) on the return-to-awaiter resume path, so a composed
+ *  "await asyncFn()" whose inner returns NORMALLY does not leave a stale fault
+ *  for its awaiter to observe (the inner may have handled a leaf fault and
+ *  returned a good value). Mirrors async_emit_free_self's one-argument call
+ *  emission (the arg is ignored by __async_clearfault). No-op when <async> is not
+ *  included / the fault channel is unused. Clobbers PRI/ALT, so it must be emitted
+ *  where PRI is dead. */
+static void async_emit_clearfault(void)
+{
+  symbol *clrsym;
+  if (curfunc==NULL || (curfunc->usage & uASYNC)==0)
+    return;
+  clrsym=findglb("__async_clearfault",sGLOBAL);
+  if (clrsym==NULL || clrsym->ident!=iFUNCTN)
+    return;                         /* <async> not included: no fault channel to clear */
+  markusage(clrsym,uREAD);
+  stgwrite("\tpush.s ");            /* arg0 = our B (ignored by the callee) */
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  pushval((cell)sizeof(cell));      /* 1 argument */
+  ffcall(clrsym,NULL,1);
+}
+
 /*  doawait - parse "await <expr>" and emit the suspend (experiment 012 spike).
  *
  *  "await" is the async coroutine's suspend point, the analogue of "yield" but
@@ -11431,6 +11455,12 @@ static void doreturn(void)
     code_idx+=opcodes(1)+opargs(1);
     stgwrite("\tstor.i\n");               /* awaiterB[inbox] = return value */
     code_idx+=opcodes(1);
+    /* Reset the fault channel before resuming the awaiter: this coroutine
+     * returned NORMALLY, so its awaiter's composed "await" must see no fault --
+     * otherwise a stale 1 from a leaf fault this inner already handled would
+     * wrongly trip the awaiter's Async_Failed(). PRI is dead here (reloaded from
+     * awaiter_cell below), so the call's clobber is safe. */
+    async_emit_clearfault();
     /* resume awaiterB by its stored entry address: push arg0 = awaiterB, then
      * dispatch through awaiterB[ASYNC_ENTRY_SLOT] via "call.pri" (no new opcode) */
     stgwrite("\tpush.s ");                /* arg0 = awaiterB */

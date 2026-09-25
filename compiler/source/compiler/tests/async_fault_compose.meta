@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(outer awaiting inner)
+
+inner handled err=42
+
+outer ok r=500
+
+active=0
+
+async_fault_compose.amx returns 0
+"""
+}

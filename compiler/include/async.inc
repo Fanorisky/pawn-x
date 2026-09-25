@@ -111,6 +111,10 @@
  *     landing. Tractable but compiler-touching; deferred to its own task so the
  *     current green suite is not risked. Until then, an awaiter of a fallible inner
  *     re-checks Async_Failed() after its own await and returns/handles explicitly.
+ *     (The INVERSE hazard -- a composed await FALSELY reporting a fault the inner
+ *     already handled -- IS fixed: the compiler resets the channel on the return-
+ *     to-awaiter path via __async_clearfault, so a normally-returning inner always
+ *     hands its awaiter a clean Async_Failed()==0.)
  *   * Single compilation unit (one .amx).
  *
  * ============================ NON-GOALS (MVP) ============================
@@ -463,6 +467,23 @@ stock Async_ResumeError(token, err)
  * immediately following the await. */
 #define Async_Failed() (g_asyncFailed)
 #define Async_Error()  (g_asyncErr)
+
+/* __async_clearfault(_): reset the fault channel. The compiler emits a call to
+ * this on the return-to-awaiter resume path (doreturn), so a composed
+ * "await asyncFn()" whose inner returns NORMALLY hands its awaiter a CLEAN
+ * channel. Without it, an inner that observed a leaf fault, RECOVERED, and
+ * returned a good value would leave g_asyncFailed reading a stale 1 that the
+ * awaiter's own "if (Async_Failed())" would wrongly trip on -- a false-positive
+ * fault (distinct from, and the inverse of, the documented no-auto-raise limit).
+ * The argument is ignored; it exists only so the compiler can emit the call
+ * through the same one-argument path it uses for Async_FreeByAddr. */
+stock __async_clearfault(_ignored)
+{
+    g_asyncFailed = 0;
+    g_asyncErr    = 0;
+    #pragma unused _ignored
+    return 0;
+}
 
 /* --- Async_Pending(): leaf awaitable (public) -------------------------------
  * A coroutine that "await"s a value completed by an EXTERNAL event must hand its
