@@ -61,14 +61,22 @@ stock g_asyncAllocSlot = -1;
 /* Async_Alloc(): claim a free arena slot and return the STABLE data address of
  * its block (which the compiler uses as B). Records the chosen slot in
  * g_asyncAllocSlot so Async_Start can recover the token. Returns -1 (and sets
- * g_asyncAllocSlot = -1) when the arena is exhausted -- doasyncstart guards on
- * this and starts no coroutine in that case. NOTE the sentinel is -1, not 0: a
- * block can legitimately sit at data address 0 (g_arena may be the first global),
- * so 0 is a VALID block address and must never mean "invalid". The block stride
- * is computed from the arena itself (__addressof differences), so it is cell-size
- * portable. */
-stock Async_Alloc()
+ * g_asyncAllocSlot = -1) when the arena is exhausted OR when the requested block
+ * does not fit a slot -- the compiler guards on this and starts no coroutine in
+ * that case. NOTE the sentinel is -1, not 0: a block can legitimately sit at data
+ * address 0 (g_arena may be the first global), so 0 is a VALID block address and
+ * must never mean "invalid". "blkcells" is the compiler-known size of this
+ * coroutine's block (gen_reserved + lifted params/locals); it is bounds-checked
+ * against ASYNC_BLOCK_CELLS so an over-large coroutine yields the clean -1
+ * sentinel instead of corrupting the next slot. The block stride is computed from
+ * the arena itself (__addressof differences), so it is cell-size portable. */
+stock Async_Alloc(blkcells)
 {
+    if (blkcells > ASYNC_BLOCK_CELLS)
+    {
+        g_asyncAllocSlot = -1;
+        return -1;                      /* block too large for a slot: clean sentinel */
+    }
     new base   = __addressof(g_arena[0]);
     new stride = __addressof(g_arena[ASYNC_BLOCK_CELLS]) - base;  /* one block, in bytes */
     for (new i = 0; i < ASYNC_MAX; i++)
@@ -139,6 +147,27 @@ stock Async_Free(token)
 /* Async_Complete(token): a coroutine finished -> free its slot. Kept as a name
  * for the completion path; identical to Async_Free (free-on-complete). */
 #define Async_Complete(%1) Async_Free(%1)
+
+/* Async_FreeByAddr(B): free the arena slot whose block base is the address B.
+ * The completing coroutine calls this on its OWN B (via the compiler-emitted
+ * completion path) so a coroutine that finishes through the nested return-to-
+ * awaiter call.pri chain -- and is therefore never observed "done" by a top-level
+ * Async_Resume -- still reclaims its slot. An address that is not an arena block
+ * base (out of range, or not slot-aligned) is a safe no-op, as is a double-free. */
+stock Async_FreeByAddr(B)
+{
+    new base   = __addressof(g_arena[0]);
+    new stride = __addressof(g_arena[ASYNC_BLOCK_CELLS]) - base;
+    new off    = B - base;
+    if (off < 0)
+        return;                         /* below the arena: not ours */
+    new idx = off / stride;
+    if (idx >= ASYNC_MAX)
+        return;                         /* above the arena: not ours */
+    if (off - idx * stride != 0)
+        return;                         /* not a block base: defensive no-op */
+    Async_Free(idx + 1);                /* double-free safe */
+}
 
 /* Async_ActiveCount(): number of arena slots currently allocated (parked or
  * running). Baseline is 0; after every started coroutine has completed it must

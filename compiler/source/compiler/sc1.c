@@ -3538,6 +3538,88 @@ static void async_emit_suspend(symbol *helper)
   code_idx+=opcodes(1);
 }
 
+/*  async_emit_arena_alloc - emit the arena-backed allocation of a coroutine state
+ *  block B, shared by doasyncstart (top-level start) and doawait (composed inner
+ *  await).  It emits:  B = Async_Alloc(blkcells);  stash B in the hidden cell
+ *  "btemp";  if B==-1 (arena full or the block does not fit a slot) jump to
+ *  "lbl_full" and start nothing;  else zero the (possibly reused) block and store
+ *  B[ASYNC_ENTRY_SLOT] = fsym's code entry (for call.pri resume).  The caller then
+ *  writes B[ASYNC_AWAITER_SLOT] (which differs: -1 for top-level, the awaiter's B
+ *  for a composed inner) and does the fresh call.  Routing BOTH paths through the
+ *  same arena is what makes every coroutine's B reclaimable -- the composed inner
+ *  no longer leaks on the LIFO heap.  Returns 1 on success, 0 if Async_Alloc is
+ *  not visible (caller reports the error).  Every emitted instruction is
+ *  fixed-length, so two-pass address stability holds. */
+static int async_emit_arena_alloc(symbol *fsym,cell btemp,int blkcells,int lbl_full)
+{
+  symbol *allocsym=findglb("Async_Alloc",sGLOBAL);
+  if (allocsym==NULL || allocsym->ident!=iFUNCTN)
+    return 0;
+  markusage(allocsym,uREAD);
+  pushval((cell)blkcells);          /* arg0 = blkcells (bounds-checked in Async_Alloc) */
+  pushval((cell)sizeof(cell));      /* 1 argument */
+  ffcall(allocsym,NULL,1);          /* PRI = B (arena block address), or -1 if full/too big */
+  stgwrite("\tstor.s.pri ");        /* stash B in the hidden cell */
+  outval(btemp,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  /* arena full / block too big (B==-1): skip the whole start. The sentinel is -1,
+   * not 0, because a valid block can sit at data address 0; test "B+1==0". */
+  stgwrite("\tadd.c ");             /* PRI = B + 1 (so the -1 sentinel becomes 0) */
+  outval((cell)1,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  jmp_eq0(lbl_full);                /* B==-1 -> skip */
+  /* zero the block (a reused slot holds stale state): ALT=B, PRI=0, fill blkcells */
+  stgwrite("\tload.s.pri ");        /* PRI = B */
+  outval(btemp,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");         /* ALT = B (fill destination) */
+  code_idx+=opcodes(1);
+  ldconst(0,sPRI);                  /* PRI = 0 (fill value) */
+  stgwrite("\tfill ");
+  outval((cell)blkcells*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  /* B[ASYNC_ENTRY_SLOT] = fsym code entry (raw const.pri for length stability). */
+  stgwrite("\tload.s.pri ");        /* PRI = B */
+  outval(btemp,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");             /* PRI = &B[entry] */
+  outval((cell)ASYNC_ENTRY_SLOT*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");         /* ALT = &B[entry] (destination) */
+  code_idx+=opcodes(1);
+  stgwrite("\tconst.pri ");         /* PRI = fsym code address */
+  outval(fsym->addr,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tstor.i\n");           /* B[entry] = code address */
+  code_idx+=opcodes(1);
+  return 1;
+}
+
+/*  async_emit_free_self - when the CURRENT "async" coroutine completes, return its
+ *  arena slot to the free pool by its own B address (Async_FreeByAddr computes the
+ *  slot from the address and frees it; a non-arena or already-free address is a
+ *  no-op).  Emitted at BOTH completion points -- the return-to-awaiter block in
+ *  doreturn (explicit "return") and the fall-off-the-end epilogue -- so a
+ *  coroutine that finishes via the nested call.pri chain (never observed "done" by
+ *  a top-level Async_Resume) still frees its slot exactly once.  Clobbers PRI/ALT,
+ *  so it must be emitted where PRI is dead (before the return/iterstop value is
+ *  loaded).  No-op for non-async functions or when <async> is not included. */
+static void async_emit_free_self(void)
+{
+  symbol *freesym;
+  if (curfunc==NULL || (curfunc->usage & uASYNC)==0)
+    return;
+  freesym=findglb("Async_FreeByAddr",sGLOBAL);
+  if (freesym==NULL || freesym->ident!=iFUNCTN)
+    return;                         /* <async> not included: nothing to free */
+  markusage(freesym,uREAD);
+  stgwrite("\tpush.s ");            /* arg0 = this coroutine's own B */
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  pushval((cell)sizeof(cell));      /* 1 argument */
+  ffcall(freesym,NULL,1);
+}
+
 /*  doawait - parse "await <expr>" and emit the suspend (experiment 012 spike).
  *
  *  "await" is the async coroutine's suspend point, the analogue of "yield" but
@@ -3608,7 +3690,7 @@ SC_FUNC int doawait(value *lval)
     fsym=(ftok==tSYMBOL) ? findglb(fstr,sGLOBAL) : NULL;
     if (fsym!=NULL && fsym->ident==iFUNCTN && (fsym->usage & uASYNC)!=0) {
       cell argaddr[sMAXARGS],save_decl,btemp;
-      int nuser,ai,blkcells;
+      int nuser,ai,blkcells,lbl_full;
       markusage(fsym,uREAD);
       save_decl=declared;
       needtoken('(');
@@ -3643,32 +3725,20 @@ SC_FUNC int doawait(value *lval)
       if (curfunc->x.stacksize<declared+1)
         curfunc->x.stacksize=declared+1;
 
-      /* allocate + zero the inner state block; modheap leaves old heap top in ALT */
+      /* allocate the inner state block from the SAME fixed arena as top-level
+       * starts (task 3 fix): B = Async_Alloc(blkcells); zero it; store its entry.
+       * This replaces the old raw modheap, which leaked HEA on every composed
+       * "await asyncFn()". On arena-full/too-big (B==-1) jump past the start. */
       blkcells=gen_reserved(fsym)+fsym->genlocals;
-      modheap(blkcells*(int)sizeof(cell));
-      ldconst(0,sPRI);
-      stgwrite("\tfill ");
-      outval((cell)blkcells*sizeof(cell),TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      moveto1();                    /* PRI = ALT = inner B */
-      stgwrite("\tstor.s.pri ");    /* stash inner B in the hidden cell */
-      outval(btemp,TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-
-      /* inner B[ASYNC_ENTRY_SLOT] = inner code entry (raw const.pri for identical
-       * instruction length in both passes; see doasyncstart). ALT still holds B. */
-      stgwrite("\tmove.pri\n");      /* PRI = ALT = inner B */
-      code_idx+=opcodes(1);
-      stgwrite("\tadd.c ");          /* PRI = &innerB[entry] */
-      outval((cell)ASYNC_ENTRY_SLOT*sizeof(cell),TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      stgwrite("\tmove.alt\n");      /* ALT = &innerB[entry] (destination) */
-      code_idx+=opcodes(1);
-      stgwrite("\tconst.pri ");      /* PRI = inner code address */
-      outval(fsym->addr,TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      stgwrite("\tstor.i\n");        /* innerB[entry] = code address */
-      code_idx+=opcodes(1);
+      lbl_full=getlabel();
+      if (!async_emit_arena_alloc(fsym,btemp,blkcells,lbl_full)) {
+        error(255,"await: Async_Alloc() not found -- #include <async>");
+        lexclr(TRUE);
+        ldconst(0,sPRI);
+        if (lval!=NULL)
+          lval->ident=iEXPRESSION;
+        return FALSE;
+      } /* if */
 
       /* inner B[ASYNC_AWAITER_SLOT] = OUR B: the inner "return" resumes us by this
        * B pointer directly (no registry lookup needed for chained awaits). */
@@ -3697,6 +3767,9 @@ SC_FUNC int doawait(value *lval)
       code_idx+=opcodes(1)+opargs(1);
       pushval((cell)(nuser+1)*sizeof(cell));
       ffcall(fsym,NULL,nuser+1);
+      /* B==-1 (arena full) lands here having started nothing; the outer still
+       * suspends below and will observe a 0 inbox on resume. */
+      setlabel(lbl_full);
 
       /* the inner ran to its first "await" and parked; free our hidden cells
        * BEFORE the suspend so the outer suspends at the generator baseline (the
@@ -3769,7 +3842,7 @@ SC_FUNC int doawait(value *lval)
  */
 SC_FUNC int doasyncstart(value *lval)
 {
-  symbol *fsym,*allocsym;
+  symbol *fsym;
   cell val,argaddr[sMAXARGS],btemp;
   char *str;
   int tok,nuser,ai,blkcells,lbl_full;
@@ -3821,13 +3894,14 @@ SC_FUNC int doasyncstart(value *lval)
     curfunc->x.stacksize=declared+1;
 
   /* Obtain the state block B from the fixed ARENA (task 3) instead of a raw,
-   * never-freed "modheap". Emit a call to the in-script allocator Async_Alloc(),
-   * whose return value (a stable address into g_arena, or 0 if the arena is full)
-   * becomes B. This is what makes B's lifetime reclaimable: the block is a slot
+   * never-freed "modheap": B = Async_Alloc(blkcells); zero it; store its entry.
+   * The shared helper also guards the arena-full/too-big sentinel (B==-1) to
+   * lbl_full. This is what makes B's lifetime reclaimable: the block is a slot
    * that Async_Free() returns to the pool on completion, so the LIFO heap cursor
    * is never asked to release a non-top block (which it cannot do safely). */
-  allocsym=findglb("Async_Alloc",sGLOBAL);
-  if (allocsym==NULL || allocsym->ident!=iFUNCTN) {
+  blkcells=gen_reserved(fsym)+fsym->genlocals;
+  lbl_full=getlabel();
+  if (!async_emit_arena_alloc(fsym,btemp,blkcells,lbl_full)) {
     error(255,"__async_start: Async_Alloc() not found -- #include <async>");
     lexclr(TRUE);
     ldconst(0,sPRI);
@@ -3835,52 +3909,6 @@ SC_FUNC int doasyncstart(value *lval)
       lval->ident=iEXPRESSION;
     return FALSE;
   } /* if */
-  markusage(allocsym,uREAD);
-  blkcells=gen_reserved(fsym)+fsym->genlocals;
-  pushval(0);                   /* Async_Alloc() takes no arguments */
-  ffcall(allocsym,NULL,0);      /* PRI = B (arena block address), or -1 if full */
-  stgwrite("\tstor.s.pri ");    /* stash B in the hidden cell */
-  outval(btemp,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-
-  /* arena full (B==-1): start no coroutine, leave -1 as this expression's value
-   * (Async_Start maps -1 to token 0). The sentinel is -1, not 0, because a valid
-   * block can sit at data address 0; test "B+1==0" so address 0 is NOT skipped. */
-  lbl_full=getlabel();
-  stgwrite("\tadd.c ");         /* PRI = B + 1 (so the -1 sentinel becomes 0) */
-  outval((cell)1,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  jmp_eq0(lbl_full);            /* B==-1 -> arena full -> skip the whole start */
-
-  /* zero the block (a reused slot holds stale state): ALT=B, PRI=0, fill blkcells */
-  stgwrite("\tload.s.pri ");    /* PRI = B */
-  outval(btemp,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tmove.alt\n");     /* ALT = B (fill destination) */
-  code_idx+=opcodes(1);
-  ldconst(0,sPRI);              /* PRI = 0 (fill value) */
-  stgwrite("\tfill ");
-  outval((cell)blkcells*sizeof(cell),TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-
-  /* B[ASYNC_ENTRY_SLOT] = AsyncFunc's code entry address (for call.pri resume).
-   * Emit "const.pri <addr>" literally (never via ldconst) so the instruction
-   * length is identical in both passes even when the address is not yet known in
-   * the addressing pass -- only the operand value differs, which keeps every
-   * other address pass-stable. */
-  stgwrite("\tload.s.pri ");    /* PRI = B */
-  outval(btemp,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tadd.c ");         /* PRI = B + entry slot */
-  outval((cell)ASYNC_ENTRY_SLOT*sizeof(cell),TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tmove.alt\n");     /* ALT = &B[entry] (destination) */
-  code_idx+=opcodes(1);
-  stgwrite("\tconst.pri ");     /* PRI = AsyncFunc code address */
-  outval(fsym->addr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tstor.i\n");       /* B[entry] = code address */
-  code_idx+=opcodes(1);
 
   /* B[ASYNC_AWAITER_SLOT] = -1: this coroutine is TOP-LEVEL (started externally
    * by Async_Start), so it has no awaiter. The sentinel is -1, not the zero-fill
@@ -6410,6 +6438,12 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
   } /* if */
   if (!isterminal(lastst) && lastst!=tGOTO && (sym->flags & flagNAKED)==0) {
     destructsymbols(&loctab,0);
+    /* an "async" coroutine that runs off its end has COMPLETED: reclaim its arena
+     * slot by its own B address (a top-level coroutine resumed through the nested
+     * return-to-awaiter call.pri chain finishes here, never via a top-level
+     * Async_Resume). Clobbers PRI, so it precedes the sentinel load. No-op for a
+     * plain function or a "yield" generator. */
+    async_emit_free_self();
     /* falling off the end of a generator ends the sequence, so it returns the
      * same sentinel to "foreach" as an explicit "return" does */
     ldconst(pc_generator ? generator_iterstop : 0,sPRI);
@@ -11248,6 +11282,10 @@ static void doreturn(void)
     /* free the two hidden cells before the function's frame teardown below */
     modstk((int)(2*sizeof(cell)));
     declared-=2;
+    /* this coroutine has COMPLETED via "return": reclaim its arena slot by its own
+     * B address (covers the composed inner path, which never returns through a
+     * top-level Async_Resume). Clobbers PRI, so it precedes the iterstop load. */
+    async_emit_free_self();
   } /* if */
   /* in a generator a "return" ends the sequence, so whatever was returned (or
    * the 0 of a bare "return;") is replaced by the stop sentinel that "foreach"

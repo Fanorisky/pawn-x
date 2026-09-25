@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+compose completed=20 active=0
+
+async_compose_lifetime.amx returns 0
+"""
+}
