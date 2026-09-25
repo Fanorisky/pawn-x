@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(reentrant parked) token=1
+
+reenter got=42 guard_held=1
+
+final active=0
+
+async_reentrant.amx returns 0
+"""
+}

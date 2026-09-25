@@ -1,0 +1,32 @@
+{
+  'test_type': 'runtime',
+  'output': """
+active start=0
+
+started id=1 token=1 active=1
+
+life id=1 got=100
+
+completed id=1 active=0
+
+started id=2 token=1 active=1
+
+life id=2 got=200
+
+completed id=2 active=0
+
+started id=3 token=1 active=1
+
+life id=3 got=300
+
+completed id=3 active=0
+
+reuse id=4 token=1 active=1
+
+life id=4 got=400
+
+active end=0 heap_stable=1
+
+async_lifetime.amx returns 0
+"""
+}

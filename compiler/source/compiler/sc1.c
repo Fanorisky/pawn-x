@@ -3769,10 +3769,10 @@ SC_FUNC int doawait(value *lval)
  */
 SC_FUNC int doasyncstart(value *lval)
 {
-  symbol *fsym;
+  symbol *fsym,*allocsym;
   cell val,argaddr[sMAXARGS],btemp;
   char *str;
-  int tok,nuser,ai,blkcells;
+  int tok,nuser,ai,blkcells,lbl_full;
   cell save_decl;
 
   save_decl=declared;
@@ -3820,25 +3820,57 @@ SC_FUNC int doasyncstart(value *lval)
   if (curfunc->x.stacksize<declared+1)
     curfunc->x.stacksize=declared+1;
 
-  /* allocate + zero the state block; modheap leaves the old heap top (B) in ALT */
+  /* Obtain the state block B from the fixed ARENA (task 3) instead of a raw,
+   * never-freed "modheap". Emit a call to the in-script allocator Async_Alloc(),
+   * whose return value (a stable address into g_arena, or 0 if the arena is full)
+   * becomes B. This is what makes B's lifetime reclaimable: the block is a slot
+   * that Async_Free() returns to the pool on completion, so the LIFO heap cursor
+   * is never asked to release a non-top block (which it cannot do safely). */
+  allocsym=findglb("Async_Alloc",sGLOBAL);
+  if (allocsym==NULL || allocsym->ident!=iFUNCTN) {
+    error(255,"__async_start: Async_Alloc() not found -- #include <async>");
+    lexclr(TRUE);
+    ldconst(0,sPRI);
+    if (lval!=NULL)
+      lval->ident=iEXPRESSION;
+    return FALSE;
+  } /* if */
+  markusage(allocsym,uREAD);
   blkcells=gen_reserved(fsym)+fsym->genlocals;
-  modheap(blkcells*(int)sizeof(cell));
-  ldconst(0,sPRI);
-  stgwrite("\tfill ");
-  outval((cell)blkcells*sizeof(cell),TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  moveto1();                    /* PRI = ALT = B */
+  pushval(0);                   /* Async_Alloc() takes no arguments */
+  ffcall(allocsym,NULL,0);      /* PRI = B (arena block address), or -1 if full */
   stgwrite("\tstor.s.pri ");    /* stash B in the hidden cell */
   outval(btemp,TRUE);
   code_idx+=opcodes(1)+opargs(1);
 
-  /* B[ASYNC_ENTRY_SLOT] = AsyncFunc's code entry address (for call.pri resume).
-   * ALT still holds B here. Emit "const.pri <addr>" literally (never via ldconst)
-   * so the instruction length is identical in both passes even when the address
-   * is not yet known in the addressing pass -- only the operand value differs,
-   * which keeps every other address pass-stable. */
-  stgwrite("\tmove.pri\n");     /* PRI = ALT = B */
+  /* arena full (B==-1): start no coroutine, leave -1 as this expression's value
+   * (Async_Start maps -1 to token 0). The sentinel is -1, not 0, because a valid
+   * block can sit at data address 0; test "B+1==0" so address 0 is NOT skipped. */
+  lbl_full=getlabel();
+  stgwrite("\tadd.c ");         /* PRI = B + 1 (so the -1 sentinel becomes 0) */
+  outval((cell)1,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  jmp_eq0(lbl_full);            /* B==-1 -> arena full -> skip the whole start */
+
+  /* zero the block (a reused slot holds stale state): ALT=B, PRI=0, fill blkcells */
+  stgwrite("\tload.s.pri ");    /* PRI = B */
+  outval(btemp,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");     /* ALT = B (fill destination) */
   code_idx+=opcodes(1);
+  ldconst(0,sPRI);              /* PRI = 0 (fill value) */
+  stgwrite("\tfill ");
+  outval((cell)blkcells*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+
+  /* B[ASYNC_ENTRY_SLOT] = AsyncFunc's code entry address (for call.pri resume).
+   * Emit "const.pri <addr>" literally (never via ldconst) so the instruction
+   * length is identical in both passes even when the address is not yet known in
+   * the addressing pass -- only the operand value differs, which keeps every
+   * other address pass-stable. */
+  stgwrite("\tload.s.pri ");    /* PRI = B */
+  outval(btemp,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
   stgwrite("\tadd.c ");         /* PRI = B + entry slot */
   outval((cell)ASYNC_ENTRY_SLOT*sizeof(cell),TRUE);
   code_idx+=opcodes(1)+opargs(1);
@@ -3848,6 +3880,22 @@ SC_FUNC int doasyncstart(value *lval)
   outval(fsym->addr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
   stgwrite("\tstor.i\n");       /* B[entry] = code address */
+  code_idx+=opcodes(1);
+
+  /* B[ASYNC_AWAITER_SLOT] = -1: this coroutine is TOP-LEVEL (started externally
+   * by Async_Start), so it has no awaiter. The sentinel is -1, not the zero-fill
+   * default of 0, because a real awaiter block can sit at data address 0 (the
+   * arena may be the first global); "return" tests awaiter==-1 for "no awaiter". */
+  stgwrite("\tload.s.pri ");    /* PRI = B */
+  outval(btemp,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");         /* PRI = &B[awaiter] */
+  outval((cell)ASYNC_AWAITER_SLOT*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");     /* ALT = &B[awaiter] (destination) */
+  code_idx+=opcodes(1);
+  ldconst(-1,sPRI);             /* PRI = -1 (no awaiter) */
+  stgwrite("\tstor.i\n");       /* B[awaiter] = -1 */
   code_idx+=opcodes(1);
 
   /* call AsyncFunc(B, args...): user args pushed in reverse, B (arg0) pushed last */
@@ -3863,7 +3911,8 @@ SC_FUNC int doasyncstart(value *lval)
   ffcall(fsym,NULL,nuser+1);
 
   /* the fresh call suspended at the first "await" and returned its token in PRI;
-   * reload B so it becomes this expression's value */
+   * reload B (0 on the arena-full path) so it becomes this expression's value */
+  setlabel(lbl_full);
   stgwrite("\tload.s.pri ");
   outval(btemp,TRUE);
   code_idx+=opcodes(1)+opargs(1);
@@ -11130,8 +11179,9 @@ static void doreturn(void)
   /* Return-to-awaiter (exp 012, Task 2): an "async" coroutine whose "return" runs
    * delivers its value straight into its awaiter and resumes it. PRI holds the
    * return value here (the 0 of a bare "return;" or the evaluated expression). If
-   * B[ASYNC_AWAITER_SLOT]==0 this is a top-level coroutine with no awaiter, so it
-   * just completes as before. This is an EXPLICIT completion (not the T1 "same
+   * B[ASYNC_AWAITER_SLOT]==-1 this is a top-level coroutine with no awaiter, so it
+   * just completes as before (the sentinel is -1, not 0, because a real awaiter
+   * block can sit at data address 0). This is an EXPLICIT completion (not the T1 "same
    * B[0] site" heuristic): it resumes the awaiter by its B pointer directly via
    * "call.pri", so no scheduler registry lookup is needed for chained awaits. */
   if (curfunc!=NULL && (curfunc->usage & uASYNC)!=0) {
@@ -11160,7 +11210,10 @@ static void doreturn(void)
     outval(awaiter_cell,TRUE);
     code_idx+=opcodes(1)+opargs(1);
     lbl_noawaiter=getlabel();
-    jmp_eq0(lbl_noawaiter);               /* awaiterB==0 -> top-level, just complete */
+    stgwrite("\tadd.c ");                 /* PRI = awaiterB + 1 (so the -1 sentinel becomes 0) */
+    outval((cell)1,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    jmp_eq0(lbl_noawaiter);               /* awaiterB==-1 -> top-level, just complete */
     /* awaiterB[ASYNC_INBOX_SLOT] = return value */
     stgwrite("\tload.s.pri ");            /* PRI = awaiterB */
     outval(awaiter_cell,TRUE);
