@@ -8578,7 +8578,7 @@ static int doforeach(void)
  */
 static int doswitch(void)
 {
-  int lbl_table,lbl_exit,lbl_case;
+  int lbl_table,lbl_exit,lbl_case,lbl_dispatch;
   int swdefault,casecount;
   int tok,endtok;
   int swtag,csetag;
@@ -8603,8 +8603,12 @@ static int doswitch(void)
    * of the case table (to be generated later).
    */
   lbl_table=getlabel();
+  lbl_dispatch=getlabel();       /* dispatch block (range checks + OP_SWITCH), emitted after the bodies */
   lbl_case=0;                   /* just to avoid a compiler warning */
-  ffswitch(lbl_table);
+  /* Jump over the case bodies to the dispatch block. The switch value stays
+   * in PRI across an unconditional jump, so the inline range bounds-checks
+   * and the OP_SWITCH there still see it. */
+  jumplabel(lbl_dispatch);
 
   save_fline=fline;
   enumsym=NULL;
@@ -8766,9 +8770,7 @@ static int doswitch(void)
     for (cse=caselist.first; cse!=NULL && cse->next!=NULL; cse=cse->next)
       assert(cse->value <= cse->next->value);
   #endif
-  /* generate the table here, before lbl_exit (general jump target) */
-  setlabel(lbl_table);
-  assert(swdefault==FALSE || swdefault==TRUE);
+  /* Determine the "none-matched" (default) label. */
   if (swdefault==FALSE) {
     /* store lbl_exit as the "none-matched" label in the switch table */
     strcpy(labelname,itoh(lbl_exit));
@@ -8776,10 +8778,56 @@ static int doswitch(void)
     /* lbl_case holds the label of the "default" clause */
     strcpy(labelname,itoh(lbl_case));
   } /* if */
-  ffcase(casecount,labelname,TRUE);
-  /* generate the rest of the table */
-  for (cse=caselist.first; cse!=NULL; cse=cse->next)
-    ffcase(cse->value,cse->name,FALSE);
+
+  /* Emit the dispatch block (reached only via the jump above, so PRI still
+   * holds the switch value).
+   *
+   * The case list is sorted and fully expanded (one entry per value, ranges
+   * included). Coalesce it into maximal runs of consecutive values that share
+   * the same body label: a run wider than one value came from a "case lo..hi:"
+   * range (or a "case a,b,c:" list of adjacent values) and is emitted as a
+   * single inline bounds-check instead of one OP_SWITCH record per value --
+   * this is what stops "case 0..9999:" from ballooning the .amx. The leftover
+   * single values still go through the lean, binary-searchable OP_SWITCH
+   * table. */
+  setlabel(lbl_dispatch);
+  {
+    constvalue *runstart;
+    int singlecount=0;
+    /* pass 1: emit a bounds-check per range run; tally the single values */
+    for (cse=caselist.first; cse!=NULL; cse=cse->next) {
+      runstart=cse;
+      while (cse->next!=NULL
+             && cse->next->value==cse->value+1
+             && strcmp(cse->next->name,cse->name)==0)
+        cse=cse->next;
+      if (cse!=runstart) {
+        int skip=getlabel();
+        ffcaserange(runstart->value,cse->value,runstart->name,skip);
+        setlabel(skip);
+      } else {
+        singlecount++;
+      } /* if */
+    } /* for */
+    /* pass 2: the single values go through OP_SWITCH; if there are none, jump
+     * straight to the default/none-matched label. */
+    if (singlecount>0) {
+      ffswitch(lbl_table);
+      setlabel(lbl_table);
+      ffcase(singlecount,labelname,TRUE);
+      for (cse=caselist.first; cse!=NULL; cse=cse->next) {
+        runstart=cse;
+        while (cse->next!=NULL
+               && cse->next->value==cse->value+1
+               && strcmp(cse->next->name,cse->name)==0)
+          cse=cse->next;
+        if (cse==runstart)
+          ffcase(runstart->value,runstart->name,FALSE);
+      } /* for */
+    } else {
+      jumplabel(swdefault ? lbl_case : lbl_exit);
+    } /* if */
+  }
 
   setlabel(lbl_exit);
   delete_consttable(&caselist); /* clear list of case labels */

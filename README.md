@@ -12,8 +12,10 @@ surgery** — as a standalone replacement (not a co-resident of YSI).
 Two pillars, split by *when the information exists*:
 
 - **Compiler** — anything known at compile time: `___` varargs, the `foreach`
-  keyword + compact-set natives, `iterfunc` generators, and the `hook` keyword.
-  Pure codegen, no new opcodes; the `.amx` runs on any AMX host.
+  keyword + compact-set natives, `iterfunc` generators, the `hook` keyword, and
+  leaner `switch` codegen (a `case a..b:` range compiles to one bounds-check
+  instead of one table record per value). Pure codegen, no new opcodes; the
+  `.amx` runs on any AMX host.
 - **Companion plugin** (`dynhook`) — the runtime-only piece: add / remove /
   replace hook handlers while the server runs, and transparently intercept
   built-in callbacks. Inline-hooks `amx_Exec` via subhook — no open.mp SDK, so
@@ -30,6 +32,7 @@ Two pillars, split by *when the information exists*:
 | `hook` keyword (+ `hook:N` priority) | `y_hooks` (compile-time) | exp 004/005 |
 | `hook native`/`function`/`stock` + `continue` (call-site, incl. variadic `...` targets) | `y_hooks` real fn/native hooking | tests `chook_*` |
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
+| compact `switch` codegen (range cases → bounds-check) | *(stock-Pawn table bloat)* | exp 013 |
 
 Most rows were run on a real `omp-server` and diffed against YSI (the `yield`
 and `hook native`/`function`/`stock` rows are proven by the `yield_*` / `chook_*`
@@ -126,6 +129,28 @@ dynhook_intercept("OnPlayerDeath");                 // fire the chain automatica
 dynhook_add("OnPlayerDeath", "MyHandler");          // add / remove / replace at runtime
 dynhook_call("MyCustomEvent", "is", id, "hi");      // or dispatch a custom event
 ```
+
+**Compact `switch` codegen** — stock Pawn expands a `case a..b:` range into one
+`(value, address)` table record *per value*, so `case 0..9999:` alone becomes
+10 000 records (a ~31 KB `.amx`). pawn-x coalesces each range into a single
+inline bounds-check and only sends the leftover discrete values through the
+`OP_SWITCH` table, so the same switch is **119 bytes** (≈267× smaller). Pure
+codegen with existing opcodes, so the `.amx` still runs on any AMX host, and all
+existing semantics (default, duplicate/overlap `error 040`, enum exhaustiveness)
+are preserved:
+```pawn
+new state = Classify(x);
+switch (state)
+{
+    case 0..9999:      Big();       // one bounds-check, not 10 000 table records
+    case -1000..-1:    Negative();  // signed ranges work
+    case 40000:        Lone();      // discrete values still use the lean table
+    default:           Other();
+}
+```
+Nothing changes in how you write `switch` — only the emitted code shrinks. See
+`experiments/013-switch-codegen/RESULT.md` (measured + validated on a live
+open.mp 1.5.8 server).
 
 ## Build
 

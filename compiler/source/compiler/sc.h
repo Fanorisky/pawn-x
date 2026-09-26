@@ -904,6 +904,7 @@ SC_FUNC void popreg(regid reg);
 SC_FUNC void swap1(void);
 SC_FUNC void ffswitch(int label);
 SC_FUNC void ffcase(cell value,char *labelname,int newtable);
+SC_FUNC void ffcaserange(cell lo,cell hi,const char *bodyname,int skiplabel);
 SC_FUNC void ffcall(symbol *sym,const char *label,int numargs);
 SC_FUNC void ffret(int remparams);
 SC_FUNC void ffabort(int reason);

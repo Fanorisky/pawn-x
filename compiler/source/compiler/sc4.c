@@ -808,6 +808,31 @@ SC_FUNC void ffcase(cell value,char *labelname,int newtable)
 }
 
 /*
+ *  Emit an inline bounds-check for a switch "case lo..hi:" range: if the
+ *  switch value (in PRI) falls in [lo,hi] jump to the case body, otherwise
+ *  fall through to "skiplabel" (the next range check, or the discrete-value
+ *  OP_SWITCH). This replaces expanding the range into hi-lo+1 individual case
+ *  table records -- the classic source of switch .amx bloat. PRI is preserved
+ *  (only ALT is used for the comparisons); the comparisons are signed, to
+ *  match the sign semantics of the case table's binary search.
+ */
+SC_FUNC void ffcaserange(cell lo,cell hi,const char *bodyname,int skiplabel)
+{
+  stgwrite("\tconst.alt ");
+  outval(lo,TRUE);
+  stgwrite("\tjsless ");
+  outval(skiplabel,TRUE);
+  stgwrite("\tconst.alt ");
+  outval(hi,TRUE);
+  stgwrite("\tjsgrtr ");
+  outval(skiplabel,TRUE);
+  stgwrite("\tjump ");
+  stgwrite(bodyname);
+  stgwrite("\n");
+  code_idx+=opcodes(5)+opargs(5);
+}
+
+/*
  *  Call specified function
  */
 SC_FUNC void ffcall(symbol *sym,const char *label,int numargs)
