@@ -3917,7 +3917,7 @@ static void async_emit_restore(int spillslot)
 SC_FUNC int doawait(value *lval)
 {
   int ident,tag,localstaging,index;
-  int spillcount,spillslot,priorawait;
+  int spillcount,spillslot;
   cell val;
   symbol *sym,*helper;
 
@@ -3936,26 +3936,16 @@ SC_FUNC int doawait(value *lval)
     ldconst(0,sPRI);
     return FALSE;
   } /* if */
-  /* AT MOST ONE "await" per statement. A second await in the same statement would
-   * need the first await's result -- or an operand temporary derived across it -- to
-   * survive the second suspend, but two suspends in one expression do not sequence
-   * correctly through the shared operand path (the earlier value is lost and the
-   * coroutine leaks). This holds for every mix of leaf and composed awaits, and was a
-   * silent miscompile. Reject cleanly; split into separate statements:
-   * "new a = await A(); new b = await B(); r = a + b;". pc_awaitseq resets per
-   * statement (alongside pc_exprtemp). The FIRST await proceeds; the second lands
-   * here. (A single await mid-expression, as one call argument, or composed, is fully
-   * supported.) */
-  priorawait=pc_awaitseq;
-  pc_awaitseq++;
-  if (pc_generator && priorawait>0) {
-    error(99);
-    lexclr(TRUE);
-    ldconst(0,sPRI);
-    if (lval!=NULL)
-      lval->ident=iEXPRESSION;
-    return FALSE;
-  } /* if */
+  /* Multiple awaits in one statement ARE supported now: "await" binds at unary
+   * precedence (expression_unary below), so "await A() + await B()" is two
+   * independent suspends the enclosing operator combines, each spilling its live
+   * operand temporaries across its own suspend. The one shape that still does not
+   * work is a LEAF await that must carry a COMPOSED await's result across its
+   * suspend (compose-then-leaf in one expression, e.g. "await Inner() + await X()"):
+   * the compose returns through the awaiter call.pri chain and a following leaf
+   * suspend does not unwind back to a resumable point. That case is rejected in the
+   * leaf path below (pc_await_composed); everything else -- leaf+leaf, compose+compose,
+   * leaf+compose -- runs correctly. */
   /* MID-EXPRESSION await (operand-stack spill): in an "async" body every local is
    * LIFTED into B, so "declared" never rises and the check above is blind to
    * OPERATOR temporaries (the "base" pushed by "base + await F()"). Those temps
@@ -4056,6 +4046,9 @@ SC_FUNC int doawait(value *lval)
       cell argaddr[sMAXARGS],save_decl,btemp;
       int nuser,ai,blkcells,lbl_full;
       markusage(fsym,uREAD);
+      pc_await_composed=1;      /* a composed await suspends here; a following LEAF
+                                 * await in this expression that must carry this
+                                 * result across its own suspend is rejected below */
       /* MID-EXPRESSION "await asyncFn()" (spillcount>0) IS supported: the compose
        * path allocates its hidden inner-start cells BELOW the enclosing operator
        * temporaries and FREES them before the suspend, so at the suspend point only
@@ -4195,10 +4188,32 @@ SC_FUNC int doawait(value *lval)
     lexpush();                       /* not a direct async call: back to expression() */
   }
 
+  /* Reject a LEAF await that must carry a COMPOSED await's result across its own
+   * suspend (compose-then-leaf in one expression, e.g. "await Inner() + await X()").
+   * A composed await returns through the awaiter call.pri chain; a leaf suspend that
+   * follows it, with that result live on the operand stack (spillcount>0), does not
+   * unwind back to a resumable point, so the coroutine would hang. Every other
+   * multi-await shape (leaf+leaf, compose+compose, leaf+compose) works. Reorder so
+   * the leaf await comes first, or split into separate statements. */
+  if (pc_generator && spillcount>0 && pc_await_composed) {
+    error(99);
+    lexclr(TRUE);
+    ldconst(0,sPRI);
+    if (localstaging) {
+      stgout(index);
+      stgset(FALSE);
+    } /* if */
+    if (lval!=NULL)
+      lval->ident=iEXPRESSION;
+    return FALSE;
+  } /* if */
+
   errorset(sEXPRMARK,0);
 
   sym=NULL;
-  ident=expression(&val,&tag,&sym,FALSE);   /* the awaitable -> token in PRI */
+  ident=expression_unary(&val,&tag,&sym);   /* the awaitable -> token in PRI (UNARY
+                                             * precedence: "await" binds tightly, so
+                                             * "await A() + await B()" is two awaits) */
   if (ident==iARRAY || ident==iREFARRAY) {
     error(33,(sym!=NULL) ? sym->name : "-unknown-");
     ldconst(0,sPRI);
@@ -8492,7 +8507,7 @@ static void statement(int *lastindent,int allow_decl)
   } /* if */
   errorset(sRESET,0);
   pc_exprtemp=0;                /* new statement: no live operand-stack temporaries yet */
-  pc_awaitseq=0;               /* ...and no "await" suspends emitted yet this statement */
+  pc_await_composed=0;               /* ...and no "await" suspends emitted yet this statement */
 
   tok=lex(&val,&st);
   if ((emit_flags & efBLOCK)!=0) {
@@ -8751,7 +8766,7 @@ static int doexpr(int comma,int chkeffect,int allowarray,int mark_endexpr,
     } /* if */
     pc_sideeffect=FALSE;
     pc_ovlassignment=FALSE;
-    pc_awaitseq=0;              /* each comma-clause is an independent operand-stack
+    pc_await_composed=0;              /* each comma-clause is an independent operand-stack
                                  * expression: an "await" here does not share a live
                                  * temp with one in a sibling clause (or an earlier
                                  * for-header clause), so start its await count fresh */
@@ -8830,7 +8845,7 @@ static int test(int label,int parens,int invert)
   PUSHSTK_I(sc_intest);
   sc_intest=TRUE;
   endtok=0;
-  pc_awaitseq=0;                /* a test condition (if/while/for-cond/do) is its own
+  pc_await_composed=0;                /* a test condition (if/while/for-cond/do) is its own
                                  * operand-stack expression; count its awaits fresh so
                                  * a for-header "cond" and "incr" await are independent */
   if (parens!=TEST_PLAIN) {

@@ -1,6 +1,0 @@
-{
-  'test_type': 'output_check',
-  'errors': """
-async_multiawait_reject.pwn(18) : error 099: a "yield" cannot appear where stack storage is live (e.g. inside a nested "foreach") in v1
-"""
-}

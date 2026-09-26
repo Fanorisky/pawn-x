@@ -876,6 +876,7 @@ SC_FUNC int check_userop(void (*oper)(void),int tag1,int tag2,int numparam,
 SC_FUNC int matchtag(int formaltag,int actualtag,int allowcoerce);
 SC_FUNC int checktag(int tags[],int numtags,int exprtag);
 SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult);
+SC_FUNC int expression_unary(cell *val,int *tag,symbol **symptr);
 SC_FUNC int doawait(value *lval);       /* "await <expr>" (exp 012 async spike) */
 SC_FUNC int doasyncstart(value *lval);  /* "__async_start(Func,args...)" -> B (exp 012) */
 SC_FUNC int doasyncresume(value *lval); /* "__async_resume(B,value)" -> completed? (exp 012) */
@@ -1099,7 +1100,7 @@ SC_VDECL int sc_labnum;       /* number of (internal) labels */
 SC_VDECL int staging;         /* true if staging output */
 SC_VDECL cell declared;       /* number of local cells declared */
 SC_VDECL cell pc_exprtemp;    /* live operand-stack temporaries in the current statement (pushreg/popreg balance); read by doawait to reject a mid-expression suspend */
-SC_VDECL int pc_awaitseq;     /* count of "await" suspends already emitted in the current statement; doawait rejects a second leaf await that must carry a live temp across it */
+SC_VDECL int pc_await_composed;     /* set once a composed "await asyncFn()" has suspended in the current expression; doawait rejects a following leaf await carrying a live temp (compose-then-leaf) */
 SC_VDECL cell pc_genlocalsbase;/* frame offset of a coroutine generator's hidden
                                * "localsbase" cell (base of its state block);
                                * used to emit lifted-local access (see sc4.c) */

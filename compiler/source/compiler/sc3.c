@@ -841,6 +841,39 @@ SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult)
   return lval.ident;
 }
 
+/*  expression_unary - like expression(), but parses only a UNARY-precedence operand
+ *  (hier2), stopping at the first binary operator. doawait() uses this so "await"
+ *  binds tightly, like a unary prefix operator: "await A() + await B()" parses as
+ *  "(await A()) + (await B())" -- two independent suspends the enclosing "+" then
+ *  combines -- NOT "await(A() + await B())", which the full-precedence expression()
+ *  would produce (swallowing the trailing "+ await B()" into this await's operand and
+ *  tangling the two suspends). A complex awaitable can still be forced with parens:
+ *  "await (cond ? a : b)".
+ */
+SC_FUNC int expression_unary(cell *val,int *tag,symbol **symptr)
+{
+  int locheap=decl_heap;
+  value lval={0};
+
+  if (hier2(&lval))
+    rvalue(&lval);
+  assert(decl_heap>=locheap);
+  if (!pc_retexpr)
+    modheap((locheap-decl_heap)*sizeof(cell));
+  else
+    pc_retheap=(locheap-decl_heap)*sizeof(cell);
+  decl_heap=locheap;
+
+  if (lval.ident==iCONSTEXPR && val!=NULL)
+    *val=lval.constval;
+  if (tag!=NULL)
+    *tag=lval.tag;
+  if (symptr!=NULL)
+    *symptr=lval.sym;
+  return lval.ident;
+}
+
+
 /*  parse_foreach_operand
  *
  *  Parses the "foreach" operand (the expression after the ':') and leaves the
