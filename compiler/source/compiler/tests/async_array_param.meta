@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+hello Ada
+
+sum before=50 after=50 bump=100
+
+outer=150
+
+active=0
+
+async_array_param.amx returns 0
+"""
+}

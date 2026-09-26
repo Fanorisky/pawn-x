@@ -3348,6 +3348,7 @@ static void generator_emit_prologue(void)
   int slot,nparm,pi;
   cell parmphys[sMAXARGS];      /* incoming stack offset of each lifted param */
   cell parmslot[sMAXARGS];      /* block byte-offset of each lifted param slot */
+  cell parmsize[sMAXARGS];      /* cells per lifted param: 1 (scalar) or N (copied-in array) */
 
   declared+=1;
   localsbase=-declared*(cell)sizeof(cell);
@@ -3360,17 +3361,41 @@ static void generator_emit_prologue(void)
   /* lift each user parameter into a block slot (they occupy the first slots;
    * body locals in declloc() continue after them). Only local symbols exist yet
    * (define_args() ran; no body local is declared before the prologue), so every
-   * symbol in loctab is a parameter. Only scalars fit a single slot; an array or
-   * by-reference parameter cannot be lifted, so it is rejected. */
+   * symbol in loctab is a parameter. A scalar fits one slot. An "async" coroutine
+   * additionally COPIES IN a fixed-size 1-D array parameter: its cells are copied
+   * from the caller's array into consecutive block slots on the fresh call (below),
+   * so the coroutine owns them and they survive the suspend (the caller's frame is
+   * gone by then). An UNSIZED or MULTI-DIMENSIONAL array, or a by-"&"reference
+   * parameter, still cannot be lifted (no compile-time cell count / caller-frame
+   * aliasing) and is rejected. */
   nparm=0;
   for (sym=loctab.next; sym!=NULL; sym=sym->next) {
     assert(sym->vclass==sLOCAL);
     if (sym->ident!=iVARIABLE) {
+      if ((curfunc->usage & uASYNC)!=0 && sym->ident==iREFARRAY
+          && sym->dim.array.level==0 && sym->dim.array.length>0) {
+        /* fixed-size 1-D array parameter: COPY IN. Reserve "length" block cells,
+         * rebind the symbol as an owned lifted array (iARRAY at the block offset),
+         * and record the incoming address slot + cell count for the fresh-path copy. */
+        if (nparm>=sMAXARGS-1)
+          break;
+        slot=curfunc->genlocals;
+        parmphys[nparm]=sym->addr+(cell)sizeof(cell);  /* incoming slot holds the array ADDRESS */
+        parmslot[nparm]=(cell)(slot+gen_reserved(curfunc))*sizeof(cell);
+        parmsize[nparm]=sym->dim.array.length;         /* cells to copy in */
+        sym->addr=parmslot[nparm];                     /* body indexes the block (address() in sc4.c) */
+        sym->ident=iARRAY;                             /* now an owned, lifted array (data in B) */
+        sym->usage|=uLIFTED;
+        curfunc->genlocals=slot+(int)parmsize[nparm];
+        nparm++;
+        continue;
+      } /* if */
       if ((curfunc->usage & uASYNC)!=0)
-        error(268);             /* async: an array/reference parameter points into the
-                                 * caller's frame, which is freed at "await" -- it cannot
-                                 * be lifted into the coroutine block, so reject cleanly
-                                 * (copy-in semantics are deferred). */
+        error(268);             /* async: an unsized/multi-dim array or "&"reference
+                                 * parameter points into the caller's frame, which is
+                                 * freed at "await" -- it cannot be copied into the
+                                 * coroutine block (no compile-time cell count / it
+                                 * aliases the caller), so reject cleanly. */
       else if (sym->ident==iREFERENCE)
         error(98);              /* a generator cannot combine "yield" with a reference/cur parameter */
       else
@@ -3384,6 +3409,7 @@ static void generator_emit_prologue(void)
     slot=curfunc->genlocals;
     parmphys[nparm]=sym->addr+(cell)sizeof(cell); /* B shifts every user arg up one cell */
     parmslot[nparm]=(cell)(slot+gen_reserved(curfunc))*sizeof(cell);  /* head slots precede locals */
+    parmsize[nparm]=1;          /* scalar */
     sym->addr=parmslot[nparm];  /* body access now indexes the block (see sc4.c) */
     sym->usage|=uLIFTED;
     curfunc->genlocals=slot+1;
@@ -3437,8 +3463,30 @@ static void generator_emit_prologue(void)
 
   /* FRESH path only: copy each incoming user parameter into its block slot, so
    * it is readable in the body and survives resumption. ALT/PRI are free here.
-   *   ALT = B + slot   (destination);   PRI = incoming arg;   *(ALT) = PRI */
+   *   scalar:  ALT = B + slot (destination);   PRI = incoming arg;   *(ALT) = PRI
+   *   array:   PRI = caller array address (the incoming slot holds it);  ALT = B +
+   *            slot (destination);  movs size -- copy the cells IN so the coroutine
+   *            owns them (the caller's array is gone after the first suspend). */
   for (pi=0; pi<nparm; pi++) {
+    if (parmsize[pi]!=1) {
+      stgwrite("\tload.s.pri ");  /* PRI = incoming array ADDRESS (source) */
+      outval(parmphys[pi],TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tpush.pri\n");   /* save source address */
+      code_idx+=opcodes(1);
+      stgwrite("\tload.s.pri ");  /* PRI = B */
+      outval(localsbase,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tadd.c ");       /* PRI = B + slot (destination) */
+      outval(parmslot[pi],TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tmove.alt\n");   /* ALT = B + slot (destination) */
+      code_idx+=opcodes(1);
+      stgwrite("\tpop.pri\n");    /* PRI = source address */
+      code_idx+=opcodes(1);
+      memcopy(parmsize[pi]*(cell)sizeof(cell));   /* movs: copy [PRI] -> [ALT], size bytes */
+      continue;
+    } /* if */
     stgwrite("\tload.s.pri ");  /* PRI = B */
     outval(localsbase,TRUE);
     code_idx+=opcodes(1)+opargs(1);
