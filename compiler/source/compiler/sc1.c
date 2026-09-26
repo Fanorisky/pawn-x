@@ -3943,6 +3943,31 @@ static void async_emit_restore(int spillslot)
 }
 
 
+/*  async_check_array_arg - diagnostic for an array argument passed to an "async"
+ *  coroutine via doasyncstart (Async_Start) or a composed "await asyncFn(args)".
+ *  An async array PARAMETER is COPIED IN at its DECLARED length by the prologue, so
+ *  a shorter passed array would be over-read from the caller's frame. The ordinary
+ *  call path (callfunction) reports error 47 for a size mismatch; these two async
+ *  entry paths bypass that path, so mirror the check here. Only the common 1-D
+ *  fixed-size case is checked (unsized/multi-dim array params are rejected 268). */
+static void async_check_array_arg(symbol *fsym,int argidx,int id,symbol *argsym)
+{
+  arginfo *arg;
+  int i;
+  if (fsym==NULL || fsym->dim.arglist==NULL || argidx<0)
+    return;
+  arg=fsym->dim.arglist;
+  for (i=0; i<argidx; i++)
+    if (arg[i].ident==0 || arg[i].ident==iVARARGS)
+      return;                       /* fewer fixed params than args -- not our case */
+  if (arg[argidx].ident==iREFARRAY && arg[argidx].numdim==1 && arg[argidx].dim[0]>0
+      && (id==iARRAY || id==iREFARRAY) && argsym!=NULL
+      && argsym->dim.array.length>0
+      && argsym->dim.array.length!=arg[argidx].dim[0])
+    error(47);                      /* array sizes do not match */
+}
+
+
 /*  doawait - parse "await <expr>" and emit the suspend (experiment 012 spike).
  *
  *  "await" is the async coroutine's suspend point, the analogue of "yield" but
@@ -4140,10 +4165,12 @@ SC_FUNC int doawait(value *lval)
       if (!matchtoken(')')) {
         do {
           int id;
+          symbol *argsym=NULL;
           if (nuser>=sMAXARGS-1) { error(45); break; }
-          id=expression(&val,NULL,NULL,FALSE);
+          id=expression(&val,NULL,&argsym,FALSE);
           if (id==iCONSTEXPR)
             ldconst(val,sPRI);
+          async_check_array_arg(fsym,nuser,id,argsym);  /* array-arg size guard (see doasyncstart) */
           declared+=1;
           argaddr[nuser]=-declared*(cell)sizeof(cell);
           modstk(-(int)sizeof(cell));
@@ -4367,10 +4394,15 @@ SC_FUNC int doasyncstart(value *lval)
   if (matchtoken(',')) {
     do {
       int id;
+      symbol *argsym=NULL;
       if (nuser>=sMAXARGS-1) { error(45); break; }
-      id=expression(&val,NULL,NULL,FALSE);
+      id=expression(&val,NULL,&argsym,FALSE);
       if (id==iCONSTEXPR)
         ldconst(val,sPRI);
+      /* array-argument size guard: an async array parameter is COPIED IN by the
+       * prologue at its DECLARED length, so a smaller passed array would be
+       * over-read. The ordinary call path reports 047 for this; mirror it here. */
+      async_check_array_arg(fsym,nuser,id,argsym);
       declared+=1;
       argaddr[nuser]=-declared*(cell)sizeof(cell);
       modstk(-(int)sizeof(cell));
