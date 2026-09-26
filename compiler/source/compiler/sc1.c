@@ -3959,31 +3959,15 @@ SC_FUNC int doawait(value *lval)
    * Composed "await asyncFn()" buffers its own hidden inner-start cells BELOW these
    * operator temporaries and frees them before the suspend, so it uses the SAME
    * spill/restore (the enclosing temporaries are all that remain live). */
-  if (pc_generator && getcallnesting()>0 && getcallargvariadic()>0) {
-    /* "await" being compiled INSIDE a VARIADIC call's argument list (e.g.
-     * printf("%d", await F())). Pawn emits call arguments in REVERSE order, so a
-     * sibling argument textually after the await is PUSHED BEFORE it at run time --
-     * live across the suspend. The runtime-exact spill copies them correctly, but
-     * the B region it copies into must be reserved large enough, and a variadic
-     * callee's pushed-argument count is not bounded by its fixed parameter list, so
-     * no safe compile-time reserve exists here. Reject cleanly; hoist the await to
-     * statement position: "new v = await F(); printf(\"%d\", v);". A leaf await in a
-     * FIXED-ARITY call ("foo(await F(), p, q)") IS supported -- the reserve is bounded
-     * by the enclosing callees' parameter footprint (getcallargbound). */
-    error(99);
-    lexclr(TRUE);
-    ldconst(0,sPRI);
-    if (lval!=NULL)
-      lval->ident=iEXPRESSION;
-    return FALSE;
-  } /* if */
   spillcount=(int)pc_exprtemp;
-  /* Leaf await inside a fixed-arity call-argument list: add the enclosing callees'
-   * parameter footprint (getcallargbound) to the reserve. pc_exprtemp counts only
-   * the operator temporaries visible in source order at the await; the sibling
-   * arguments pushed before it at run time (reverse emission) are bounded by the
-   * open calls' parameter counts. The runtime copy is still STK/FRM-bounded, so this
-   * only ever OVER-reserves. */
+  /* Leaf await inside a call-argument list: the sibling arguments pushed before this
+   * one at run time (reverse-order emission) are live across the suspend. They are
+   * pushed via push.pri, so pc_exprtemp already counts them; for a FIXED-ARITY call
+   * we additionally add the callee parameter footprint (getcallargbound) as a belt-
+   * and-suspenders bound. The runtime spill copy is STK/FRM-bounded, so an over-count
+   * only over-reserves. Both fixed-arity and VARIADIC (printf-style) enclosing calls
+   * are supported, in any argument position (verified with lifted-var, constant, and
+   * computed-call siblings). */
   if (pc_generator && getcallnesting()>0)
     spillcount+=(int)getcallargbound();
   spillslot=0;

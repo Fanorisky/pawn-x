@@ -2633,24 +2633,16 @@ SC_FUNC int getcallnesting(void)
 }
 /* Enclosing-call spill bound for a leaf "await" compiled inside a call-argument
  * list. Reverse-order emission means an argument textually AFTER the await is
- * PUSHED BEFORE it at run time and is live across the suspend, but pc_exprtemp
- * (captured in source order at the await) does not count those siblings. The
- * runtime-exact spill copies them correctly regardless, but the B region it copies
- * into must be RESERVED large enough. callargbound sums the declared parameter
- * footprint of every fixed-arity enclosing call currently open -- a safe upper
- * bound on those live siblings (a call pushes at most its parameter count). It is
- * NOT valid for a VARIADIC enclosing call (the pushed-argument count is not bounded
- * by the fixed parameter list), so callargvariadic counts those separately and
- * doawait() rejects an await nested inside one. */
+ * PUSHED BEFORE it at run time and is live across the suspend. Those siblings are
+ * pushed via push.pri, so pc_exprtemp already counts them; callargbound additionally
+ * sums the declared parameter footprint of every fixed-arity enclosing call open, as
+ * a belt-and-suspenders upper bound (a fixed-arity call pushes at most its parameter
+ * count). A VARIADIC enclosing call adds nothing here (its count is not bounded by
+ * the fixed parameter list) and relies on pc_exprtemp; both are supported. */
 static long callargbound=0L;
-static int callargvariadic=0;
 SC_FUNC long getcallargbound(void)
 {
   return callargbound;
-}
-SC_FUNC int getcallargvariadic(void)
-{
-  return callargvariadic;
 }
 static void callfunction(symbol *sym,value *lval_result,int matchparanthesis)
 {
@@ -2776,9 +2768,8 @@ static long nest_stkusage=0L;
   /* book this call's argument footprint into the enclosing-call spill bound (see
    * callargbound above), so a leaf "await" nested in one of these arguments can
    * reserve enough B cells for the sibling arguments live across its suspend. A
-   * variadic callee's pushed-argument count is not bounded by its fixed parameter
-   * list, so it is tracked in callargvariadic instead and doawait() rejects await
-   * inside it. */
+   * variadic callee is not bounded by its fixed parameter list, so it adds nothing
+   * (the await relies on pc_exprtemp counting the pushed siblings). */
   { int ci;
     call_isvariadic=FALSE;
     call_fixedparams=0;
@@ -2786,9 +2777,7 @@ static long nest_stkusage=0L;
       if (arg[ci].ident==iVARARGS) { call_isvariadic=TRUE; break; }
       call_fixedparams++;
     } /* for */
-    if (call_isvariadic)
-      callargvariadic++;
-    else
+    if (!call_isvariadic)
       callargbound+=call_fixedparams;
   }
   stgmark(sSTARTREORDER);
@@ -3404,11 +3393,9 @@ static long nest_stkusage=0L;
   modheap((locheap-decl_heap)*sizeof(cell));  /* remove heap space, so negative delta */
   decl_heap=locheap;
   /* unbook this call's argument footprint from the enclosing-call spill bound */
-  if (call_isvariadic)
-    callargvariadic--;
-  else
+  if (!call_isvariadic)
     callargbound-=call_fixedparams;
-  assert(callargbound>=0 && callargvariadic>=0);
+  assert(callargbound>=0);
   callnesting--;
 }
 

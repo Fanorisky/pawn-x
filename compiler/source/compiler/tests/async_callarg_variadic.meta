@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+mid=5 a=11 b=22
+
+last=6
+
+consts=7 42 77
+
+computed=8 1003
+
+active=0
+
+async_callarg_variadic.amx returns 0
+"""
+}
