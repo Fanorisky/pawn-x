@@ -91,36 +91,44 @@
  *     into the awaiter of a composed "await asyncFn()" -- fault propagation up the
  *     compose chain, no explicit re-signal at each level. See the fault-channel block.
  *   * MID-EXPRESSION await -- "await" may sit inside a larger expression with live
- *     operand temporaries ("p + await F()", "p*2 + await F()", "total = total +
- *     await F()" in a loop, "base + await asyncFn()", ...). The live operand-stack
- *     region is spilled into B before the suspend and restored after (runtime-exact
- *     copy), so any expression shape / control flow reads back correctly. This
- *     covers both LEAF and COMPOSED awaits mid-expression, and a LEAF await used as
- *     an argument to a FIXED-ARITY call ("foo(await F(), p, q)", any position,
- *     including nested calls -- the reserve is bounded by the enclosing callees'
- *     parameter footprint).
+ *     operand temporaries ("p + await F()", "base + await asyncFn()", ...). The live
+ *     operand-stack region is spilled into B before the suspend and restored after
+ *     (runtime-exact copy), covering both LEAF and COMPOSED awaits mid-expression.
+ *   * MULTIPLE awaits in ONE statement -- "await" binds at unary precedence, so
+ *     "await A() + await B()" is "(await A()) + (await B())": two independent
+ *     suspends the enclosing operator combines. Works for leaf+leaf, three-in-a-row,
+ *     an await in a ternary/operator, composed+composed, and leaf-then-composed.
+ *   * A leaf "await" as a call ARGUMENT, in a FIXED-ARITY or VARIADIC call
+ *     ("foo(await F(), p, q)", "printf(\"%d\", await F())"), in any argument position,
+ *     including nested calls. The sibling arguments (pushed before it at run time)
+ *     are spilled and restored across the suspend.
  *   * COMPOSED "await asyncFn()" inside a while/for/do loop ("for (...) total +=
  *     await Step(i);") -- each iteration starts the inner from the arena and frees
  *     it on completion; the operand stack balances across the back-edge. Works with
  *     break/continue and past ASYNC_MAX iterations (arena reuse).
+ *   * FIXED-SIZE 1-D array / string PARAMETERS (foo(buf[4]), Greet(name[16])): the
+ *     prologue COPIES the caller's cells into the coroutine's block on the fresh
+ *     call, so the coroutine owns them and they survive the suspend. Works for a
+ *     top-level Async_Start arg and a composed "await F(arr)" arg.
+ *   * MULTI-RESULT delivery: Async_ResumeArr(token, values, size) hands a coroutine
+ *     an ARRAY (the await returns the element count); the body reads it with
+ *     Async_InboxArr(dest) (await_arr parity). See the MULTI-RESULT block below.
  *
  * ============================ STILL UNSUPPORTED =========================
- *   * Array / "&"reference PARAMS across an await -- rejected with error 268: such
- *     a parameter points into the CALLER's frame, which is gone once the coroutine
- *     suspends, so it cannot be lifted (pass by value / copy in instead).
+ *   * UNSIZED ("buf[]"), MULTI-DIMENSIONAL, or by-"&"reference PARAMS across an
+ *     await -- rejected with error 268: no compile-time cell count to copy in, or
+ *     the parameter aliases the caller's frame (which is gone at the suspend). Give
+ *     an array parameter a fixed size ("buf[64]") so it can be copied in, or read it
+ *     before the first await.
  *   * "await" inside a "foreach" -- rejected (error 099); "foreach" over an async
  *     fn -- rejected (error 267).
- *   * A leaf "await" inside a VARIADIC call's argument list ("printf(\"%d\",
- *     await F())") -- rejected with error 099: a variadic callee's pushed-argument
- *     count is not bounded by its fixed parameter list, so the spill's B reserve
- *     has no safe compile-time bound. Hoist to a statement ("new v = await F();
- *     printf(\"%d\", v);"). A leaf await in a FIXED-ARITY call IS supported (above).
- *   * MORE THAN ONE "await" in a SINGLE statement ("await A() + await B()",
- *     "foo(await A(), await B())", "await Inner(1) + await Inner(2)") -- rejected
- *     with error 099: two suspends in one expression do not sequence correctly
- *     through the shared operand path (the earlier result is lost). Split into
- *     separate statements ("new a = await A(); new b = await B(); ... a + b").
- *     A suspend at arbitrary call-stack depth inside a non-async helper is
+ *   * A COMPOSED await whose result a following LEAF await must carry across its own
+ *     suspend, in one expression ("await Inner() + await X()") -- rejected (error
+ *     099): the composed await returns through the awaiter call.pri chain and a
+ *     following leaf suspend cannot unwind back to a resumable point. Reorder so the
+ *     leaf comes first, or split into separate statements. (Every other multi-await
+ *     shape works -- see SUPPORTED.)
+ *   * A suspend at arbitrary call-stack depth inside a non-async helper is
  *     unsupported (needs whole-frame handling).
  *   * IMPLICIT fault auto-raise: a leaf fault an inner IGNORED does not raise by
  *     itself -- the inner must call Async_Fail(err) to propagate (explicit raise IS
