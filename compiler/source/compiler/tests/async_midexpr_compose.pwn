@@ -32,15 +32,8 @@ async TwoTemp(a, b)
     return r;
 }
 
-async TwoAwait()
-{
-    // the HARD shape: the first composed await's RESULT is a live operator temp
-    // across a SECOND composed await's suspend.  await Inner(1) -> 101 (pushed),
-    // await Inner(2) -> 102, 101 + 102 = 203.
-    new r = await Inner(1) + await Inner(2);
-    printf("twoawait=%d\n", r);
-    return r;
-}
+// NOTE: two awaits in ONE expression ("await Inner(1) + await Inner(2)") are rejected
+// -- at most one await per statement (see async_multiawait_reject).
 
 main()
 {
@@ -49,10 +42,6 @@ main()
 
     Async_Start(TwoTemp, 3, 7);
     Async_ResumeInner(100);
-
-    Async_Start(TwoAwait);
-    Async_ResumeInner(100);               // Inner(1) -> 101, re-suspends Outer
-    Async_ResumeInner(100);               // Inner(2) -> 102, resumes: 101+102=203
 
     printf("active=%d\n", Async_ActiveCount());
 }

@@ -2598,6 +2598,27 @@ SC_FUNC int getcallnesting(void)
 {
   return callnesting;
 }
+/* Enclosing-call spill bound for a leaf "await" compiled inside a call-argument
+ * list. Reverse-order emission means an argument textually AFTER the await is
+ * PUSHED BEFORE it at run time and is live across the suspend, but pc_exprtemp
+ * (captured in source order at the await) does not count those siblings. The
+ * runtime-exact spill copies them correctly regardless, but the B region it copies
+ * into must be RESERVED large enough. callargbound sums the declared parameter
+ * footprint of every fixed-arity enclosing call currently open -- a safe upper
+ * bound on those live siblings (a call pushes at most its parameter count). It is
+ * NOT valid for a VARIADIC enclosing call (the pushed-argument count is not bounded
+ * by the fixed parameter list), so callargvariadic counts those separately and
+ * doawait() rejects an await nested inside one. */
+static long callargbound=0L;
+static int callargvariadic=0;
+SC_FUNC long getcallargbound(void)
+{
+  return callargbound;
+}
+SC_FUNC int getcallargvariadic(void)
+{
+  return callargvariadic;
+}
 static void callfunction(symbol *sym,value *lval_result,int matchparanthesis)
 {
 static long nest_stkusage=0L;
@@ -2624,6 +2645,8 @@ static long nest_stkusage=0L;
                     * marked uREAD here -- see the redirect block below */
   value lval = {0};
   arginfo *arg;
+  int call_isvariadic=FALSE;    /* this callee has a "..." variadic parameter */
+  int call_fixedparams=0;       /* this callee's fixed (non-variadic) parameter count */
   char arglist[sMAXARGS];
   constvalue_root arrayszlst = { NULL, NULL};/* array size list starts empty */
   constvalue_root taglst = { NULL, NULL};    /* tag list starts empty */
@@ -2717,6 +2740,24 @@ static long nest_stkusage=0L;
   /* run through the arguments */
   arg=sym->dim.arglist;
   assert(arg!=NULL);
+  /* book this call's argument footprint into the enclosing-call spill bound (see
+   * callargbound above), so a leaf "await" nested in one of these arguments can
+   * reserve enough B cells for the sibling arguments live across its suspend. A
+   * variadic callee's pushed-argument count is not bounded by its fixed parameter
+   * list, so it is tracked in callargvariadic instead and doawait() rejects await
+   * inside it. */
+  { int ci;
+    call_isvariadic=FALSE;
+    call_fixedparams=0;
+    for (ci=0; arg[ci].ident!=0; ci++) {
+      if (arg[ci].ident==iVARARGS) { call_isvariadic=TRUE; break; }
+      call_fixedparams++;
+    } /* for */
+    if (call_isvariadic)
+      callargvariadic++;
+    else
+      callargbound+=call_fixedparams;
+  }
   stgmark(sSTARTREORDER);
   memset(arglist,ARG_UNHANDLED,sizeof arglist);
   if (matchparanthesis) {
@@ -3329,6 +3370,12 @@ static long nest_stkusage=0L;
   assert(decl_heap>=locheap);
   modheap((locheap-decl_heap)*sizeof(cell));  /* remove heap space, so negative delta */
   decl_heap=locheap;
+  /* unbook this call's argument footprint from the enclosing-call spill bound */
+  if (call_isvariadic)
+    callargvariadic--;
+  else
+    callargbound-=call_fixedparams;
+  assert(callargbound>=0 && callargvariadic>=0);
   callnesting--;
 }
 

@@ -3917,7 +3917,7 @@ static void async_emit_restore(int spillslot)
 SC_FUNC int doawait(value *lval)
 {
   int ident,tag,localstaging,index;
-  int spillcount,spillslot;
+  int spillcount,spillslot,priorawait;
   cell val;
   symbol *sym,*helper;
 
@@ -3936,6 +3936,26 @@ SC_FUNC int doawait(value *lval)
     ldconst(0,sPRI);
     return FALSE;
   } /* if */
+  /* AT MOST ONE "await" per statement. A second await in the same statement would
+   * need the first await's result -- or an operand temporary derived across it -- to
+   * survive the second suspend, but two suspends in one expression do not sequence
+   * correctly through the shared operand path (the earlier value is lost and the
+   * coroutine leaks). This holds for every mix of leaf and composed awaits, and was a
+   * silent miscompile. Reject cleanly; split into separate statements:
+   * "new a = await A(); new b = await B(); r = a + b;". pc_awaitseq resets per
+   * statement (alongside pc_exprtemp). The FIRST await proceeds; the second lands
+   * here. (A single await mid-expression, as one call argument, or composed, is fully
+   * supported.) */
+  priorawait=pc_awaitseq;
+  pc_awaitseq++;
+  if (pc_generator && priorawait>0) {
+    error(99);
+    lexclr(TRUE);
+    ldconst(0,sPRI);
+    if (lval!=NULL)
+      lval->ident=iEXPRESSION;
+    return FALSE;
+  } /* if */
   /* MID-EXPRESSION await (operand-stack spill): in an "async" body every local is
    * LIFTED into B, so "declared" never rises and the check above is blind to
    * OPERATOR temporaries (the "base" pushed by "base + await F()"). Those temps
@@ -3949,17 +3969,17 @@ SC_FUNC int doawait(value *lval)
    * Composed "await asyncFn()" buffers its own hidden inner-start cells BELOW these
    * operator temporaries and frees them before the suspend, so it uses the SAME
    * spill/restore (the enclosing temporaries are all that remain live). */
-  if (pc_generator && getcallnesting()>0) {
-    /* "await" being compiled INSIDE a function call's argument list. Pawn emits
-     * call arguments in REVERSE order, so a sibling argument that is textually
-     * after the await is PUSHED BEFORE it at run time -- live across the suspend
-     * but NOT reflected in pc_exprtemp (which is captured, in source order, before
-     * those siblings are compiled). The operand-stack spill's compile-time reserve
-     * would then under-count and either overflow its B region or miss the siblings
-     * entirely. Reject cleanly rather than risk that; hoist the await to statement
-     * position: "new v = await F(); foo(..., v, ...);". (A leaf await OUTSIDE any
-     * call-arg list -- an operator operand like "a + await F()" -- is spilled and
-     * fully supported below.) */
+  if (pc_generator && getcallnesting()>0 && getcallargvariadic()>0) {
+    /* "await" being compiled INSIDE a VARIADIC call's argument list (e.g.
+     * printf("%d", await F())). Pawn emits call arguments in REVERSE order, so a
+     * sibling argument textually after the await is PUSHED BEFORE it at run time --
+     * live across the suspend. The runtime-exact spill copies them correctly, but
+     * the B region it copies into must be reserved large enough, and a variadic
+     * callee's pushed-argument count is not bounded by its fixed parameter list, so
+     * no safe compile-time reserve exists here. Reject cleanly; hoist the await to
+     * statement position: "new v = await F(); printf(\"%d\", v);". A leaf await in a
+     * FIXED-ARITY call ("foo(await F(), p, q)") IS supported -- the reserve is bounded
+     * by the enclosing callees' parameter footprint (getcallargbound). */
     error(99);
     lexclr(TRUE);
     ldconst(0,sPRI);
@@ -3968,6 +3988,14 @@ SC_FUNC int doawait(value *lval)
     return FALSE;
   } /* if */
   spillcount=(int)pc_exprtemp;
+  /* Leaf await inside a fixed-arity call-argument list: add the enclosing callees'
+   * parameter footprint (getcallargbound) to the reserve. pc_exprtemp counts only
+   * the operator temporaries visible in source order at the await; the sibling
+   * arguments pushed before it at run time (reverse emission) are bounded by the
+   * open calls' parameter counts. The runtime copy is still STK/FRM-bounded, so this
+   * only ever OVER-reserves. */
+  if (pc_generator && getcallnesting()>0)
+    spillcount+=(int)getcallargbound();
   spillslot=0;
   if (pc_generator && spillcount>0) {
     spillslot=curfunc->genlocals;
@@ -8464,6 +8492,7 @@ static void statement(int *lastindent,int allow_decl)
   } /* if */
   errorset(sRESET,0);
   pc_exprtemp=0;                /* new statement: no live operand-stack temporaries yet */
+  pc_awaitseq=0;               /* ...and no "await" suspends emitted yet this statement */
 
   tok=lex(&val,&st);
   if ((emit_flags & efBLOCK)!=0) {

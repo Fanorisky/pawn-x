@@ -57,6 +57,7 @@ SC_VDEFINE int sc_labnum=0;                 /* number of (internal) labels */
 SC_VDEFINE int staging=FALSE;               /* true if staging output */
 SC_VDEFINE cell declared=0;                 /* number of local cells declared */
 SC_VDEFINE cell pc_exprtemp=0;              /* live operand-stack temporaries in the current statement */
+SC_VDEFINE int pc_awaitseq=0;              /* count of "await" suspends already emitted in the current statement (doawait rejects a second leaf await that must carry a live temp across it -- see doawait) */
 SC_VDEFINE cell pc_genlocalsbase=0;         /* frame offset of a generator's "localsbase" cell */
 SC_VDEFINE cell glb_declared=0;             /* number of global cells declared */
 SC_VDEFINE cell code_idx=0;                 /* number of bytes with generated code */

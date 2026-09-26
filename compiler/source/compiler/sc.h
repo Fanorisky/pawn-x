@@ -921,6 +921,8 @@ SC_FUNC void ffswitch(int label);
 SC_FUNC void ffcase(cell value,char *labelname,int newtable);
 SC_FUNC void ffcall(symbol *sym,const char *label,int numargs);
 SC_FUNC int getcallnesting(void);
+SC_FUNC long getcallargbound(void);
+SC_FUNC int getcallargvariadic(void);
 SC_FUNC void ffret(int remparams);
 SC_FUNC void ffabort(int reason);
 SC_FUNC void ffbounds(cell size);
@@ -1097,6 +1099,7 @@ SC_VDECL int sc_labnum;       /* number of (internal) labels */
 SC_VDECL int staging;         /* true if staging output */
 SC_VDECL cell declared;       /* number of local cells declared */
 SC_VDECL cell pc_exprtemp;    /* live operand-stack temporaries in the current statement (pushreg/popreg balance); read by doawait to reject a mid-expression suspend */
+SC_VDECL int pc_awaitseq;     /* count of "await" suspends already emitted in the current statement; doawait rejects a second leaf await that must carry a live temp across it */
 SC_VDECL cell pc_genlocalsbase;/* frame offset of a coroutine generator's hidden
                                * "localsbase" cell (base of its state block);
                                * used to emit lifted-local access (see sc4.c) */
