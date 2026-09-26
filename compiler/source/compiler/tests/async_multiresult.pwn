@@ -28,6 +28,19 @@ async Named()
     return 1;
 }
 
+// A coroutine resumed by a PLAIN Async_Resume (no array) must see an EMPTY inbox,
+// even when it reuses a slot a previous Async_ResumeArr coroutine left data in --
+// __async_deliver resets the element count on every resume.
+async NoArray()
+{
+    new dest[8];
+    dest[0] = -9;
+    new n = await 0;                    // plain resume -> await returns the value (0), no array
+    new got = Async_InboxArr(dest);
+    printf("noarray n=%d got=%d d0=%d\n", n, got, dest[0]);
+    return 1;
+}
+
 main()
 {
     new t;
@@ -35,5 +48,6 @@ main()
     t = Async_Start(Row);   Async_ResumeArr(t, vals, 5);   // await->5; sum 150
     new msg[16] = "Ada";
     t = Async_Start(Named); Async_ResumeArr(t, msg, 4);    // "Ada\0"
+    t = Async_Start(NoArray); Async_Resume(t, 0);          // reuses a freed slot; inbox empty
     printf("active=%d\n", Async_ActiveCount());
 }

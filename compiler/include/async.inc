@@ -445,10 +445,24 @@ stock g_asyncErr    = 0;                /* error code delivered with that failur
 stock g_asyncPropagate    = 0;          /* an async body called Async_Fail() -> raise into its awaiter */
 stock g_asyncPropagateErr = 0;          /* the code to raise */
 
-/* __async_deliver: the shared resume core for Async_Resume / Async_ResumeError.
- * Sets the fault globals the resuming body will observe, then drives one resume
- * under the reentrancy guard and reclaims the slot on completion. Internal. */
-stock __async_deliver(token, value, bool:failed, err)
+/* ---- MULTI-RESULT (array) inbox state (see Async_ResumeArr / Async_InboxArr) ----
+ * Declared here (before __async_deliver) so every resume can reset the delivered
+ * element count: a plain Async_Resume / Async_ResumeError presents "no array"
+ * (length 0), while Async_ResumeArr stages the buffer and passes the count in. This
+ * keeps a slot REUSED by a later coroutine from reading a previous coroutine's stale
+ * array. */
+#if !defined ASYNC_RESULT_MAX
+    #define ASYNC_RESULT_MAX 16         /* max cells one Async_ResumeArr result carries */
+#endif
+static stock g_asyncResult[ASYNC_SLOTS][ASYNC_RESULT_MAX];  /* per-slot array inbox */
+static stock g_asyncResultLen[ASYNC_SLOTS];                 /* element count for the CURRENT resume */
+
+/* __async_deliver: the shared resume core for Async_Resume / Async_ResumeError /
+ * Async_ResumeArr. Sets the fault globals and the array-result length the resuming
+ * body will observe, then drives one resume under the reentrancy guard and reclaims
+ * the slot on completion. "arrlen" is the element count Async_InboxArr should report
+ * for THIS resume (0 for a plain/error resume that carries no array). Internal. */
+stock __async_deliver(token, value, bool:failed, err, arrlen)
 {
     new idx = token - 1;
     if (idx < 0 || idx >= ASYNC_SLOTS)
@@ -462,6 +476,7 @@ stock __async_deliver(token, value, bool:failed, err)
     g_asyncFailed = failed ? 1 : 0;     /* fault channel: body checks Async_Failed() after the await */
     g_asyncErr    = err;
     g_asyncPropagate = 0;               /* bound any pending raise to a single resume cycle */
+    g_asyncResultLen[idx] = arrlen;     /* array inbox: 0 unless Async_ResumeArr staged one */
 
     g_asyncRunning[idx] = 1;            /* body is now on the stack */
     new done = __async_resume(B, value);
@@ -473,7 +488,7 @@ stock __async_deliver(token, value, bool:failed, err)
 
 stock Async_Resume(token, value)
 {
-    __async_deliver(token, value, false, 0);
+    __async_deliver(token, value, false, 0, 0);
 }
 
 /* Async_ResumeError(token, err): resume the coroutine reporting that the awaited
@@ -482,7 +497,7 @@ stock Async_Resume(token, value)
  * Async_Failed() and reads the code with Async_Error() immediately after. */
 stock Async_ResumeError(token, err)
 {
-    __async_deliver(token, err, true, err);
+    __async_deliver(token, err, true, err, 0);
 }
 
 /* ---- MULTI-RESULT (array) delivery: PawnPlus await_arr parity -----------------
@@ -492,11 +507,13 @@ stock Async_ResumeError(token, err)
  * result buffer and the await returns the element COUNT. The coroutine copies the
  * values out right after the await with Async_InboxArr(dest). Pure library over the
  * existing resume seam -- no compiler change, no new opcode. */
-#if !defined ASYNC_RESULT_MAX
-    #define ASYNC_RESULT_MAX 16         /* max cells one Async_ResumeArr result carries */
-#endif
-static stock g_asyncResult[ASYNC_SLOTS][ASYNC_RESULT_MAX];  /* per-slot array inbox */
-static stock g_asyncResultLen[ASYNC_SLOTS];                 /* element count last delivered */
+/* ---- MULTI-RESULT (array) delivery: PawnPlus await_arr parity -----------------
+ * A single "await" yields one cell. To hand a coroutine several values at once (a
+ * dialog's response+listitem+input, a query's row, ...), the resumer calls
+ * Async_ResumeArr(token, values, size): the values are stashed in the per-coroutine
+ * result buffer (declared above, near __async_deliver) and the await returns the
+ * element COUNT. The coroutine copies the values out right after the await with
+ * Async_InboxArr(dest). Pure library over the existing resume seam. */
 
 /* Async_ResumeArr(token, values[], size): deliver an ARRAY result and resume. The
  * await the coroutine is parked on returns "size" (the element count); the values
@@ -511,8 +528,9 @@ stock Async_ResumeArr(token, const values[], size = sizeof values)
         size = ASYNC_RESULT_MAX;
     for (new i = 0; i < size; i++)
         g_asyncResult[idx][i] = values[i];
-    g_asyncResultLen[idx] = size;
-    Async_Resume(token, size);          /* the await yields the element count */
+    /* deliver directly with arrlen=size so __async_deliver sets the count AFTER its
+     * own reset (a plain resume would reset it to 0). The await yields the count. */
+    __async_deliver(token, size, false, 0, size);
 }
 
 /* __async_inbox_arr(slot, dest, size): copy the coroutine's delivered array into
