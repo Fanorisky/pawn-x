@@ -477,6 +477,56 @@ stock Async_ResumeError(token, err)
     __async_deliver(token, err, true, err);
 }
 
+/* ---- MULTI-RESULT (array) delivery: PawnPlus await_arr parity -----------------
+ * A single "await" yields one cell. To hand a coroutine several values at once (a
+ * dialog's response+listitem+input, a query's row, ...), the resumer calls
+ * Async_ResumeArr(token, values, size): the values are stashed in a per-coroutine
+ * result buffer and the await returns the element COUNT. The coroutine copies the
+ * values out right after the await with Async_InboxArr(dest). Pure library over the
+ * existing resume seam -- no compiler change, no new opcode. */
+#if !defined ASYNC_RESULT_MAX
+    #define ASYNC_RESULT_MAX 16         /* max cells one Async_ResumeArr result carries */
+#endif
+static stock g_asyncResult[ASYNC_SLOTS][ASYNC_RESULT_MAX];  /* per-slot array inbox */
+static stock g_asyncResultLen[ASYNC_SLOTS];                 /* element count last delivered */
+
+/* Async_ResumeArr(token, values[], size): deliver an ARRAY result and resume. The
+ * await the coroutine is parked on returns "size" (the element count); the values
+ * are read back with Async_InboxArr(). Over-long arrays are clamped to
+ * ASYNC_RESULT_MAX. A dead/unknown token is a safe no-op. */
+stock Async_ResumeArr(token, const values[], size = sizeof values)
+{
+    new idx = token - 1;
+    if (idx < 0 || idx >= ASYNC_SLOTS)
+        return;
+    if (size > ASYNC_RESULT_MAX)
+        size = ASYNC_RESULT_MAX;
+    for (new i = 0; i < size; i++)
+        g_asyncResult[idx][i] = values[i];
+    g_asyncResultLen[idx] = size;
+    Async_Resume(token, size);          /* the await yields the element count */
+}
+
+/* __async_inbox_arr(slot, dest, size): copy the coroutine's delivered array into
+ * dest, returns the element count (clamped to "size"). Internal; call the
+ * Async_InboxArr() macro, which supplies the running coroutine's own slot. */
+stock __async_inbox_arr(idx, dest[], size)
+{
+    if (idx < 0 || idx >= ASYNC_SLOTS)
+        return 0;
+    new n = g_asyncResultLen[idx];
+    if (n > size)
+        n = size;
+    for (new i = 0; i < n; i++)
+        dest[i] = g_asyncResult[idx][i];
+    return n;
+}
+/* Async_InboxArr(dest): inside a coroutine body, right after an await completed by
+ * Async_ResumeArr, copy the delivered array into "dest"; returns the element count.
+ * (A macro so __async_self() resolves in the coroutine's own frame, like
+ * Async_Self().) */
+#define Async_InboxArr(%0) __async_inbox_arr(async_slot_of_addr(__async_self()), (%0), sizeof (%0))
+
 /* Async_Failed() / Async_Error(): inspect the fault channel right after an await
  * -- Async_Failed() is nonzero iff that await was completed via
  * Async_ResumeError; Async_Error() is the code. Valid only in the run
