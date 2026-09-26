@@ -39,6 +39,17 @@ async Login(playerid)
     return 1;
 }
 
+// LIST dialog: the response flag comes from the await, the chosen row from
+// Dialog_Listitem() -- same two-line shape as reading inputtext.
+async MenuList(playerid)
+{
+    if (await Dialog_Show(playerid, DIALOG_STYLE_LIST, "Pilih Buah", "Apple\nBanana\nCherry", "OK", "Batal"))
+        printf("[list]    player %d listitem=%d (Dialog_Listitem accessor)", playerid, Dialog_Listitem(playerid));
+    else
+        printf("[list]    player %d cancelled", playerid);
+    return 1;
+}
+
 // Real dialog responses land here. A production port would intercept this with
 // pawn-x's native "hook" keyword; the PoC forwards it explicitly.
 public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
@@ -54,9 +65,11 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 forward SimMenu();
 forward SimLogin1();
 forward SimLogin2();
+forward SimList();
 public SimMenu()   { Dialog_Resolve(0, 1, 2, "hello"); }
 public SimLogin1() { Dialog_Resolve(1, 1, 0, "Ada"); }
 public SimLogin2() { Dialog_Resolve(1, 1, 0, "s3cret"); }
+public SimList()   { Dialog_Resolve(2, 1, 1, ""); }        // OK, listitem 1 (Banana)
 
 public OnGameModeInit()
 {
@@ -67,6 +80,9 @@ public OnGameModeInit()
     Async_Start(Login, 1);                   // chained login flow for player 1
     SetTimer("SimLogin1", 400, false);       // answers dialog 1 @400ms
     SetTimer("SimLogin2", 700, false);       // ...then dialog 2 @700ms
+
+    Async_Start(MenuList, 2);                // one-liner list dialog for player 2
+    SetTimer("SimList", 500, false);         // answers @500ms
     return 1;
 }
 main() {}
