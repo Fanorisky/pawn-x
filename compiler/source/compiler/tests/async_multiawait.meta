@@ -1,0 +1,18 @@
+{
+  'test_type': 'runtime',
+  'output': """
+leafleaf=9
+
+three=6
+
+tern=111
+
+compcomp=203
+
+leafcomp=17
+
+active=0
+
+async_multiawait.amx returns 0
+"""
+}

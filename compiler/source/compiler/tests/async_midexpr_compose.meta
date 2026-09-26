@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+r=110
+
+two=113
+
+active=0
+
+async_midexpr_compose.amx returns 0
+"""
+}

@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+hits=2
+
+active=0
+
+async_await_for_clauses.amx returns 0
+"""
+}

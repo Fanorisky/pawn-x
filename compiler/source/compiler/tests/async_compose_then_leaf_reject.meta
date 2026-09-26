@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+async_compose_then_leaf_reject.pwn(16) : error 099: a "yield" cannot appear where stack storage is live (e.g. inside a nested "foreach") in v1
+"""
+}

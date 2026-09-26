@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+worker id=5 got=42
+
+done
+
+async_resume_done.amx returns 0
+"""
+}

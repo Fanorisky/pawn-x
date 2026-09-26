@@ -308,6 +308,12 @@ typedef struct s_callhookgroup {
  * it persists into the next pass (reduce_referrers only clears uREAD|uWRITTEN),
  * which is what makes the redirect decl-order-independent and pass-stable. */
 #define uCALLHOOK   0x40000
+/* async coroutine function (experiment 012, spike): compiled on the uGENERATOR
+ * engine, but its suspend point is "await" and it is driven by a scheduler
+ * rather than by "foreach". Set at declaration ("async Name(...)") so
+ * generator_isgen() answers TRUE pass-stably, and so gen_reserved() reserves the
+ * extra head slot (B[1], the await-result inbox) in the state block. */
+#define uASYNC      0x80000
 /* uRETNONE is not stored in the "usage" field of a symbol. It is
  * used during parsing a function, to detect a mix of "return;" and
  * "return value;" in a few special cases.
@@ -489,7 +495,12 @@ enum {
 
   /* reserved words (statements) */
   t__ADDRESSOF,
+  t__ASYNCRESUME,
+  t__ASYNCSELF,
+  t__ASYNCSTART,
   tASSERT,
+  tASYNC,
+  tAWAIT,
   tBEGIN,
   tBREAK,
   tCASE,
@@ -865,6 +876,11 @@ SC_FUNC int check_userop(void (*oper)(void),int tag1,int tag2,int numparam,
 SC_FUNC int matchtag(int formaltag,int actualtag,int allowcoerce);
 SC_FUNC int checktag(int tags[],int numtags,int exprtag);
 SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult);
+SC_FUNC int expression_unary(cell *val,int *tag,symbol **symptr);
+SC_FUNC int doawait(value *lval);       /* "await <expr>" (exp 012 async spike) */
+SC_FUNC int doasyncstart(value *lval);  /* "__async_start(Func,args...)" -> B (exp 012) */
+SC_FUNC int doasyncresume(value *lval); /* "__async_resume(B,value)" -> completed? (exp 012) */
+SC_FUNC int doasyncself(value *lval);   /* "__async_self()" -> current coroutine's B (exp 012) */
 SC_FUNC int parse_foreach_operand(value *lval,cell *heapsize);
 SC_FUNC int sc_getstateid(constvalue **automaton,constvalue **state);
 SC_FUNC cell array_totalsize(symbol *sym);
@@ -906,6 +922,9 @@ SC_FUNC void ffswitch(int label);
 SC_FUNC void ffcase(cell value,char *labelname,int newtable);
 SC_FUNC void ffcaserange(cell lo,cell hi,const char *bodyname,int skiplabel);
 SC_FUNC void ffcall(symbol *sym,const char *label,int numargs);
+SC_FUNC int getcallnesting(void);
+SC_FUNC long getcallargbound(void);
+SC_FUNC int getcallargvariadic(void);
 SC_FUNC void ffret(int remparams);
 SC_FUNC void ffabort(int reason);
 SC_FUNC void ffbounds(cell size);
@@ -1081,6 +1100,8 @@ SC_VDECL int stgidx;          /* index to the staging buffer */
 SC_VDECL int sc_labnum;       /* number of (internal) labels */
 SC_VDECL int staging;         /* true if staging output */
 SC_VDECL cell declared;       /* number of local cells declared */
+SC_VDECL cell pc_exprtemp;    /* live operand-stack temporaries in the current statement (pushreg/popreg balance); read by doawait to reject a mid-expression suspend */
+SC_VDECL int pc_await_composed;     /* set once a composed "await asyncFn()" has suspended in the current expression; doawait rejects a following leaf await carrying a live temp (compose-then-leaf) */
 SC_VDECL cell pc_genlocalsbase;/* frame offset of a coroutine generator's hidden
                                * "localsbase" cell (base of its state block);
                                * used to emit lifted-local access (see sc4.c) */

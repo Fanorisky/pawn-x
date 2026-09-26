@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(started; suspended at await)
+
+got=7
+
+name=player-42 len=9
+
+stable=1
+
+async_array_string.amx returns 0
+"""
+}

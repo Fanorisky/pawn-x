@@ -1,0 +1,7 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+async_err_await_outside.pwn(9) : error 265: "await" is only valid inside an "async" function
+async_err_await_outside.pwn(9) : warning 215: expression has no effect
+"""
+}

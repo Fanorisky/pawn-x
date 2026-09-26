@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+sel=0 r=103
+
+sel=1 r=106
+
+sel=2 r=110
+
+loop total=60
+
+active=0
+
+async_midexpr.amx returns 0
+"""
+}

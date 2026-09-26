@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+async_array_param_size_reject.pwn(20) : error 047: array sizes do not match, or destination array is too small
+"""
+}

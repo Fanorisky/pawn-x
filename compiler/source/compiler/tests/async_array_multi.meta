@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(started; suspended at await)
+
+got=99
+
+row0: 10 11 12
+
+row1: 13 14 15
+
+sum=75
+
+async_array_multi.amx returns 0
+"""
+}

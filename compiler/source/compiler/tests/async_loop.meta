@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+sumloop total=60
+
+whilearr 10 12 14 16
+
+active=0
+
+async_loop.amx returns 0
+"""
+}

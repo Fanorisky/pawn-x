@@ -841,6 +841,39 @@ SC_FUNC int expression(cell *val,int *tag,symbol **symptr,int chkfuncresult)
   return lval.ident;
 }
 
+/*  expression_unary - like expression(), but parses only a UNARY-precedence operand
+ *  (hier2), stopping at the first binary operator. doawait() uses this so "await"
+ *  binds tightly, like a unary prefix operator: "await A() + await B()" parses as
+ *  "(await A()) + (await B())" -- two independent suspends the enclosing "+" then
+ *  combines -- NOT "await(A() + await B())", which the full-precedence expression()
+ *  would produce (swallowing the trailing "+ await B()" into this await's operand and
+ *  tangling the two suspends). A complex awaitable can still be forced with parens:
+ *  "await (cond ? a : b)".
+ */
+SC_FUNC int expression_unary(cell *val,int *tag,symbol **symptr)
+{
+  int locheap=decl_heap;
+  value lval={0};
+
+  if (hier2(&lval))
+    rvalue(&lval);
+  assert(decl_heap>=locheap);
+  if (!pc_retexpr)
+    modheap((locheap-decl_heap)*sizeof(cell));
+  else
+    pc_retheap=(locheap-decl_heap)*sizeof(cell);
+  decl_heap=locheap;
+
+  if (lval.ident==iCONSTEXPR && val!=NULL)
+    *val=lval.constval;
+  if (tag!=NULL)
+    *tag=lval.tag;
+  if (symptr!=NULL)
+    *symptr=lval.sym;
+  return lval.ident;
+}
+
+
 /*  parse_foreach_operand
  *
  *  Parses the "foreach" operand (the expression after the ':') and leaves the
@@ -2212,6 +2245,33 @@ static int primary(value *lval)
     ldconst(0,sPRI);
     return FALSE;       /* not an lvalue */
   } /* if */
+  if (tok==tAWAIT) {
+    /* "await <expr>" (experiment 012 spike): the async coroutine's suspend
+     * point, used in expression position. doawait() evaluates the awaitable,
+     * suspends via the generator engine, and on resume leaves the delivered
+     * value in PRI. */
+    return doawait(lval);
+  } /* if */
+  if (tok==t__ASYNCSTART) {
+    /* "__async_start(Fn, args...)" (exp 012): allocate a coroutine state block,
+     * run it to its first "await", and yield the block B in PRI. Used in
+     * expression position so the in-script registry can wrap it:
+     * "Async_Register(__async_start(Fn, args))". */
+    return doasyncstart(lval);
+  } /* if */
+  if (tok==t__ASYNCRESUME) {
+    /* "__async_resume(B, value)" (exp 012): generic token-dispatched resume via
+     * "call.pri" through B[ASYNC_ENTRY_SLOT]; yields 1 in PRI if the coroutine
+     * completed on this resume, else 0. */
+    return doasyncresume(lval);
+  } /* if */
+  if (tok==t__ASYNCSELF) {
+    /* "__async_self()" (exp 012): inside an "async" body, yields the current
+     * coroutine's own state block B in PRI, so a script can register itself with
+     * the scheduler (Async_Register(__async_self())) and be resumed by token
+     * when an external event completes the value it is awaiting. */
+    return doasyncself(lval);
+  } /* if */
   if (tok==tCONTINUE) {
     /* "continue(...)" inside a call-site hook body (experiment 010) is the
      * chain-advance intrinsic: it lowers to a call to the target's chain
@@ -2566,10 +2626,34 @@ void fwdpopnative(int skip)
  *  Generates code to call a function. This routine handles default arguments
  *  and positional as well as named parameters.
  */
+static int callnesting=0;       /* call-argument evaluation depth (was a callfunction static); exposed via getcallnesting() so doawait() can tell an "await" is being compiled inside a call's argument list, where reverse-order argument emission makes the operand-stack spill's compile-time bound unreliable */
+SC_FUNC int getcallnesting(void)
+{
+  return callnesting;
+}
+/* Enclosing-call spill bound for a leaf "await" compiled inside a call-argument
+ * list. Reverse-order emission means an argument textually AFTER the await is
+ * PUSHED BEFORE it at run time and is live across the suspend. callargbound sums the
+ * declared parameter footprint of every FIXED-ARITY enclosing call open -- a safe
+ * upper bound on those live siblings, since a fixed-arity call pushes at most its
+ * parameter count regardless of where the await sits among the args. A VARIADIC
+ * enclosing call is NOT bounded by its fixed parameter list (an unknown number of
+ * trailing args follow the await), and pc_exprtemp -- captured at the doawait moment,
+ * before those trailing args are emitted -- does NOT count them either; so no safe
+ * compile-time reserve exists and callargvariadic makes doawait reject the await. */
+static long callargbound=0L;
+static int callargvariadic=0;
+SC_FUNC long getcallargbound(void)
+{
+  return callargbound;
+}
+SC_FUNC int getcallargvariadic(void)
+{
+  return callargvariadic;
+}
 static void callfunction(symbol *sym,value *lval_result,int matchparanthesis)
 {
 static long nest_stkusage=0L;
-static int nesting=0;
   int locheap;
   int close,lvalue;
   int argpos;       /* index in the output stream (argpos==nargs if positional parameters) */
@@ -2593,6 +2677,8 @@ static int nesting=0;
                     * marked uREAD here -- see the redirect block below */
   value lval = {0};
   arginfo *arg;
+  int call_isvariadic=FALSE;    /* this callee has a "..." variadic parameter */
+  int call_fixedparams=0;       /* this callee's fixed (non-variadic) parameter count */
   char arglist[sMAXARGS];
   constvalue_root arrayszlst = { NULL, NULL};/* array size list starts empty */
   constvalue_root taglst = { NULL, NULL};    /* tag list starts empty */
@@ -2670,10 +2756,10 @@ static int nesting=0;
   } /* if */
   locheap=decl_heap;
 
-  nesting++;
+  callnesting++;
   assert(nest_stkusage>=0);
   #if !defined NDEBUG
-    if (nesting==1)
+    if (callnesting==1)
       assert(nest_stkusage==0);
   #endif
   sc_allowproccall=FALSE;       /* parameters may not use procedure call syntax */
@@ -2686,6 +2772,23 @@ static int nesting=0;
   /* run through the arguments */
   arg=sym->dim.arglist;
   assert(arg!=NULL);
+  /* book this call's argument footprint into the enclosing-call spill bound (see
+   * callargbound above), so a leaf "await" nested in one of these arguments can
+   * reserve enough B cells for the sibling arguments live across its suspend. A
+   * variadic callee has no compile-time bound, so it is tracked in callargvariadic
+   * instead and doawait() rejects an await nested inside one. */
+  { int ci;
+    call_isvariadic=FALSE;
+    call_fixedparams=0;
+    for (ci=0; arg[ci].ident!=0; ci++) {
+      if (arg[ci].ident==iVARARGS) { call_isvariadic=TRUE; break; }
+      call_fixedparams++;
+    } /* for */
+    if (call_isvariadic)
+      callargvariadic++;
+    else
+      callargbound+=call_fixedparams;
+  }
   stgmark(sSTARTREORDER);
   memset(arglist,ARG_UNHANDLED,sizeof arglist);
   if (matchparanthesis) {
@@ -3298,7 +3401,13 @@ static int nesting=0;
   assert(decl_heap>=locheap);
   modheap((locheap-decl_heap)*sizeof(cell));  /* remove heap space, so negative delta */
   decl_heap=locheap;
-  nesting--;
+  /* unbook this call's argument footprint from the enclosing-call spill bound */
+  if (call_isvariadic)
+    callargvariadic--;
+  else
+    callargbound-=call_fixedparams;
+  assert(callargbound>=0 && callargvariadic>=0);
+  callnesting--;
 }
 
 /*  dbltest

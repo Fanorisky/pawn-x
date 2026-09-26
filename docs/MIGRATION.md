@@ -85,7 +85,93 @@ real native (kind-checked, reached by a direct SYSREQ), while
 `hook function`/`hook stock` require a pawn function/stock. A wrong modifier is
 a compile error (see the call-site-hook gotcha below).
 
-## Gotchas
+## Async / await (`y_async` → native `async`/`await`)
+
+**YSI never shipped `y_async`.** It is an *abandoned sketch*: `y_async_impl.inc`
+has an empty `_Async_A()` stub and bare design-note statements at file scope that
+do not compile; the enabling macros are half-built and Y_Less stopped maintaining
+YSI. So there is no working YSI runtime to migrate *from* — pawn-x is the first to
+actually implement `async`/`await`. The table below maps YSI's *intended* syntax
+(from its docs/sketch) to what pawn-x provides.
+
+Add the include (it is not part of the umbrella `<pawn-x>`):
+
+```pawn
+#include <async>
+```
+
+| YSI `y_async` (sketched) | pawn-x (native, working) |
+|---|---|
+| `async Func() { }` | `async Func() { }` (compiler keyword) |
+| `new r = await Op();` | `new r = await Op();` — suspend, resume with the result |
+| `await AsyncFunc(args)` (compose) | `await AsyncFunc(args)` — inner `return` resumes the awaiter |
+| *(scheduler unspecified)* | `new t = Async_Start(Fn, args);` — start, get a token |
+| *(completion unspecified)* | `Async_Resume(token, value)` — deliver result, resume |
+| *(no accounting)* | `Async_ActiveCount()` — live-coroutine count (lifetime check) |
+| leaf awaitable | `await Async_Pending()` (self-register) or `await 0` (resumed by the start token) |
+| `await X() -> (a, b, …)` (multi-result bind) | **not in MVP** — single scalar result only |
+
+Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests
+today; a real timer/dialog/DB/HTTP host adapter is a thin wrapper that calls the
+same entry (out of MVP scope). `async`/`await` is single-`.amx` and linear-body in
+this MVP, but scalar **and** array/string/multi-dim LOCALS now survive an `await`
+(they are lifted into the coroutine's own state block). What still doesn't cross an
+`await`: array / `&`reference PARAMS → error 268 (they point into the caller's
+frame); `await` inside a `foreach` → error 099; `foreach` over an `async` function
+→ error 267. See the header comment in `include/async.inc`.
+
+### vs PawnPlus `amx_async` / coroutines
+
+PawnPlus also offers `await`-style coroutines, but as a **runtime plugin**: it
+suspends by taking a full snapshot of the AMX machine (`amx::reset` `memcpy`s the
+whole stack + heap for that call) and restores it on resume. pawn-x needs **no
+plugin** — the compiler emits the state machine and copies only *the coroutine's
+own lifted locals* into a fixed data-segment block, so there is nothing to
+save/restore of the surrounding stack/heap. That is leaner and plugin-free; the
+trade-off is the documented compile-time limits above. Operator temporaries
+mid-expression are preserved (spilled into the state block and restored on resume),
+so `base + await F()`, multiple awaits in one statement (`await A() + await B()`), a
+leaf `await` as a **fixed-arity** call argument, and **fixed-size array/string
+parameters** (copied into the coroutine block) all work. What still needs the
+plugin's whole-frame snapshot: **unsized**/multi-dim/`&`reference params, a leaf
+`await` inside a **variadic** call's arguments, a composed-then-leaf await pair in one
+expression, and suspending at arbitrary
+call-stack depth inside a non-async helper.
+
+**Combinators and faults are now native too.** `Async_All(n)` / `Async_Any(n)` +
+`await Async_Wait(g)` fan several outstanding operations into one awaiting
+coroutine (PawnPlus `task_all` / `task_any` parity): a coroutine creates a gate,
+kicks off its operations, and parks until all (sum of results) or the first (its
+result) complete. Faults map `task_set_error`: `Async_ResumeError(token, err)` /
+`Async_GateFail(gate, err)` report failure, which the coroutine observes with
+`Async_Failed()`/`Async_Error()` right after the await (leaf-await model). Like
+everything else this is pure library code over the `Async_GateFeed(g, value)` /
+`Async_Resume` seam — no plugin, no compiler change, no new opcode.
+
+**A real host adapter now ships and is validated on a live open.mp server.**
+`async_omp.inc` bridges the resume seam to open.mp `SetTimerEx`, giving real
+awaitables — `await Async_Ms(1000)` suspends on an actual server timer, and a
+`public` callback resuming via `Async_Resume`/`Async_GateFeed` is the callback-await
+pattern. Validated on open.mp 1.5.8 (Timers.so): five coroutines park on real
+timers, resume in correct chronological order off the tick loop, with scalar +
+array locals surviving the suspend, combinators and the fault channel working, and
+the arena returning to baseline — no plugin, no leak (see
+`experiments/012-native-async/HOST-VALIDATION.md`). Composed `await asyncFn()`
+works **mid-expression** (`base + await Work()`) and **inside a loop**
+(`for (…) total += await Step(i);`); a leaf `await` works as a **fixed-arity** call
+argument (`foo(await F(), p, q)`, any position); **multiple awaits** may appear in one
+statement (`await A() + await B()`); **fixed-size array/string parameters** are copied
+into the coroutine block; and **multi-result** delivery
+(`Async_ResumeArr`/`Async_InboxArr`) gives `await_arr` parity. pawn-x still does
+**not** match PawnPlus's remaining breadth: IMPLICIT fault auto-raise (a leaf fault an
+inner ignored does not raise by itself — the inner calls
+`Async_Fail(err)` to propagate, which IS supported and propagates up the compose
+chain), suspending at arbitrary call-stack depth (nested non-async frames), unsized/
+multi-dim/`&`reference parameters across an await, a leaf `await` inside a **variadic**
+call's arguments, and a composed-then-leaf await pair in one expression (error
+268/099), plus JIT compatibility, all remain roadmap/non-goal.
+
+
 
 - **Don't mix.** Including any YSI `y_va`/`y_iterate`/`y_hooks` alongside pawn-x
   is a hard compile error (guarded in the includes).

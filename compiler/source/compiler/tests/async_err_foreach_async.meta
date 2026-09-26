@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+async_err_foreach_async.pwn(18) : error 267: "foreach" cannot iterate an "async" function (it is driven by a scheduler via "await", not "foreach")
+"""
+}

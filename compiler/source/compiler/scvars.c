@@ -56,6 +56,8 @@ SC_VDEFINE int stgidx=0;                    /* index to the staging buffer */
 SC_VDEFINE int sc_labnum=0;                 /* number of (internal) labels */
 SC_VDEFINE int staging=FALSE;               /* true if staging output */
 SC_VDEFINE cell declared=0;                 /* number of local cells declared */
+SC_VDEFINE cell pc_exprtemp=0;              /* live operand-stack temporaries in the current statement */
+SC_VDEFINE int pc_await_composed=0;              /* set once a COMPOSED "await asyncFn()" has suspended in the current expression; doawait rejects a following LEAF await that must carry a live temp across its suspend (compose-then-leaf does not sequence). Reset per statement / for-clause / test-condition. */
 SC_VDEFINE cell pc_genlocalsbase=0;         /* frame offset of a generator's "localsbase" cell */
 SC_VDEFINE cell glb_declared=0;             /* number of global cells declared */
 SC_VDEFINE cell code_idx=0;                 /* number of bytes with generated code */
@@ -117,7 +119,7 @@ SC_VDEFINE char *sc_tokens[] = {
   "*=", "/=", "%=", "+=", "-=", "<<=", ">>>=", ">>=", "&=", "^=", "|=",
   "||", "&&", "==", "!=", "<=", ">=", "<<", ">>>", ">>", "++", "--",
   "...", "..",
-  "__addressof", "assert", "*begin", "break", "case", "char", "const", "continue",
+  "__addressof", "__async_resume", "__async_self", "__async_start", "assert", "async", "await", "*begin", "break", "case", "char", "const", "continue",
   "default", "defined", "foreach", "do", "else", "__emit", "*end", "enum", "exit", "for",
   "forward", "goto", "hook", "if", "iterfunc", "__nameof", "native", "new", "operator", "__pragma",
   "public", "return", "sizeof", "sleep", "state", "static", "__static_assert",

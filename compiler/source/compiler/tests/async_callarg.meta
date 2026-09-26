@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+first=523
+
+middle=759
+
+nested=746
+
+active=0
+
+async_callarg.amx returns 0
+"""
+}

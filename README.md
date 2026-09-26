@@ -29,14 +29,16 @@ Two pillars, split by *when the information exists*:
 | `foreach` + `set*` natives (+ multi-dim) | `y_iterate` / `y_foreach` | exp 002/003/005 |
 | `iterfunc` generators | y_iterate custom iterators | exp 003 |
 | `yield` coroutine generators | `#define Iterator@N iteryield` + `yield` | tests `yield_*` |
+| `async`/`await` coroutines | `y_async` (*abandoned sketch — never shipped*) | tests `async_*` |
 | `hook` keyword (+ `hook:N` priority) | `y_hooks` (compile-time) | exp 004/005 |
 | `hook native`/`function`/`stock` + `continue` (call-site, incl. variadic `...` targets) | `y_hooks` real fn/native hooking | tests `chook_*` |
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
 | compact `switch` codegen (range cases → bounds-check) | *(stock-Pawn table bloat)* | exp 013 |
 
-Most rows were run on a real `omp-server` and diffed against YSI (the `yield`
-and `hook native`/`function`/`stock` rows are proven by the `yield_*` / `chook_*`
-compiler tests, not a live server run); see `experiments/*/RESULT.md`.
+Most rows were run on a real `omp-server` and diffed against YSI (the `yield`,
+`async`/`await`, and `hook native`/`function`/`stock` rows are proven by the
+`yield_*` / `async_*` / `chook_*` compiler tests, not a live server run — and
+`async`/`await` has no host adapter yet); see `experiments/*/RESULT.md`.
 
 ## Quickstart
 
@@ -96,6 +98,26 @@ iterfunc stock Fib(&acc, cur, lim) { ... }   // leading &ref = persistent state 
 iterfunc Count(n) { for (new i = 0; i != n; ++i) yield return i; }   // scalar locals only
 foreach (new v : Count(3)) { }               // v = 0, 1, 2; `return;` ends the sequence
 ```
+
+**Native `async`/`await` (`#include <async>`)** — write sequential code over callback-style ops; the function suspends at each `await` and resumes when the op completes. Single-threaded (a coroutine transform, not parallelism), single-`.amx`, linear bodies (MVP). Scalar **and** array/string/multi-dim *locals* survive an `await` — they are lifted into the coroutine's own state block, natively, no plugin. YSI only ever *sketched* `y_async` — pawn-x is the first to actually implement it:
+```pawn
+#include <async>
+
+async GetScore(playerid)
+{
+    new base = 100;
+    new tag[16] = "player";                   // array/string locals survive too
+    new s = await AddScore(playerid, base);   // suspend; resumes with the result
+    printf("%s: score=%d\n", tag, s + base);  // 'base' and 'tag' both intact
+}
+
+main()
+{
+    new t = Async_Start(GetScore, 7);         // starts; suspends at the await
+    Async_Resume(t, AddScore(7, 100));        // a pump/host completion resumes it
+}
+```
+`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests, a thin timer/dialog/DB adapter on a live host (out of MVP scope). Combinators are native: `Async_All(n)`/`Async_Any(n)` + `await Async_Wait(g)` fan several operations into one awaiter (`task_all`/`task_any` parity), driven by the `Async_GateFeed` seam. Faults are native too: `Async_ResumeError`/`Async_GateFail` report failure, observed via `Async_Failed()`/`Async_Error()` after the await; `Async_Fail(err)` + `return` auto-raises up a composed `await asyncFn()` chain (`task_set_error` parity). A real host adapter ships: `async_omp.inc` gives `await Async_Ms(ms)` on open.mp `SetTimerEx` — validated on a live open.mp 1.5.8 server (real timers resume coroutines off the tick loop, arrays/scalars survive, combinators + faults work, arena returns to baseline; see `experiments/012-native-async/HOST-VALIDATION.md`). Supported across an `await`: scalar and array/string/multi-dim *locals*; **fixed-size array/string *parameters*** (copied into the coroutine block — `foo(buf[4])`); a *leaf* await in a `for`/`while`/`do` loop; **mid-expression** await, leaf or composed (`p + await F()`, `base + await Work()`); a **composed** `await asyncFn()` inside a loop; a leaf `await` as an argument to a **fixed-arity** call (`foo(await F(), p, q)`, any position); and **multiple awaits in one statement** (`await A() + await B()`). Multi-result delivery via `Async_ResumeArr`/`Async_InboxArr` (`await_arr` parity). Still compile-rejected (error): **unsized**/multi-dim/`&`reference *params* (268), `await` inside a `foreach` (099), a leaf `await` inside a **variadic** call's argument list (099 — no safe spill bound; hoist to a statement), a **composed-then-leaf** pair in one expression (099 — reorder or split), and a suspend at arbitrary call-stack depth in a non-async helper. See `docs/MIGRATION.md` for the `y_async` mapping and the PawnPlus comparison.
 
 **Entity iterators** — ready-made connected-players / tracked-vehicle sets:
 ```pawn

@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+iter=1 token=25 active=0
+
+iter=2 token=25 active=0
+
+iter=3 token=25 active=0
+
+big sum=4950 active=0
+
+async_array_big.amx returns 0
+"""
+}

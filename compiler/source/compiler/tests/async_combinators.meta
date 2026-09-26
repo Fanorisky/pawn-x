@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+(all parked)
+
+all done total=60
+
+(any parked)
+
+any done first=77
+
+active=0 gates=0
+
+async_combinators.amx returns 0
+"""
+}
