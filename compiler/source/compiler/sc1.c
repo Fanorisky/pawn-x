@@ -8751,6 +8751,10 @@ static int doexpr(int comma,int chkeffect,int allowarray,int mark_endexpr,
     } /* if */
     pc_sideeffect=FALSE;
     pc_ovlassignment=FALSE;
+    pc_awaitseq=0;              /* each comma-clause is an independent operand-stack
+                                 * expression: an "await" here does not share a live
+                                 * temp with one in a sibling clause (or an earlier
+                                 * for-header clause), so start its await count fresh */
     ident=expression(val,tag,symptr,chkfuncresult);
     if (!allowarray && (ident==iARRAY || ident==iREFARRAY))
       error(33,"-unknown-");    /* array must be indexed */
@@ -8826,6 +8830,9 @@ static int test(int label,int parens,int invert)
   PUSHSTK_I(sc_intest);
   sc_intest=TRUE;
   endtok=0;
+  pc_awaitseq=0;                /* a test condition (if/while/for-cond/do) is its own
+                                 * operand-stack expression; count its awaits fresh so
+                                 * a for-header "cond" and "incr" await are independent */
   if (parens!=TEST_PLAIN) {
     if (matchtoken('('))
       endtok=')';
