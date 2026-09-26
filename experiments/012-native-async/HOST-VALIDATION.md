@@ -74,3 +74,41 @@ cd openmp/Server && ./omp-server        # Ctrl-C after ~1s
 The "no host adapter (MVP non-goal)" gap vs PawnPlus is **closed natively**: real
 timer/callback awaitables work on a live open.mp server, leaner than PawnPlus (only
 lifted locals live in the coroutine block; no whole stack+heap snapshot, no plugin).
+
+---
+
+## Coexistence + capability-gap demo (2026-09-26)
+
+`comparison/combo_gap.pwn` runs the pawn-x NATIVE coroutine and PawnPlus **in one
+`.amx`, compiled by `build/pawncc`**, and includes a case PawnPlus supports but
+pawn-x native does not: **two suspends in one expression**. Native lifts only the
+coroutine's own locals, so it allows at most one `await` per statement; PawnPlus
+snapshots the whole frame, so `task_await(a) + task_await(b)` works. Setup:
+`legacy_plugins: ["PawnPlus"]`, `main_scripts: ["combo_gap 1"]`.
+
+Real server output (open.mp 1.5.8 + PawnPlus 1.5.3, one `.amx`):
+
+```
+ PawnPlus v1.5.3 loaded
+>>> ONE .amx (build/pawncc): pawn-x native async + PawnPlus, plus a PawnPlus-only case
+[native]   start (pawn-x coroutine, no plugin)
+[pawnplus] TWO suspends in ONE expression: r=42  (pawn-x native: error 099)
+[native]   local survived TWO awaits (separate statements): acc=42
+```
+
+Both reach 42: the native coroutine carries a lifted local across two
+separate-statement awaits; PawnPlus carries the first await's result across the
+second suspend **within one expression**. The native equivalent of the latter is a
+compile error — `comparison/gap_native_reject.pwn` (`new r = await Async_Ms(150) +
+await Async_Ms(150);`) is rejected by `build/pawncc`:
+
+```
+gap_native_reject.pwn(12) : error 099: a "yield" cannot appear where stack storage is live ...
+```
+
+## Net (gap)
+Native and PawnPlus coexist in one runtime and one `.amx`. The remaining
+capability edge is real and documented: PawnPlus's frame-snapshot suspends at
+arbitrary expression positions (more than one `await` per statement, `await` inside
+a variadic call), which pawn-x native rejects cleanly (error 099) rather than
+miscompile — split into separate statements is the native idiom.
