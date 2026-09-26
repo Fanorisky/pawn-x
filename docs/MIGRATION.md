@@ -129,7 +129,9 @@ plugin** — the compiler emits the state machine and copies only *the coroutine
 own lifted locals* into a fixed data-segment block, so there is nothing to
 save/restore of the surrounding stack/heap. That is leaner and plugin-free; the
 trade-off is the documented compile-time limits above (no by-`&`ref/array PARAM
-across an `await`, and mid-expression temporaries are not preserved).
+across an `await`). Operator temporaries mid-expression ARE preserved now (spilled
+into the state block and restored on resume), so `base + await F()` and a leaf
+`await` as a fixed-arity call argument work.
 
 **Combinators and faults are now native too.** `Async_All(n)` / `Async_Any(n)` +
 `await Async_Wait(g)` fan several outstanding operations into one awaiting
@@ -149,14 +151,19 @@ pattern. Validated on open.mp 1.5.8 (Timers.so): five coroutines park on real
 timers, resume in correct chronological order off the tick loop, with scalar +
 array locals surviving the suspend, combinators and the fault channel working, and
 the arena returning to baseline — no plugin, no leak (see
-`experiments/012-native-async/HOST-VALIDATION.md`). pawn-x still does **not** match
-PawnPlus's remaining breadth: IMPLICIT fault auto-raise (a leaf fault an inner
-ignored does not raise by itself — the inner calls `Async_Fail(err)` to propagate,
-which IS supported and propagates up the compose chain), suspending at arbitrary
-call-stack depth (nested non-async frames), and COMPOSED `await asyncFn()` either
-inside a loop or mid-expression (error 269/099 — a LEAF await is supported in both
-positions, incl. mid-expression via an operand-stack spill into B), plus JIT
-compatibility, all remain roadmap/non-goal.
+`experiments/012-native-async/HOST-VALIDATION.md`). Composed `await asyncFn()`
+now works **mid-expression** (`base + await Work()`) and **inside a loop**
+(`for (…) total += await Step(i);`), and a **leaf** `await` works as an argument
+to a **fixed-arity** call (`foo(await F(), p, q)`, any position, nested). pawn-x
+still does **not** match PawnPlus's remaining breadth: IMPLICIT fault auto-raise
+(a leaf fault an inner ignored does not raise by itself — the inner calls
+`Async_Fail(err)` to propagate, which IS supported and propagates up the compose
+chain), suspending at arbitrary call-stack depth (nested non-async frames), a leaf
+`await` inside a VARIADIC call's arguments (`printf("%d", await F())` → error 099,
+no safe spill bound — hoist to a statement), and MORE THAN ONE `await` in a single
+statement (`await A() + await B()` → error 099 — two suspends in one expression
+don't sequence; split into separate statements), plus JIT compatibility, all
+remain roadmap/non-goal.
 
 
 

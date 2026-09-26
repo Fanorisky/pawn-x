@@ -92,13 +92,17 @@
  *     compose chain, no explicit re-signal at each level. See the fault-channel block.
  *   * MID-EXPRESSION await -- "await" may sit inside a larger expression with live
  *     operand temporaries ("p + await F()", "p*2 + await F()", "total = total +
- *     await F()" in a loop, ...). The live operand-stack region is spilled into B
- *     before the suspend and restored after (runtime-exact copy), so any expression
- *     shape / control flow reads back correctly. TWO exceptions, both rejected with
- *     error 099 (hoist to statement position -- "new v = await F(); ..."): a
- *     COMPOSED "await asyncFn()" mid-expression, and a leaf await used INSIDE a
- *     function call's ARGUMENT list (reverse-order arg emission makes the spill's
- *     bound unreliable).
+ *     await F()" in a loop, "base + await asyncFn()", ...). The live operand-stack
+ *     region is spilled into B before the suspend and restored after (runtime-exact
+ *     copy), so any expression shape / control flow reads back correctly. This
+ *     covers both LEAF and COMPOSED awaits mid-expression, and a LEAF await used as
+ *     an argument to a FIXED-ARITY call ("foo(await F(), p, q)", any position,
+ *     including nested calls -- the reserve is bounded by the enclosing callees'
+ *     parameter footprint).
+ *   * COMPOSED "await asyncFn()" inside a while/for/do loop ("for (...) total +=
+ *     await Step(i);") -- each iteration starts the inner from the arena and frees
+ *     it on completion; the operand stack balances across the back-edge. Works with
+ *     break/continue and past ASYNC_MAX iterations (arena reuse).
  *
  * ============================ STILL UNSUPPORTED =========================
  *   * Array / "&"reference PARAMS across an await -- rejected with error 268: such
@@ -106,18 +110,18 @@
  *     suspends, so it cannot be lifted (pass by value / copy in instead).
  *   * "await" inside a "foreach" -- rejected (error 099); "foreach" over an async
  *     fn -- rejected (error 267).
- *   * COMPOSED "await asyncFn()" inside a while/for/do loop -- rejected with error
- *     269: the compose path buffers hidden stack cells around the suspend, which
- *     unbalances the stack across the loop back-edge. A LEAF await in a loop is
- *     SUPPORTED (loop state is lifted and survives; the coroutine re-parks each
- *     iteration). Lift the composed call out of the loop, or drive the repetition
- *     from the resumer.
- *   * Composed "await asyncFn()" MID-EXPRESSION (e.g. "x = a + await Fn()") --
- *     rejected with error 099: the compose path buffers its own hidden cells around
- *     the suspend and does not compose with the operand-stack spill. Put a composed
- *     await in statement position ("new v = await Fn(); x = a + v;"). A LEAF await
- *     mid-expression is supported (see above). A suspend at arbitrary call-stack
- *     depth inside a non-async helper is unsupported (needs whole-frame handling).
+ *   * A leaf "await" inside a VARIADIC call's argument list ("printf(\"%d\",
+ *     await F())") -- rejected with error 099: a variadic callee's pushed-argument
+ *     count is not bounded by its fixed parameter list, so the spill's B reserve
+ *     has no safe compile-time bound. Hoist to a statement ("new v = await F();
+ *     printf(\"%d\", v);"). A leaf await in a FIXED-ARITY call IS supported (above).
+ *   * MORE THAN ONE "await" in a SINGLE statement ("await A() + await B()",
+ *     "foo(await A(), await B())", "await Inner(1) + await Inner(2)") -- rejected
+ *     with error 099: two suspends in one expression do not sequence correctly
+ *     through the shared operand path (the earlier result is lost). Split into
+ *     separate statements ("new a = await A(); new b = await B(); ... a + b").
+ *     A suspend at arbitrary call-stack depth inside a non-async helper is
+ *     unsupported (needs whole-frame handling).
  *   * IMPLICIT fault auto-raise: a leaf fault an inner IGNORED does not raise by
  *     itself -- the inner must call Async_Fail(err) to propagate (explicit raise IS
  *     supported and shipped; see below). A normally-returning inner (incl. one that
