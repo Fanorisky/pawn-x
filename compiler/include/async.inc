@@ -98,10 +98,11 @@
  *     "await A() + await B()" is "(await A()) + (await B())": two independent
  *     suspends the enclosing operator combines. Works for leaf+leaf, three-in-a-row,
  *     an await in a ternary/operator, composed+composed, and leaf-then-composed.
- *   * A leaf "await" as a call ARGUMENT, in a FIXED-ARITY or VARIADIC call
- *     ("foo(await F(), p, q)", "printf(\"%d\", await F())"), in any argument position,
- *     including nested calls. The sibling arguments (pushed before it at run time)
- *     are spilled and restored across the suspend.
+ *   * A leaf "await" as a call ARGUMENT of a FIXED-ARITY call ("foo(await F(), p, q)"),
+ *     in any argument position, including nested calls. The sibling arguments (pushed
+ *     before it at run time) are spilled and restored across the suspend; the callee's
+ *     parameter footprint bounds the spill reserve. (A VARIADIC enclosing call --
+ *     printf-style -- is NOT supported; see below.)
  *   * COMPOSED "await asyncFn()" inside a while/for/do loop ("for (...) total +=
  *     await Step(i);") -- each iteration starts the inner from the arena and frees
  *     it on completion; the operand stack balances across the back-edge. Works with
@@ -122,6 +123,12 @@
  *     before the first await.
  *   * "await" inside a "foreach" -- rejected (error 099); "foreach" over an async
  *     fn -- rejected (error 267).
+ *   * A leaf "await" inside a VARIADIC call's argument list ("printf(\"%d\",
+ *     await F())") -- rejected (error 099): the spill reserve is fixed at the await
+ *     point, before the reverse-emitted trailing args are known, and a variadic
+ *     callee's count is not bounded by its fixed parameter list -- so no safe
+ *     compile-time reserve exists (the spill would overflow B). Hoist to a statement
+ *     ("new v = await F(); printf(\"%d\", v);"). A FIXED-ARITY call is supported.
  *   * A COMPOSED await whose result a following LEAF await must carry across its own
  *     suspend, in one expression ("await Inner() + await X()") -- rejected (error
  *     099): the composed await returns through the awaiter call.pri chain and a
