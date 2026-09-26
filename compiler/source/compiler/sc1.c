@@ -4007,15 +4007,32 @@ SC_FUNC int doawait(value *lval)
    * Composed "await asyncFn()" buffers its own hidden inner-start cells BELOW these
    * operator temporaries and frees them before the suspend, so it uses the SAME
    * spill/restore (the enclosing temporaries are all that remain live). */
+  if (pc_generator && getcallnesting()>0 && getcallargvariadic()>0) {
+    /* "await" inside a VARIADIC call's argument list (e.g. printf("%d", await F())).
+     * Reverse-order emission pushes the arguments AFTER the await before it at run
+     * time, so they are live across the suspend -- but the spill reserve is captured
+     * HERE, before those trailing args are parsed, and a variadic callee's count is
+     * not bounded by its fixed parameter list, so there is no safe compile-time
+     * reserve (the runtime-exact spill would overflow B and corrupt a neighbouring
+     * coroutine's block). Reject cleanly; hoist the await to a statement:
+     * "new v = await F(); printf(\"%d\", v);". A leaf await in a FIXED-ARITY call is
+     * supported -- getcallargbound reserves the full parameter footprint, which
+     * covers the trailing siblings wherever the await sits. */
+    error(99);
+    lexclr(TRUE);
+    ldconst(0,sPRI);
+    if (lval!=NULL)
+      lval->ident=iEXPRESSION;
+    return FALSE;
+  } /* if */
   spillcount=(int)pc_exprtemp;
-  /* Leaf await inside a call-argument list: the sibling arguments pushed before this
-   * one at run time (reverse-order emission) are live across the suspend. They are
-   * pushed via push.pri, so pc_exprtemp already counts them; for a FIXED-ARITY call
-   * we additionally add the callee parameter footprint (getcallargbound) as a belt-
-   * and-suspenders bound. The runtime spill copy is STK/FRM-bounded, so an over-count
-   * only over-reserves. Both fixed-arity and VARIADIC (printf-style) enclosing calls
-   * are supported, in any argument position (verified with lifted-var, constant, and
-   * computed-call siblings). */
+  /* Leaf await inside a FIXED-ARITY call-argument list: add the callee parameter
+   * footprint (getcallargbound) to the reserve. A fixed-arity call pushes at most
+   * its parameter count, so this bounds the reverse-emitted trailing siblings live
+   * across the suspend regardless of where the await sits; pc_exprtemp alone would
+   * miss them (it is captured before they are emitted). The runtime spill copy is
+   * STK/FRM-bounded, so an over-count only over-reserves. (Variadic enclosing calls
+   * are rejected above -- no safe bound.) */
   if (pc_generator && getcallnesting()>0)
     spillcount+=(int)getcallargbound();
   spillslot=0;

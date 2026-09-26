@@ -7,6 +7,8 @@ named n=4 name=Ada
 
 noarray n=0 got=0 d0=-9
 
+composed n=3 g1=3 r=88 g2=0 d0=-5
+
 active=0
 
 async_multiresult.amx returns 0

@@ -296,6 +296,31 @@ stock async_slot_of_addr(B)
     return -1;                          /* not an arena block base */
 }
 
+/* ASYNC_AWAITER_SLOT: block cell 3 holds a composed coroutine's awaiter B (the outer
+ * coroutine that did "await asyncFn()"); 0/-1 means no awaiter (top-level). Mirrors
+ * the compiler-side define in sc1.c. */
+#if !defined ASYNC_AWAITER_SLOT
+    #define ASYNC_AWAITER_SLOT 3
+#endif
+
+/* __async_bcell(B, k): read cell k of the arena block whose base address is B, by
+ * indexing the owning class arena. Returns 0 if B is not an arena block base.
+ * (Script has no raw pointer deref; the arenas are flat arrays we can index.) */
+stock __async_bcell(B, k)
+{
+    new slot = async_slot_of_addr(B);
+    if (slot < 0)
+        return 0;
+    if (slot < ASYNC_C1_BASE)
+        return g_arena0[slot * ASYNC_C0_CELLS + k];
+    if (slot < ASYNC_C2_BASE)
+        return g_arena1[(slot - ASYNC_C1_BASE) * ASYNC_C1_CELLS + k];
+    if (slot < ASYNC_C3_BASE)
+        return g_arena2[(slot - ASYNC_C2_BASE) * ASYNC_C2_CELLS + k];
+    return g_arena3[(slot - ASYNC_C3_BASE) * ASYNC_C3_CELLS + k];
+}
+
+
 /* Async_Alloc(): claim a free arena slot sized for "blkcells" and return the
  * STABLE data address of its block (which the compiler uses as B). Records the
  * chosen slot in g_asyncAllocSlot so Async_Start can recover the token. Returns
@@ -581,7 +606,20 @@ stock __async_clearfault(_ignored)
         g_asyncFailed = 0;              /* normal return: clean channel for the awaiter */
         g_asyncErr    = 0;
     }
-    #pragma unused _ignored
+    /* The awaiter (which did "await asyncFn()") is about to resume via the compiler's
+     * return-to-awaiter call.pri chain, which BYPASSES __async_deliver -- so reset the
+     * awaiter's array-result length here too, or a stale Async_ResumeArr count from a
+     * PRIOR await would be read by an Async_InboxArr after this composed await. The
+     * inner's B is "_ignored"; its ASYNC_AWAITER_SLOT holds the awaiter's B. */
+    {
+        new awaiterB = __async_bcell(_ignored, ASYNC_AWAITER_SLOT);
+        if (awaiterB != 0 && awaiterB != -1)
+        {
+            new as = async_slot_of_addr(awaiterB);
+            if (as >= 0)
+                g_asyncResultLen[as] = 0;
+        }
+    }
     return 0;
 }
 

@@ -923,6 +923,7 @@ SC_FUNC void ffcase(cell value,char *labelname,int newtable);
 SC_FUNC void ffcall(symbol *sym,const char *label,int numargs);
 SC_FUNC int getcallnesting(void);
 SC_FUNC long getcallargbound(void);
+SC_FUNC int getcallargvariadic(void);
 SC_FUNC void ffret(int remparams);
 SC_FUNC void ffabort(int reason);
 SC_FUNC void ffbounds(cell size);
