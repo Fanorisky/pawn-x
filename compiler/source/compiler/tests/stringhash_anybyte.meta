@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+ok=1
+
+stringhash_anybyte.amx returns 0
+"""
+}
