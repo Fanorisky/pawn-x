@@ -314,6 +314,13 @@ typedef struct s_callhookgroup {
  * generator_isgen() answers TRUE pass-stably, and so gen_reserved() reserves the
  * extra head slot (B[1], the await-result inbox) in the state block. */
 #define uASYNC      0x80000
+/* uCAPTURED (experiment 015): set TEMPORARILY on an enclosing function's local
+ * symbols while an "inline" body nested in that function is being compiled. It
+ * tells the addressing code (sc4.c) to reach the variable through the inline's
+ * hidden static-link cell ([FRM+pc_inlinelink] + offset) instead of the inline's
+ * own frame, so the inline reads/writes the enclosing frame's locals (the closure).
+ * Cleared as soon as the inline body is compiled. */
+#define uCAPTURED   0x100000
 /* uRETNONE is not stored in the "usage" field of a symbol. It is
  * used during parsing a function, to detect a mix of "return;" and
  * "return value;" in a few special cases.
@@ -1107,6 +1114,12 @@ SC_VDECL int pc_await_composed;     /* set once a composed "await asyncFn()" has
 SC_VDECL cell pc_genlocalsbase;/* frame offset of a coroutine generator's hidden
                                * "localsbase" cell (base of its state block);
                                * used to emit lifted-local access (see sc4.c) */
+SC_VDECL cell pc_inlinelink;  /* exp 015: frame offset of an inline body's hidden
+                               * static-link cell (holds the enclosing frame's FRM);
+                               * captured-local access indexes off it (see sc4.c) */
+SC_VDECL symbol *inline_outer_loc; /* exp 015: enclosing function's locals, kept
+                               * visible for capture lookup while an inline compiles */
+SC_VDECL int pc_compiling_inline;  /* exp 015: nonzero while compiling an inline body */
 SC_VDECL cell glb_declared;   /* number of global cells declared */
 SC_VDECL cell code_idx;       /* number of bytes with generated code */
 SC_VDECL int ntv_funcid;      /* incremental number of native function */

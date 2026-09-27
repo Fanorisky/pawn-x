@@ -3634,7 +3634,17 @@ SC_FUNC symbol *findglb(const char *name,int filter)
  */
 SC_FUNC symbol *findloc(const char *name)
 {
-  return find_symbol(&loctab,name,-1,-1,NULL);
+  symbol *s=find_symbol(&loctab,name,-1,-1,NULL);
+  if (s==NULL && pc_compiling_inline && inline_outer_loc!=NULL) {
+    /* exp 015: not an inline-body local -> look it up in the enclosing function's
+     * locals (the closure). A hit there is a CAPTURED variable; it already carries
+     * the uCAPTURED flag (set in doinline) so sc4.c addresses it via the static link. */
+    symbol tmproot;
+    memset(&tmproot,0,sizeof tmproot);
+    tmproot.next=inline_outer_loc;
+    s=find_symbol(&tmproot,name,-1,-1,NULL);
+  } /* if */
+  return s;
 }
 
 SC_FUNC symbol *findconst(const char *name,int *cmptag)

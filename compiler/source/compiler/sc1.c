@@ -2446,6 +2446,15 @@ static void doinline(void)
   save_async=pc_async;
   save_iter=pc_iterfunc;
   save_status=sc_status;
+  /* capture: keep the enclosing locals reachable for lookup (findloc consults
+   * inline_outer_loc while pc_compiling_inline) and flag them uCAPTURED so sc4.c
+   * addresses them through the inline's static link rather than its own frame. */
+  { symbol *s;
+    for (s=save_loc; s!=NULL; s=s->next)
+      s->usage|=uCAPTURED;
+  }
+  inline_outer_loc=save_loc;
+  pc_compiling_inline=1;
   loctab.next=NULL;
   declared=0;
   pc_generator=0;
@@ -2458,6 +2467,13 @@ static void doinline(void)
   newfunc(hidden,0,FALSE,FALSE,FALSE);  /* parses "(params){body}" from here */
 
   /* restore the enclosing function's parse state */
+  pc_compiling_inline=0;
+  inline_outer_loc=NULL;
+  pc_inlinelink=0;
+  { symbol *s;
+    for (s=save_loc; s!=NULL; s=s->next)
+      s->usage&=~uCAPTURED;
+  }
   loctab.next=save_loc;
   curfunc=save_curfunc;
   declared=save_declared;
@@ -3410,6 +3426,26 @@ static void generator_emit_helper(void)
   endfunc();
   sym->codeaddr=code_idx;
   curfunc=savedfunc;
+}
+
+/*  inline_emit_prologue - emit the static-link save at the top of an "inline" body
+ *  (experiment 015). callindirect() passes the enclosing frame's FRM in ALT before
+ *  "call.pri"; PROC does not touch ALT, so the first thing the body does is stash
+ *  ALT into a hidden frame cell. Captured enclosing locals are then reached as
+ *  *(FRM+pc_inlinelink) + addr (see sc4.c lifted_slotaddr_pri). */
+static void inline_emit_prologue(void)
+{
+  cell linkcell;
+  declared+=1;
+  linkcell=-declared*(cell)sizeof(cell);
+  pc_inlinelink=linkcell;               /* captured-local access indexes off this cell */
+  modstk(-(int)sizeof(cell));
+  assert(curfunc!=NULL);
+  if (curfunc->x.stacksize<declared+1)
+    curfunc->x.stacksize=declared+1;
+  stgwrite("\tstor.s.alt ");            /* linkcell = ALT = the enclosing frame's FRM */
+  outval(linkcell,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
 }
 
 /*  generator_emit_prologue - emit the resume test at the top of a generator.
@@ -7053,6 +7089,13 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
     sym->usage|=uGENERATOR;
     sym->genlocals=0;   /* recount lifted locals from scratch in this pass */
     generator_emit_prologue();
+  } /* if */
+  pc_inlinelink=0;
+  if (pc_compiling_inline) {
+    /* exp 015: this is an "inline" body -- save the static link (the enclosing
+     * frame's FRM, passed in ALT by callindirect) into a hidden cell so captured
+     * enclosing locals can be reached through it (see sc4.c lifted_slotaddr_pri). */
+    inline_emit_prologue();
   } /* if */
   #if !defined SC_LIGHT
     if (matchtoken('{')) {
