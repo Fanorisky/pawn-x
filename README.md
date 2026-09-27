@@ -36,10 +36,11 @@ Two pillars, split by *when the information exists*:
 | compact `switch` codegen (range cases → bounds-check) | *(stock-Pawn table bloat)* | exp 013 |
 | `inline` closures + `using inline`/`using public<sig>` + `Callback:` | `y_inline` | tests `inline_*` |
 
-Most rows were run on a real `omp-server` and diffed against YSI (the `yield`,
-`async`/`await`, and `hook native`/`function`/`stock` rows are proven by the
-`yield_*` / `async_*` / `chook_*` compiler tests, not a live server run — and
-`async`/`await` has no host adapter yet); see `experiments/*/RESULT.md`.
+Most rows were run on a real `omp-server` and diffed against YSI. The `yield`,
+`async`/`await`, `hook native`/`function`/`stock`, and `inline` rows are proven by
+the `yield_*` / `async_*` / `chook_*` / `inline_*` compiler tests; `async`/`await`
+additionally ships a live open.mp host adapter (`async_omp.inc`, validated on
+open.mp 1.5.8). See `experiments/*/RESULT.md`.
 
 ## Quickstart
 
@@ -100,7 +101,7 @@ iterfunc Count(n) { for (new i = 0; i != n; ++i) yield return i; }   // scalar l
 foreach (new v : Count(3)) { }               // v = 0, 1, 2; `return;` ends the sequence
 ```
 
-**Native `async`/`await` (`#include <async>`)** — write sequential code over callback-style ops; the function suspends at each `await` and resumes when the op completes. Single-threaded (a coroutine transform, not parallelism), single-`.amx`, linear bodies (MVP). Scalar **and** array/string/multi-dim *locals* survive an `await` — they are lifted into the coroutine's own state block, natively, no plugin. YSI only ever *sketched* `y_async` — pawn-x is the first to actually implement it:
+**Native `async`/`await` (`#include <async>`)** — write sequential code over callback-style ops; the function suspends at each `await` and resumes when the op completes. Single-threaded (a coroutine transform, not parallelism), single-`.amx`. Scalar **and** array/string/multi-dim *locals* survive an `await` — they are lifted into the coroutine's own state block, natively, no plugin. YSI only ever *sketched* `y_async` — pawn-x is the first to actually implement it:
 ```pawn
 #include <async>
 
@@ -118,7 +119,19 @@ main()
     Async_Resume(t, AddScore(7, 100));        // a pump/host completion resumes it
 }
 ```
-`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests, a thin timer/dialog/DB adapter on a live host (out of MVP scope). Combinators are native: `Async_All(n)`/`Async_Any(n)` + `await Async_Wait(g)` fan several operations into one awaiter (`task_all`/`task_any` parity), driven by the `Async_GateFeed` seam. Faults are native too: `Async_ResumeError`/`Async_GateFail` report failure, observed via `Async_Failed()`/`Async_Error()` after the await; `Async_Fail(err)` + `return` auto-raises up a composed `await asyncFn()` chain (`task_set_error` parity). A real host adapter ships: `async_omp.inc` gives `await Async_Ms(ms)` on open.mp `SetTimerEx` — validated on a live open.mp 1.5.8 server (real timers resume coroutines off the tick loop, arrays/scalars survive, combinators + faults work, arena returns to baseline; see `experiments/012-native-async/HOST-VALIDATION.md`). Supported across an `await`: scalar and array/string/multi-dim *locals*; **fixed-size array/string *parameters*** (copied into the coroutine block — `foo(buf[4])`); a *leaf* await in a `for`/`while`/`do` loop; **mid-expression** await, leaf or composed (`p + await F()`, `base + await Work()`); a **composed** `await asyncFn()` inside a loop; a leaf `await` as an argument to a **fixed-arity** call (`foo(await F(), p, q)`, any position); and **multiple awaits in one statement** (`await A() + await B()`). Multi-result delivery via `Async_ResumeArr`/`Async_InboxArr` (`await_arr` parity). **Task management** rounds out the PawnPlus parity: `Async_Keep`/`Async_Result`/`Async_Release` retain a completed task's return value for later reading (`task_keep`); `Async_Cancel` (cooperative, fault-notified via `Async_Cancelled()`) and `Async_Kill` (hard) tear a task down (`task_delete`); `Async_Bind`/`Async_Detach` fire a completion callback (`task_bind`); `Async_Timeout`/`Async_TimeoutGate` fault a task or a gate after a delay (`task_set_error_ms`); and an unobserved leaf fault now **auto-raises** to its awaiter instead of dropping silently. Still compile-rejected (error): **unsized**/multi-dim/`&`reference *params* (268), `await` inside a `foreach` (099), a leaf `await` inside a **variadic** call's argument list (099 — no safe spill bound; hoist to a statement), a **composed-then-leaf** pair in one expression (099 — reorder or split), and a suspend at arbitrary call-stack depth in a non-async helper. See `docs/MIGRATION.md` for the `y_async` mapping and the PawnPlus comparison.
+`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests, the shipped `async_omp.inc` timer/callback adapter on a live host. Combinators are native: `Async_All(n)`/`Async_Any(n)` + `await Async_Wait(g)` fan several operations into one awaiter (`task_all`/`task_any` parity), driven by the `Async_GateFeed` seam. Faults are native too: `Async_ResumeError`/`Async_GateFail` report failure, observed via `Async_Failed()`/`Async_Error()` after the await; `Async_Fail(err)` + `return` auto-raises up a composed `await asyncFn()` chain (`task_set_error` parity). A real host adapter ships: `async_omp.inc` gives `await Async_Ms(ms)` on open.mp `SetTimerEx` — validated on a live open.mp 1.5.8 server (real timers resume coroutines off the tick loop, arrays/scalars survive, combinators + faults work, arena returns to baseline; see `experiments/012-native-async/HOST-VALIDATION.md`). Supported across an `await`: scalar and array/string/multi-dim *locals*; **fixed-size array/string *parameters*** (copied into the coroutine block — `foo(buf[4])`); a *leaf* await in a `for`/`while`/`do` loop; **mid-expression** await, leaf or composed (`p + await F()`, `base + await Work()`); a **composed** `await asyncFn()` inside a loop; a leaf `await` as an argument to a **fixed-arity** call (`foo(await F(), p, q)`, any position); and **multiple awaits in one statement** (`await A() + await B()`). Multi-result delivery via `Async_ResumeArr`/`Async_InboxArr` (`await_arr` parity). **Task management** rounds out the PawnPlus parity: `Async_Keep`/`Async_Result`/`Async_Release` retain a completed task's return value for later reading (`task_keep`); `Async_Cancel` (cooperative, fault-notified via `Async_Cancelled()`) and `Async_Kill` (hard) tear a task down (`task_delete`); `Async_Bind`/`Async_Detach` fire a completion callback (`task_bind`); `Async_Timeout`/`Async_TimeoutGate` fault a task or a gate after a delay (`task_set_error_ms`); and an unobserved leaf fault now **auto-raises** to its awaiter instead of dropping silently. Still compile-rejected (error): **unsized**/multi-dim/`&`reference *params* (268), `await` inside a `foreach` (099), a leaf `await` inside a **variadic** call's argument list (099 — no safe spill bound; hoist to a statement), a **composed-then-leaf** pair in one expression (099 — reorder or split), and a suspend at arbitrary call-stack depth in a non-async helper. See `docs/MIGRATION.md` for the `y_async` mapping and the PawnPlus comparison.
+
+**Native `inline` closures (`inline` / `using inline`)** — a function defined *inside* another function that closes over the enclosing locals (read **and** write), passed to a receiver as a `Callback:` value and called indirectly. pawn-x's native, plugin-free `y_inline`:
+```pawn
+ForEach(const arr[], size, Callback:cb) { for (new i; i < size; i++) cb(arr[i]); }
+CountFives(const arr[], size) {
+    new count = 0;
+    inline IsFive(v) { if (v == 5) count++; }    // captures + mutates `count`
+    ForEach(arr, size, using inline IsFive);
+    return count;                                 // reflects the inline's writes
+}
+```
+The closure captures via a **static link** (the enclosing frame), so mutations write straight back — no `Callback_Restore`. Scalars, arrays/strings, multiple independent closures, and inline return values are supported; `inline const` makes the captured locals read-only (compile error on write); `using public Name<sig>` passes a plain public as a `Callback:` too. This is the synchronous/visitor case `async` does not cover; deferred callbacks that outlive the frame use `async`/`await`. Capturing a by-`&`reference parameter is rejected (error 098). See tests `inline_*`.
 
 **Entity iterators** — ready-made connected-players / tracked-vehicle sets:
 ```pawn
