@@ -2397,7 +2397,7 @@ static void doinline(void)
   int tok,lbl_skip;
   symbol *hsym;
   symbol *save_curfunc,*save_loc;
-  int save_declared,save_gen,save_async,save_iter,save_status;
+  int save_declared,save_gen,save_async,save_iter,save_status,save_rettype;
 
   if (curfunc==NULL) {
     error(10);                  /* an inline only makes sense inside a function */
@@ -2446,6 +2446,7 @@ static void doinline(void)
   save_async=pc_async;
   save_iter=pc_iterfunc;
   save_status=sc_status;
+  save_rettype=rettype;
   /* capture: keep the enclosing locals reachable for lookup (findloc consults
    * inline_outer_loc while pc_compiling_inline) and flag them uCAPTURED so sc4.c
    * addresses them through the inline's static link rather than its own frame. */
@@ -2481,6 +2482,7 @@ static void doinline(void)
   pc_async=save_async;
   pc_iterfunc=save_iter;
   sc_status=save_status;
+  rettype=save_rettype;
 
   begcseg();                    /* newfunc left us in the data segment (its literal
                                  * dump); the enclosing function resumes in code */

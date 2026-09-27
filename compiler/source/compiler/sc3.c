@@ -1561,37 +1561,63 @@ static int hier2(value *lval)
     return lvalue;
   case tUSING: {
     /* "using inline Name" -> a Callback: value naming an "inline" defined earlier in
-     * THIS function. The value is a pointer to a 2-cell record {entry, FRM} allocated
-     * in the enclosing frame: entry is the inline's code address, FRM is this frame
-     * (the static link, so the inline can reach captured enclosing locals). A receiver
-     * taking a Callback: parameter calls it via callindirect. */
+     * THIS function: a pointer to a 2-cell record {entry, FRM} in the enclosing frame
+     * (entry = the inline's code address, FRM = this frame = the static link so the
+     * inline can reach captured locals). "using public Name<sig>" -> the same record
+     * naming a PUBLIC function (no closure: FRM = 0, the <sig> is parsed and ignored,
+     * as the indirect call is not type-checked). A receiver taking a Callback:
+     * parameter calls either via callindirect. */
     char hidden[sNAMEMAX+1];
     symbol *isym;
     cell recoff;
-    if (!needtoken(tINLINE))
+    int ispublic=matchtoken(tPUBLIC);
+    if (!ispublic && !needtoken(tINLINE))
       return FALSE;
     tok=lex(&val,&st);
     if (tok!=tSYMBOL)
       return error_suggest(20,st,NULL,estNONSYMBOL,tok);  /* invalid symbol name */
-    if (curfunc==NULL || strlen(curfunc->name)+strlen(st)+10>sNAMEMAX)
-      return error(17,st);                                /* undefined symbol */
-    sprintf(hidden,"_inline.%s.%s",curfunc->name,st);
-    isym=findglb(hidden,sGLOBAL);
-    if (isym==NULL || isym->ident!=iFUNCTN)
-      return error(17,st);      /* no "inline" of that name in this function */
+    if (ispublic) {
+      isym=findglb(st,sGLOBAL);
+      if (isym==NULL || isym->ident!=iFUNCTN)
+        return error(17,st);    /* no such function */
+      /* optional "<sig>" signature annotation -- parsed and skipped (the indirect
+       * call is positional/unchecked, like a function pointer). */
+      if (matchtoken('<')) {
+        int depth=1;
+        while (depth>0 && freading) {
+          tok=lex(&val,&st);
+          if (tok=='<') depth++;
+          else if (tok=='>') depth--;
+          else if (tok==0) break;
+        } /* while */
+      } /* if */
+    } else {
+      if (curfunc==NULL || strlen(curfunc->name)+strlen(st)+10>sNAMEMAX)
+        return error(17,st);                              /* undefined symbol */
+      sprintf(hidden,"_inline.%s.%s",curfunc->name,st);
+      isym=findglb(hidden,sGLOBAL);
+      if (isym==NULL || isym->ident!=iFUNCTN)
+        return error(17,st);    /* no "inline" of that name in this function */
+    } /* if */
     markusage(isym,uREAD);
+    if (curfunc==NULL)
+      return error(17,st);
     /* allocate the {entry, FRM} record in the enclosing frame (freed with the frame) */
     declared+=2;
     recoff=-declared*(cell)sizeof(cell);
     modstk(-2*(int)sizeof(cell));
     if (curfunc->x.stacksize<declared+1)
       curfunc->x.stacksize=declared+1;
-    ldconst(isym->addr,sPRI);            /* PRI = inline entry address */
+    ldconst(isym->addr,sPRI);            /* PRI = entry address */
     stgwrite("\tstor.s.pri ");           /* record[0] = entry */
     outval(recoff,TRUE);
     code_idx+=opcodes(1)+opargs(1);
-    getfrm();                            /* PRI = FRM (the static link) */
-    stgwrite("\tstor.s.pri ");           /* record[1] = FRM */
+    if (ispublic) {
+      ldconst(0,sPRI);                   /* a public has no closure: link = 0 */
+    } else {
+      getfrm();                          /* PRI = FRM (the static link) */
+    } /* if */
+    stgwrite("\tstor.s.pri ");           /* record[1] = FRM (or 0 for a public) */
     outval(recoff+(cell)sizeof(cell),TRUE);
     code_idx+=opcodes(1)+opargs(1);
     stgwrite("\taddr.pri ");             /* PRI = &record = FRM + recoff */
