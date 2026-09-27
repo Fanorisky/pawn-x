@@ -1120,6 +1120,7 @@ SC_VDECL cell pc_inlinelink;  /* exp 015: frame offset of an inline body's hidde
 SC_VDECL symbol *inline_outer_loc; /* exp 015: enclosing function's locals, kept
                                * visible for capture lookup while an inline compiles */
 SC_VDECL int pc_compiling_inline;  /* exp 015: nonzero while compiling an inline body */
+SC_VDECL int pc_inline_const;      /* exp 015: nonzero while compiling an "inline const" body */
 SC_VDECL cell glb_declared;   /* number of global cells declared */
 SC_VDECL cell code_idx;       /* number of bytes with generated code */
 SC_VDECL int ntv_funcid;      /* incremental number of native function */

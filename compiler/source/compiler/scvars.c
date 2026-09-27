@@ -62,6 +62,7 @@ SC_VDEFINE cell pc_genlocalsbase=0;         /* frame offset of a generator's "lo
 SC_VDEFINE cell pc_inlinelink=0;            /* exp 015: frame offset of an inline's static-link cell (0 = none) */
 SC_VDEFINE symbol *inline_outer_loc=NULL;   /* exp 015: enclosing locals (chain head) visible for capture while compiling an inline body */
 SC_VDEFINE int pc_compiling_inline=0;       /* exp 015: nonzero while a nested inline body is being compiled */
+SC_VDEFINE int pc_inline_const=0;           /* exp 015: nonzero while compiling an "inline const" body (captured locals read-only) */
 SC_VDEFINE cell glb_declared=0;             /* number of global cells declared */
 SC_VDEFINE cell code_idx=0;                 /* number of bytes with generated code */
 SC_VDEFINE int ntv_funcid= 0;               /* incremental number of native function */

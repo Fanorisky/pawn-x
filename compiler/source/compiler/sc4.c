@@ -579,6 +579,8 @@ SC_FUNC void store(value *lval)
     code_idx+=opcodes(1)+opargs(1);
   } else {
     assert(sym!=NULL);
+    if (pc_inline_const && (sym->usage & uCAPTURED)!=0)
+      error(22);                /* "inline const": a captured variable is read-only */
     markusage(sym,uWRITTEN);
     if (lifted_local(sym)) {
       /* *(B + addr) = PRI. The value to store is in PRI and must stay there
@@ -1381,6 +1383,8 @@ SC_FUNC void inc(value *lval)
   symbol *sym;
 
   sym=lval->sym;
+  if (pc_inline_const && sym!=NULL && (sym->usage & uCAPTURED)!=0)
+    error(22);                  /* "inline const": a captured variable is read-only */
   if (sym!=NULL)
     markusage(sym,uWRITTEN);
   if (lval->ident==iARRAYCELL) {
@@ -1456,6 +1460,8 @@ SC_FUNC void dec(value *lval)
   symbol *sym;
 
   sym=lval->sym;
+  if (pc_inline_const && sym!=NULL && (sym->usage & uCAPTURED)!=0)
+    error(22);                  /* "inline const": a captured variable is read-only */
   if (sym!=NULL)
     markusage(sym,uWRITTEN);
   if (lval->ident==iARRAYCELL) {

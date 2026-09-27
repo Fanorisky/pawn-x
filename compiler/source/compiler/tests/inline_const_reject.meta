@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+inline_const_reject.pwn(11) : error 022: must be lvalue (non-constant)
+"""
+}
