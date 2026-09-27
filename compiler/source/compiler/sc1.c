@@ -2378,6 +2378,121 @@ static void dohook(void)
   hook_register(callback,hsym,argcount,hsym->tag,prio,hasstate,statevar,stateval);
 }
 
+/*  doinline - parse an "inline [const] Name(params) { body }" nested-function
+ *  declaration at statement position (experiment 015). The body is hoisted into a
+ *  hidden top-level function "_inline.<parent>.<Name>" compiled right here; the
+ *  enclosing function jumps over the emitted body at run time so it is reached only
+ *  through its entry address. "using inline Name" later resolves the hidden name and
+ *  yields that entry address as a Callback: value; a receiver calls it indirectly.
+ *
+ *  Milestone 0: no closure capture yet -- the body sees only its own parameters and
+ *  globals (the enclosing locals are detached during compilation). Capture via a
+ *  static link is the next milestone. */
+static void doinline(void)
+{
+  char name[sNAMEMAX+1];
+  char hidden[sNAMEMAX+1];
+  cell val;
+  char *str;
+  int tok,lbl_skip;
+  symbol *hsym;
+  symbol *save_curfunc,*save_loc;
+  int save_declared,save_gen,save_async,save_iter,save_status,save_rettype,save_iconst;
+  int is_const;
+
+  if (curfunc==NULL) {
+    error(10);                  /* an inline only makes sense inside a function */
+    lexclr(TRUE);
+    return;
+  } /* if */
+  is_const=matchtoken(tCONST);  /* "inline const" -- captured locals are read-only */
+  tok=lex(&val,&str);
+  if (tok!=tSYMBOL) {
+    error(20,str);              /* invalid symbol name */
+    lexclr(TRUE);
+    return;
+  } /* if */
+  strcpy(name,str);
+  if (strlen(curfunc->name)+strlen(name)+10>sNAMEMAX) {
+    error(200,name,sNAMEMAX);   /* combined hidden name too long */
+    lexclr(TRUE);
+    return;
+  } /* if */
+  sprintf(hidden,"_inline.%s.%s",curfunc->name,name);
+
+  /* Flush the enclosing function's PENDING string literals to the data segment
+   * before compiling the inline. newfunc() resets the shared literal queue
+   * (litidx) to 0, so any literals the parent accumulated so far (e.g. an earlier
+   * "print" argument) would be overwritten by the inline's and collide at the same
+   * data address. Dumping them now (the same sequence newfunc uses at a function's
+   * end) fixes their addresses and leaves litidx==0 as newfunc expects. */
+  if (litidx) {
+    glb_declared+=litidx;
+    begdseg();
+    dumplits();
+    litidx=0;
+  } /* if */
+  begcseg();                    /* back to the code segment for the jump below */
+
+  /* the enclosing function jumps over the inline body at run time */
+  lbl_skip=getlabel();
+  jumplabel(lbl_skip);
+
+  /* save + neutralise enclosing parse state: newfunc asserts an empty loctab and
+   * clobbers curfunc/declared/pc_* and (for an unused symbol) sc_status */
+  save_curfunc=curfunc;
+  save_loc=loctab.next;
+  save_declared=declared;
+  save_gen=pc_generator;
+  save_async=pc_async;
+  save_iter=pc_iterfunc;
+  save_status=sc_status;
+  save_rettype=rettype;
+  save_iconst=pc_inline_const;
+  pc_inline_const=is_const;
+  /* capture: keep the enclosing locals reachable for lookup (findloc consults
+   * inline_outer_loc while pc_compiling_inline) and flag them uCAPTURED so sc4.c
+   * addresses them through the inline's static link rather than its own frame. */
+  { symbol *s;
+    for (s=save_loc; s!=NULL; s=s->next)
+      s->usage|=uCAPTURED;
+  }
+  inline_outer_loc=save_loc;
+  pc_compiling_inline=1;
+  loctab.next=NULL;
+  declared=0;
+  pc_generator=0;
+  pc_async=0;
+  pc_iterfunc=0;
+
+  hsym=fetchfunc(hidden,0);
+  if (hsym!=NULL)
+    hsym->usage|=uREAD;         /* keep the body alive in the write pass */
+  newfunc(hidden,0,FALSE,FALSE,FALSE);  /* parses "(params){body}" from here */
+
+  /* restore the enclosing function's parse state */
+  pc_compiling_inline=0;
+  inline_outer_loc=NULL;
+  pc_inlinelink=0;
+  { symbol *s;
+    for (s=save_loc; s!=NULL; s=s->next)
+      s->usage&=~uCAPTURED;
+  }
+  loctab.next=save_loc;
+  curfunc=save_curfunc;
+  declared=save_declared;
+  pc_generator=save_gen;
+  pc_async=save_async;
+  pc_iterfunc=save_iter;
+  sc_status=save_status;
+  rettype=save_rettype;
+  pc_inline_const=save_iconst;
+
+  begcseg();                    /* newfunc left us in the data segment (its literal
+                                 * dump); the enclosing function resumes in code */
+  setlabel(lbl_skip);
+}
+
 /*  hook_free_arglist - deep-free an argument list previously built by
  *  hook_clone_arglist (mirrors the arglist portion of free_symbol) */
 static void hook_free_arglist(arginfo *arglist)
@@ -3317,6 +3432,31 @@ static void generator_emit_helper(void)
   endfunc();
   sym->codeaddr=code_idx;
   curfunc=savedfunc;
+}
+
+/*  inline_emit_prologue - emit the static-link save at the top of an "inline" body
+ *  (experiment 015). callindirect() passes the enclosing frame's FRM in ALT before
+ *  "call.pri"; PROC does not touch ALT, so the first thing the body does is stash
+ *  ALT into a hidden frame cell. Captured enclosing locals are then reached as
+ *  *(FRM+pc_inlinelink) + addr (see sc4.c lifted_slotaddr_pri). */
+static void inline_emit_prologue(void)
+{
+  cell linkcell;
+  declared+=1;
+  linkcell=-declared*(cell)sizeof(cell);
+  pc_inlinelink=linkcell;               /* captured-local access indexes off this cell */
+  /* The static link arrives in ALT. modstk() emits the "stack" opcode, which does
+   * "alt=stk" and would DESTROY the link before we save it -- so move the link into
+   * PRI first, allocate, then store PRI. */
+  stgwrite("\tmove.pri\n");             /* PRI = ALT = the static link */
+  code_idx+=opcodes(1);
+  modstk(-(int)sizeof(cell));
+  assert(curfunc!=NULL);
+  if (curfunc->x.stacksize<declared+1)
+    curfunc->x.stacksize=declared+1;
+  stgwrite("\tstor.s.pri ");            /* linkcell = PRI = the enclosing frame's FRM */
+  outval(linkcell,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
 }
 
 /*  generator_emit_prologue - emit the resume test at the top of a generator.
@@ -7008,6 +7148,13 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
     sym->genlocals=0;   /* recount lifted locals from scratch in this pass */
     generator_emit_prologue();
   } /* if */
+  pc_inlinelink=0;
+  if (pc_compiling_inline) {
+    /* exp 015: this is an "inline" body -- save the static link (the enclosing
+     * frame's FRM, passed in ALT by callindirect) into a hidden cell so captured
+     * enclosing locals can be reached through it (see sc4.c lifted_slotaddr_pri). */
+    inline_emit_prologue();
+  } /* if */
   #if !defined SC_LIGHT
     if (matchtoken('{')) {
       lexpush();
@@ -8729,6 +8876,14 @@ static void statement(int *lastindent,int allow_decl)
     /* the generator is suspended, not finished: the statement after the
      * "yield" is reached when the generator is resumed */
     lastst=tYIELD;
+    break;
+  case tINLINE:
+    if (allow_decl) {
+      doinline();
+      lastst=tINLINE;
+    } else {
+      error(3);                 /* declaration only valid in a block */
+    } /* if */
     break;
   case tBREAK:
     dobreak();

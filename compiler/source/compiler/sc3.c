@@ -57,6 +57,7 @@ static int hier1(value *lval1);
 static int primary(value *lval);
 static void clear_value(value *lval);
 static void callfunction(symbol *sym,value *lval_result,int matchparanthesis);
+static void callindirect(symbol *cbvar,value *lval_result);
 static int dbltest(void (*oper)(),value *lval1,value *lval2);
 static int commutative(void (*oper)());
 static int constant(value *lval);
@@ -1558,6 +1559,75 @@ static int hier2(value *lval)
     lvalue=hier2(lval);
     lval->tag=tag;
     return lvalue;
+  case tUSING: {
+    /* "using inline Name" -> a Callback: value naming an "inline" defined earlier in
+     * THIS function: a pointer to a 2-cell record {entry, FRM} in the enclosing frame
+     * (entry = the inline's code address, FRM = this frame = the static link so the
+     * inline can reach captured locals). "using public Name<sig>" -> the same record
+     * naming a PUBLIC function (no closure: FRM = 0, the <sig> is parsed and ignored,
+     * as the indirect call is not type-checked). A receiver taking a Callback:
+     * parameter calls either via callindirect. */
+    char hidden[sNAMEMAX+1];
+    symbol *isym;
+    cell recoff;
+    int ispublic=matchtoken(tPUBLIC);
+    if (!ispublic && !needtoken(tINLINE))
+      return FALSE;
+    tok=lex(&val,&st);
+    if (tok!=tSYMBOL)
+      return error_suggest(20,st,NULL,estNONSYMBOL,tok);  /* invalid symbol name */
+    if (ispublic) {
+      isym=findglb(st,sGLOBAL);
+      if (isym==NULL || isym->ident!=iFUNCTN)
+        return error(17,st);    /* no such function */
+      /* optional "<sig>" signature annotation -- parsed and skipped (the indirect
+       * call is positional/unchecked, like a function pointer). */
+      if (matchtoken('<')) {
+        int depth=1;
+        while (depth>0 && freading) {
+          tok=lex(&val,&st);
+          if (tok=='<') depth++;
+          else if (tok=='>') depth--;
+          else if (tok==0) break;
+        } /* while */
+      } /* if */
+    } else {
+      if (curfunc==NULL || strlen(curfunc->name)+strlen(st)+10>sNAMEMAX)
+        return error(17,st);                              /* undefined symbol */
+      sprintf(hidden,"_inline.%s.%s",curfunc->name,st);
+      isym=findglb(hidden,sGLOBAL);
+      if (isym==NULL || isym->ident!=iFUNCTN)
+        return error(17,st);    /* no "inline" of that name in this function */
+    } /* if */
+    markusage(isym,uREAD);
+    if (curfunc==NULL)
+      return error(17,st);
+    /* allocate the {entry, FRM} record in the enclosing frame (freed with the frame) */
+    declared+=2;
+    recoff=-declared*(cell)sizeof(cell);
+    modstk(-2*(int)sizeof(cell));
+    if (curfunc->x.stacksize<declared+1)
+      curfunc->x.stacksize=declared+1;
+    ldconst(isym->addr,sPRI);            /* PRI = entry address */
+    stgwrite("\tstor.s.pri ");           /* record[0] = entry */
+    outval(recoff,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    if (ispublic) {
+      ldconst(0,sPRI);                   /* a public has no closure: link = 0 */
+    } else {
+      getfrm();                          /* PRI = FRM (the static link) */
+    } /* if */
+    stgwrite("\tstor.s.pri ");           /* record[1] = FRM (or 0 for a public) */
+    outval(recoff+(cell)sizeof(cell),TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\taddr.pri ");             /* PRI = &record = FRM + recoff */
+    outval(recoff,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    clear_value(lval);
+    lval->ident=iEXPRESSION;             /* a runtime value (the record address) */
+    lval->tag=pc_addtag("Callback");
+    return FALSE;
+  } /* case */
   case t__ADDRESSOF: {
     static const char allowed_sym_types[]="-variable, array, array cell, label or function-";
     paranthese=0;
@@ -2145,6 +2215,14 @@ restart:
       return TRUE;
     } else {            /* tok=='(' -> function(...) */
       assert(tok=='(');
+      if (sym!=NULL && sym->ident==iVARIABLE && sym->tag!=0
+          && sym->tag==pc_addtag("Callback")) {
+        /* "cb(args)" where cb is a Callback: variable/parameter -> indirect call
+         * through the stored entry address (an "inline" passed via "using inline").
+         * The callee is opaque, so arguments are positional and unchecked. */
+        callindirect(sym,lval1);
+        return FALSE;
+      } /* if */
       if (sym==NULL
           || (sym->ident!=iFUNCTN && sym->ident!=iREFFUNC))
       {
@@ -2651,6 +2729,77 @@ SC_FUNC int getcallargvariadic(void)
 {
   return callargvariadic;
 }
+/*  callindirect - emit an INDIRECT call through a Callback: value (experiment 015).
+ *
+ *  "cb(args)" where cb holds an entry address (an "inline" passed via "using inline
+ *  Name"): evaluate and push the positional arguments (reversed via the staging
+ *  reorder markers, exactly like callfunction), push the argument byte-count, load
+ *  the callback's stored entry address into PRI, and "call.pri" (opcode 50). The
+ *  callee is opaque -- there is no arglist to type-check against -- so arguments are
+ *  positional and unchecked (like a function pointer). Milestone 0: no closure
+ *  static-link argument yet. */
+static void callindirect(symbol *cbvar,value *lval_result)
+{
+  int nargs=0;
+  int close;
+  cell val;
+  int tag;
+  value cbval;
+
+  markusage(cbvar,uREAD);
+  stgmark(sSTARTREORDER);
+  close=matchtoken(')');
+  if (!close) {
+    do {
+      stgmark((char)(sEXPRSTART+nargs));   /* beginning of this argument in the stage */
+      tag=0;
+      expression(&val,&tag,NULL,FALSE);    /* argument value -> PRI */
+      pushreg(sPRI);                       /* push the argument */
+      markexpr(sPARM,NULL,0);              /* mark the end of a sub-expression */
+      nargs++;
+      close=!matchtoken(',');
+    } while (!close);
+    needtoken(')');
+  } /* if */
+  stgmark(sENDREORDER);                    /* end of the reversed argument evaluation */
+  pushval((cell)nargs*sizeof(cell));       /* push the argument byte-count */
+
+  /* The callback value is a pointer to a {entry, FRM} record. Load the static link
+   * (record[1] = the enclosing frame) into ALT -- the inline's prologue saves ALT so
+   * captured locals resolve -- and the entry address (record[0]) into PRI, then
+   * indirect-call. */
+  clear_value(&cbval);
+  cbval.ident=iVARIABLE;
+  cbval.sym=cbvar;
+  rvalue(&cbval);                          /* PRI = record address */
+  stgwrite("\tpush.pri\n");                /* save the record address */
+  code_idx+=opcodes(1);
+  stgwrite("\tadd.c ");                    /* PRI = &record[1] */
+  outval((cell)sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.i\n");                  /* PRI = record[1] = static link (FRM) */
+  code_idx+=opcodes(1);
+  stgwrite("\tmove.alt\n");                /* ALT = static link */
+  code_idx+=opcodes(1);
+  stgwrite("\tpop.pri\n");                 /* PRI = record address */
+  code_idx+=opcodes(1);
+  stgwrite("\tload.i\n");                  /* PRI = record[0] = entry address */
+  code_idx+=opcodes(1);
+  stgwrite("\tcall.pri\n");                /* indirect call (opcode 50); ALT carries the link */
+  code_idx+=opcodes(1);
+
+  clear_value(lval_result);
+  lval_result->ident=iEXPRESSION;          /* the call result is in PRI */
+  pc_sideeffect=TRUE;
+
+  /* account for the pushed arguments + count cell + the saved record ptr + the call */
+  if (curfunc!=NULL) {
+    long totalsize=declared+decl_heap+nargs+3;
+    if (curfunc->x.stacksize<totalsize)
+      curfunc->x.stacksize=totalsize;
+  } /* if */
+}
+
 static void callfunction(symbol *sym,value *lval_result,int matchparanthesis)
 {
 static long nest_stkusage=0L;

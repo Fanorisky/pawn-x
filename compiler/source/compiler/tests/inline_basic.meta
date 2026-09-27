@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+apply start
+
+got v=5
+
+got v=10
+
+apply end
+
+inline_basic.amx returns 0
+"""
+}

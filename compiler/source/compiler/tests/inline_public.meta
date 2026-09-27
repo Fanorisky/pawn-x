@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+public got 11
+
+public got 22
+
+inline got 11 base=100
+
+inline got 22 base=100
+
+inline_public.amx returns 0
+"""
+}

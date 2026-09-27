@@ -34,6 +34,7 @@ Two pillars, split by *when the information exists*:
 | `hook native`/`function`/`stock` + `continue` (call-site, incl. variadic `...` targets) | `y_hooks` real fn/native hooking | tests `chook_*` |
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
 | compact `switch` codegen (range cases → bounds-check) | *(stock-Pawn table bloat)* | exp 013 |
+| `inline` closures + `using inline`/`using public<sig>` + `Callback:` | `y_inline` | tests `inline_*` |
 
 Most rows were run on a real `omp-server` and diffed against YSI (the `yield`,
 `async`/`await`, and `hook native`/`function`/`stock` rows are proven by the

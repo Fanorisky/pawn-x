@@ -410,17 +410,24 @@ SC_FUNC void alignframe(int numbytes)
  */
 static int lifted_local(const symbol *sym)
 {
-  return sym!=NULL && (sym->usage & uLIFTED)!=0;
+  /* uLIFTED: a generator/coroutine local living in its heap/arena state block,
+   * indexed off the "localsbase" cell (pc_genlocalsbase). uCAPTURED (exp 015): an
+   * ENCLOSING function's local accessed from inside an "inline" body through the
+   * static-link cell (pc_inlinelink = the enclosing frame's FRM). Both are reached
+   * as *(base) + addr via the same load.i/stor.i indirection; only the base cell
+   * differs (see lifted_slotaddr_pri), so all the routing below serves both. */
+  return sym!=NULL && (sym->usage & (uLIFTED|uCAPTURED))!=0;
 }
 
-/*  PRI = B + addr  (the absolute address of the lifted local's slot). ALT is
- *  left untouched. */
+/*  PRI = base + addr  (the absolute address of the lifted/captured local's slot).
+ *  ALT is left untouched. For a captured local the base is the inline's static-link
+ *  cell (the enclosing frame's FRM); for a lifted local it is the state-block base. */
 static void lifted_slotaddr_pri(const symbol *sym)
 {
-  stgwrite("\tload.s.pri ");     /* PRI = B (state-block base) */
-  outval(pc_genlocalsbase,TRUE);
+  stgwrite("\tload.s.pri ");     /* PRI = base (static link, or state-block base) */
+  outval((sym->usage & uCAPTURED)!=0 ? pc_inlinelink : pc_genlocalsbase,TRUE);
   code_idx+=opcodes(1)+opargs(1);
-  stgwrite("\tadd.c ");          /* PRI = B + addr (slot address) */
+  stgwrite("\tadd.c ");          /* PRI = base + addr (slot address) */
   outval(sym->addr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
 }
@@ -447,6 +454,8 @@ SC_FUNC void rvalue(value *lval)
     /* indirect fetch, but address not yet in PRI */
     assert(sym!=NULL);
     assert(sym->vclass==sLOCAL);/* global references don't exist in Pawn */
+    if ((sym->usage & uCAPTURED)!=0)
+      error(98);                /* a by-reference parameter cannot be captured by an inline (its cell is in the enclosing frame; pass by value) */
     if (sym->vclass==sLOCAL)
       stgwrite("\tlref.s.pri ");
     else
@@ -492,6 +501,8 @@ SC_FUNC void address(symbol *sym,regid reg)
 {
   assert(sym!=NULL);
   assert(reg==sPRI || reg==sALT);
+  if ((sym->usage & uCAPTURED)!=0 && sym->ident==iREFERENCE)
+    error(98);                    /* a by-reference parameter cannot be captured by an inline (pass by value) */
   if (lifted_local(sym)) {
     /* the lifted local's address is B + addr, an absolute data address. For
      * sPRI compute it directly (ALT untouched); for sALT route it through PRI
@@ -564,6 +575,8 @@ SC_FUNC void store(value *lval)
     code_idx+=opcodes(1)+opargs(1);
   } else if (lval->ident==iREFERENCE) {
     assert(sym!=NULL);
+    if ((sym->usage & uCAPTURED)!=0)
+      error(98);                /* a by-reference parameter cannot be captured by an inline (pass by value) */
     if (sym->vclass==sLOCAL)
       stgwrite("\tsref.s.pri ");
     else
@@ -572,6 +585,8 @@ SC_FUNC void store(value *lval)
     code_idx+=opcodes(1)+opargs(1);
   } else {
     assert(sym!=NULL);
+    if (pc_inline_const && (sym->usage & uCAPTURED)!=0)
+      error(22);                /* "inline const": a captured variable is read-only */
     markusage(sym,uWRITTEN);
     if (lifted_local(sym)) {
       /* *(B + addr) = PRI. The value to store is in PRI and must stay there
@@ -1374,6 +1389,8 @@ SC_FUNC void inc(value *lval)
   symbol *sym;
 
   sym=lval->sym;
+  if (pc_inline_const && sym!=NULL && (sym->usage & uCAPTURED)!=0)
+    error(22);                  /* "inline const": a captured variable is read-only */
   if (sym!=NULL)
     markusage(sym,uWRITTEN);
   if (lval->ident==iARRAYCELL) {
@@ -1449,6 +1466,8 @@ SC_FUNC void dec(value *lval)
   symbol *sym;
 
   sym=lval->sym;
+  if (pc_inline_const && sym!=NULL && (sym->usage & uCAPTURED)!=0)
+    error(22);                  /* "inline const": a captured variable is read-only */
   if (sym!=NULL)
     markusage(sym,uWRITTEN);
   if (lval->ident==iARRAYCELL) {

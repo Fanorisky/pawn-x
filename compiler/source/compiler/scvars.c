@@ -59,6 +59,10 @@ SC_VDEFINE cell declared=0;                 /* number of local cells declared */
 SC_VDEFINE cell pc_exprtemp=0;              /* live operand-stack temporaries in the current statement */
 SC_VDEFINE int pc_await_composed=0;              /* set once a COMPOSED "await asyncFn()" has suspended in the current expression; doawait rejects a following LEAF await that must carry a live temp across its suspend (compose-then-leaf does not sequence). Reset per statement / for-clause / test-condition. */
 SC_VDEFINE cell pc_genlocalsbase=0;         /* frame offset of a generator's "localsbase" cell */
+SC_VDEFINE cell pc_inlinelink=0;            /* exp 015: frame offset of an inline's static-link cell (0 = none) */
+SC_VDEFINE symbol *inline_outer_loc=NULL;   /* exp 015: enclosing locals (chain head) visible for capture while compiling an inline body */
+SC_VDEFINE int pc_compiling_inline=0;       /* exp 015: nonzero while a nested inline body is being compiled */
+SC_VDEFINE int pc_inline_const=0;           /* exp 015: nonzero while compiling an "inline const" body (captured locals read-only) */
 SC_VDEFINE cell glb_declared=0;             /* number of global cells declared */
 SC_VDEFINE cell code_idx=0;                 /* number of bytes with generated code */
 SC_VDEFINE int ntv_funcid= 0;               /* incremental number of native function */
@@ -121,9 +125,9 @@ SC_VDEFINE char *sc_tokens[] = {
   "...", "..",
   "__addressof", "__async_resume", "__async_self", "__async_start", "assert", "async", "await", "*begin", "break", "case", "char", "const", "continue",
   "default", "defined", "foreach", "do", "else", "__emit", "*end", "enum", "exit", "for",
-  "forward", "goto", "hook", "if", "iterfunc", "__nameof", "native", "new", "operator", "__pragma",
+  "forward", "goto", "hook", "if", "inline", "iterfunc", "__nameof", "native", "new", "operator", "__pragma",
   "public", "return", "sizeof", "sleep", "state", "static", "__static_assert",
-  "__static_check", "stock", "switch", "tagof", "*then", "while", "yield",
+  "__static_check", "stock", "switch", "tagof", "*then", "using", "while", "yield",
   "#assert", "#define", "#else", "#elseif", "#emit", "#endif", "#endinput",
   "#endscript", "#error", "#file", "#if", "#include", "#line", "#pragma",
   "#tryinclude", "#undef", "#warning",
