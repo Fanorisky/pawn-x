@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+empty=1
+
+algo=1
+
+nd=1
+
+rt=1
+
+stringhash_fnv.amx returns 0
+"""
+}

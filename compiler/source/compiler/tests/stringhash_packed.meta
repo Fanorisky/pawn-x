@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+fold=1
+
+rt=1
+
+ip=1
+
+stringhash_packed.amx returns 0
+"""
+}

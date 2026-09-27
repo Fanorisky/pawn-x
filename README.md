@@ -35,7 +35,7 @@ Two pillars, split by *when the information exists*:
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
 | compact `switch` codegen (range cases → bounds-check) | *(stock-Pawn table bloat)* | exp 013 |
 | `inline` closures + `using inline`/`using public<sig>` + `Callback:` | `y_inline` | tests `inline_*` |
-| `hash()` compile-time string hashing (+ runtime `hash(expr)`) | `y_stringhash` | tests `stringhash_*` |
+| `hash()`/`ihash()`/`fnv1()`/`fnv1a()` string hashing (compile-time + runtime, packed) | `y_stringhash` | tests `stringhash_*` |
 
 Most rows were run on a real `omp-server` and diffed against YSI. The `yield`,
 `async`/`await`, `hook native`/`function`/`stock`, and `inline` rows are proven by
@@ -205,7 +205,10 @@ switch (hash(params))                     // runtime hash of a variable
 ```
 Unlike YSI's `_H<>` macro (restricted to `a-z A-Z 0-9 _` and space, and paid for
 with expensive recursive preprocessing), the native fold accepts **any byte** and
-costs one pass; the fold itself needs no include. `hash` stays usable as an
+costs one pass; the fold itself needs no include. Full YSI parity: **`ihash()`**
+(case-insensitive djb2, for command dispatch), **`fnv1()`** / **`fnv1a()`**
+(32-bit FNV variants), and **packed strings** (both the folded literal and the
+runtime stock, via `ispacked`). `hash` (and the other three) stays usable as an
 ordinary identifier everywhere except call position. See tests `stringhash_*`.
 
 ## Build
