@@ -526,6 +526,7 @@ enum {
   tFOR,
   tFORWARD,
   tGOTO,
+  tHASH,
   tHOOK,
   tIF,
   tINLINE,

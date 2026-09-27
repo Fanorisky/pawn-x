@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+hash=43
+
+stringhash_ident.amx returns 0
+"""
+}

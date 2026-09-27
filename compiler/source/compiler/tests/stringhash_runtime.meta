@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+h=193493135
+
+e=5381
+
+stringhash_runtime.amx returns 0
+"""
+}

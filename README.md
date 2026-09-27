@@ -35,6 +35,7 @@ Two pillars, split by *when the information exists*:
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
 | compact `switch` codegen (range cases → bounds-check) | *(stock-Pawn table bloat)* | exp 013 |
 | `inline` closures + `using inline`/`using public<sig>` + `Callback:` | `y_inline` | tests `inline_*` |
+| `hash()` compile-time string hashing (+ runtime `hash(expr)`) | `y_stringhash` | tests `stringhash_*` |
 
 Most rows were run on a real `omp-server` and diffed against YSI. The `yield`,
 `async`/`await`, `hook native`/`function`/`stock`, and `inline` rows are proven by
@@ -187,6 +188,25 @@ switch (state)
 Nothing changes in how you write `switch` — only the emitted code shrinks. See
 `experiments/013-switch-codegen/RESULT.md` (measured + validated on a live
 open.mp 1.5.8 server).
+
+**Native string hashing (`hash()`)** — compile-time string hashing, the native
+replacement for YSI `y_stringhash`. `hash("literal")` folds to a compile-time
+constant (usable anywhere a constant is, above all in `switch`/`case`);
+`hash(expr)` on a runtime string lowers to a plugin-free djb2 `stock`. Both use
+the same forward djb2 (`h = h*33 + c`, 32-bit wrap), so a folded `case` label and
+a runtime `switch` value agree:
+```pawn
+#include <hash>
+switch (hash(params))                     // runtime hash of a variable
+{
+    case hash("gun"):    GiveGun(playerid);      // folded to a constant
+    case hash("health"): GiveHealth(playerid);
+}
+```
+Unlike YSI's `_H<>` macro (restricted to `a-z A-Z 0-9 _` and space, and paid for
+with expensive recursive preprocessing), the native fold accepts **any byte** and
+costs one pass; the fold itself needs no include. `hash` stays usable as an
+ordinary identifier everywhere except call position. See tests `stringhash_*`.
 
 ## Build
 

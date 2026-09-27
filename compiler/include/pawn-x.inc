@@ -32,6 +32,9 @@
  *                   (dynhook_add/remove/replace/clear/count/call/intercept).
  *                   Requires the `dynhook` companion plugin at runtime; the
  *                   compiler `hook` keyword and everything else need no plugin.
+ *   - <hash>      : the native `hash()` string-hash intrinsic's runtime stock
+ *                   (`hash_rt`); `hash("literal")` folds at compile time and
+ *                   needs no include.
  *
  *  Varargs forwarding (`___`) is a compiler keyword and needs no include.
  * </library>
@@ -41,3 +44,4 @@
 #include <iterators>
 #include <hook>
 #include <dynhook>
+#include <hash>

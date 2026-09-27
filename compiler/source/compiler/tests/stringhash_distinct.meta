@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+d=1
+
+wrap=1
+
+xy=1
+
+stringhash_distinct.amx returns 0
+"""
+}
