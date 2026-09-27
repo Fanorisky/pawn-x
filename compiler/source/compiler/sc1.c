@@ -3731,6 +3731,53 @@ static void async_emit_free_self(void)
   ffcall(freesym,NULL,1);
 }
 
+/*  async_emit_complete_self - richer completion than async_emit_free_self: hand the
+ *  coroutine's final value to the include's __async_complete(B, retval), which
+ *  records the result (task_keep / Async_Result), fires any bound callback
+ *  (task_bind), then frees the slot unless it is kept. Emitted at BOTH completion
+ *  points, replacing the bare Async_FreeByAddr. "retval_cell" is the stack cell
+ *  holding the return value (explicit "return"), or 0 to pass a constant 0 (the
+ *  fall-off-the-end path has no explicit value). Falls back to async_emit_free_self
+ *  when an older <async> without __async_complete is included. Clobbers PRI/ALT, so
+ *  it must be emitted where PRI is dead. No-op for non-async functions. */
+static void async_emit_complete_self(cell retval_cell)
+{
+  symbol *csym;
+  if (curfunc==NULL || (curfunc->usage & uASYNC)==0)
+    return;
+  csym=findglb("__async_complete",sGLOBAL);
+  if (csym==NULL || csym->ident!=iFUNCTN) {
+    async_emit_free_self();           /* older <async>: free only, no result capture */
+    return;
+  }
+  markusage(csym,uREAD);
+  /* Read B into ALT BEFORE pushing anything. At the fall-off-the-end completion
+   * site the frame locals -- including the localsbase cell that holds B -- have
+   * already been popped (modstk before this point), so STK sits at that cell; a
+   * "push" here would overwrite the localsbase memory, and a later push.s of it
+   * would read back the just-pushed value instead of B. Loading B first sidesteps
+   * that entirely, and is harmless on the "return" path where the cell is still live. */
+  stgwrite("\tload.s.pri ");          /* PRI = B (this coroutine's block) */
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");           /* ALT = B (survives the retval load/push below) */
+  code_idx+=opcodes(1);
+  /* arguments are pushed right-to-left: param1 = retval first, then param0 = B */
+  if (retval_cell!=0) {
+    stgwrite("\tload.s.pri ");        /* PRI = the return value (hidden cell) */
+    outval(retval_cell,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\tpush.pri\n");         /* param1 = return value */
+    code_idx+=opcodes(1);
+  } else {
+    pushval((cell)0);                 /* param1 = 0 (fall-off-the-end has no value) */
+  } /* if */
+  stgwrite("\tpush.alt\n");           /* param0 = B */
+  code_idx+=opcodes(1);
+  pushval((cell)(2*sizeof(cell)));    /* 2 arguments */
+  ffcall(csym,NULL,2);
+}
+
 /*  async_emit_clearfault - reset the include's fault channel (g_asyncFailed /
  *  g_asyncErr) on the return-to-awaiter resume path, so a composed
  *  "await asyncFn()" whose inner returns NORMALLY does not leave a stale fault
@@ -6990,12 +7037,13 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
   } /* if */
   if (!isterminal(lastst) && lastst!=tGOTO && (sym->flags & flagNAKED)==0) {
     destructsymbols(&loctab,0);
-    /* an "async" coroutine that runs off its end has COMPLETED: reclaim its arena
-     * slot by its own B address (a top-level coroutine resumed through the nested
-     * return-to-awaiter call.pri chain finishes here, never via a top-level
-     * Async_Resume). Clobbers PRI, so it precedes the sentinel load. No-op for a
-     * plain function or a "yield" generator. */
-    async_emit_free_self();
+    /* an "async" coroutine that runs off its end has COMPLETED: hand its (absent)
+     * return value 0 to __async_complete, which records the result, fires any bound
+     * callback, and reclaims its arena slot (unless kept) by its own B address -- a
+     * top-level coroutine resumed through the nested return-to-awaiter call.pri chain
+     * finishes here, never via a top-level Async_Resume. Clobbers PRI, so it precedes
+     * the sentinel load. No-op for a plain function or a "yield" generator. */
+    async_emit_complete_self(0);
     /* falling off the end of a generator ends the sequence, so it returns the
      * same sentinel to "foreach" as an explicit "return" does */
     ldconst(pc_generator ? generator_iterstop : 0,sPRI);
@@ -11902,13 +11950,16 @@ static void doreturn(void)
     stgwrite("\tcall.pri\n");             /* indirect call: resume the awaiter */
     code_idx+=opcodes(1);
     setlabel(lbl_noawaiter);
+    /* this coroutine has COMPLETED via "return": hand its return value (still live in
+     * retval_cell) to __async_complete, which records the result (task_keep /
+     * Async_Result), fires any bound callback (task_bind), and reclaims its arena slot
+     * unless kept. Covers the composed inner path too (it never returns through a
+     * top-level Async_Resume). Emitted BEFORE the hidden cells are freed so retval_cell
+     * is still valid; clobbers PRI, which is dead here. */
+    async_emit_complete_self(retval_cell);
     /* free the two hidden cells before the function's frame teardown below */
     modstk((int)(2*sizeof(cell)));
     declared-=2;
-    /* this coroutine has COMPLETED via "return": reclaim its arena slot by its own
-     * B address (covers the composed inner path, which never returns through a
-     * top-level Async_Resume). Clobbers PRI, so it precedes the iterstop load. */
-    async_emit_free_self();
   } /* if */
   /* in a generator a "return" ends the sequence, so whatever was returned (or
    * the 0 of a bare "return;") is replaced by the stop sentinel that "foreach"
