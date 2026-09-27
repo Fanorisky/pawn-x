@@ -2378,6 +2378,99 @@ static void dohook(void)
   hook_register(callback,hsym,argcount,hsym->tag,prio,hasstate,statevar,stateval);
 }
 
+/*  doinline - parse an "inline [const] Name(params) { body }" nested-function
+ *  declaration at statement position (experiment 015). The body is hoisted into a
+ *  hidden top-level function "_inline.<parent>.<Name>" compiled right here; the
+ *  enclosing function jumps over the emitted body at run time so it is reached only
+ *  through its entry address. "using inline Name" later resolves the hidden name and
+ *  yields that entry address as a Callback: value; a receiver calls it indirectly.
+ *
+ *  Milestone 0: no closure capture yet -- the body sees only its own parameters and
+ *  globals (the enclosing locals are detached during compilation). Capture via a
+ *  static link is the next milestone. */
+static void doinline(void)
+{
+  char name[sNAMEMAX+1];
+  char hidden[sNAMEMAX+1];
+  cell val;
+  char *str;
+  int tok,lbl_skip;
+  symbol *hsym;
+  symbol *save_curfunc,*save_loc;
+  int save_declared,save_gen,save_async,save_iter,save_status;
+
+  if (curfunc==NULL) {
+    error(10);                  /* an inline only makes sense inside a function */
+    lexclr(TRUE);
+    return;
+  } /* if */
+  matchtoken(tCONST);           /* "inline const" -- read-only closure; M0 ignores it */
+  tok=lex(&val,&str);
+  if (tok!=tSYMBOL) {
+    error(20,str);              /* invalid symbol name */
+    lexclr(TRUE);
+    return;
+  } /* if */
+  strcpy(name,str);
+  if (strlen(curfunc->name)+strlen(name)+10>sNAMEMAX) {
+    error(200,name,sNAMEMAX);   /* combined hidden name too long */
+    lexclr(TRUE);
+    return;
+  } /* if */
+  sprintf(hidden,"_inline.%s.%s",curfunc->name,name);
+
+  /* Flush the enclosing function's PENDING string literals to the data segment
+   * before compiling the inline. newfunc() resets the shared literal queue
+   * (litidx) to 0, so any literals the parent accumulated so far (e.g. an earlier
+   * "print" argument) would be overwritten by the inline's and collide at the same
+   * data address. Dumping them now (the same sequence newfunc uses at a function's
+   * end) fixes their addresses and leaves litidx==0 as newfunc expects. */
+  if (litidx) {
+    glb_declared+=litidx;
+    begdseg();
+    dumplits();
+    litidx=0;
+  } /* if */
+  begcseg();                    /* back to the code segment for the jump below */
+
+  /* the enclosing function jumps over the inline body at run time */
+  lbl_skip=getlabel();
+  jumplabel(lbl_skip);
+
+  /* save + neutralise enclosing parse state: newfunc asserts an empty loctab and
+   * clobbers curfunc/declared/pc_* and (for an unused symbol) sc_status */
+  save_curfunc=curfunc;
+  save_loc=loctab.next;
+  save_declared=declared;
+  save_gen=pc_generator;
+  save_async=pc_async;
+  save_iter=pc_iterfunc;
+  save_status=sc_status;
+  loctab.next=NULL;
+  declared=0;
+  pc_generator=0;
+  pc_async=0;
+  pc_iterfunc=0;
+
+  hsym=fetchfunc(hidden,0);
+  if (hsym!=NULL)
+    hsym->usage|=uREAD;         /* keep the body alive in the write pass */
+  newfunc(hidden,0,FALSE,FALSE,FALSE);  /* parses "(params){body}" from here */
+
+  /* restore the enclosing function's parse state */
+  loctab.next=save_loc;
+  curfunc=save_curfunc;
+  declared=save_declared;
+  pc_generator=save_gen;
+  pc_async=save_async;
+  pc_iterfunc=save_iter;
+  sc_status=save_status;
+
+  begcseg();                    /* newfunc left us in the data segment (its literal
+                                 * dump); the enclosing function resumes in code */
+  setlabel(lbl_skip);
+}
+
 /*  hook_free_arglist - deep-free an argument list previously built by
  *  hook_clone_arglist (mirrors the arglist portion of free_symbol) */
 static void hook_free_arglist(arginfo *arglist)
@@ -8681,6 +8774,14 @@ static void statement(int *lastindent,int allow_decl)
     /* the generator is suspended, not finished: the statement after the
      * "yield" is reached when the generator is resumed */
     lastst=tYIELD;
+    break;
+  case tINLINE:
+    if (allow_decl) {
+      doinline();
+      lastst=tINLINE;
+    } else {
+      error(3);                 /* declaration only valid in a block */
+    } /* if */
     break;
   case tBREAK:
     dobreak();

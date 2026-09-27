@@ -57,6 +57,7 @@ static int hier1(value *lval1);
 static int primary(value *lval);
 static void clear_value(value *lval);
 static void callfunction(symbol *sym,value *lval_result,int matchparanthesis);
+static void callindirect(symbol *cbvar,value *lval_result);
 static int dbltest(void (*oper)(),value *lval1,value *lval2);
 static int commutative(void (*oper)());
 static int constant(value *lval);
@@ -1558,6 +1559,30 @@ static int hier2(value *lval)
     lvalue=hier2(lval);
     lval->tag=tag;
     return lvalue;
+  case tUSING: {
+    /* "using inline Name" -> a Callback: value naming an "inline" defined earlier
+     * in THIS function. Milestone 0: the value is the inline's entry address (no
+     * closure capture yet); a receiver taking a Callback: parameter calls it. */
+    char hidden[sNAMEMAX+1];
+    symbol *isym;
+    if (!needtoken(tINLINE))
+      return FALSE;
+    tok=lex(&val,&st);
+    if (tok!=tSYMBOL)
+      return error_suggest(20,st,NULL,estNONSYMBOL,tok);  /* invalid symbol name */
+    if (curfunc==NULL || strlen(curfunc->name)+strlen(st)+10>sNAMEMAX)
+      return error(17,st);                                /* undefined symbol */
+    sprintf(hidden,"_inline.%s.%s",curfunc->name,st);
+    isym=findglb(hidden,sGLOBAL);
+    if (isym==NULL || isym->ident!=iFUNCTN)
+      return error(17,st);      /* no "inline" of that name in this function */
+    markusage(isym,uREAD);
+    clear_value(lval);
+    lval->ident=iCONSTEXPR;
+    lval->constval=isym->addr;  /* entry address = the callback value */
+    lval->tag=pc_addtag("Callback");
+    return FALSE;               /* a constant, not an lvalue */
+  } /* case */
   case t__ADDRESSOF: {
     static const char allowed_sym_types[]="-variable, array, array cell, label or function-";
     paranthese=0;
@@ -2145,6 +2170,14 @@ restart:
       return TRUE;
     } else {            /* tok=='(' -> function(...) */
       assert(tok=='(');
+      if (sym!=NULL && sym->ident==iVARIABLE && sym->tag!=0
+          && sym->tag==pc_addtag("Callback")) {
+        /* "cb(args)" where cb is a Callback: variable/parameter -> indirect call
+         * through the stored entry address (an "inline" passed via "using inline").
+         * The callee is opaque, so arguments are positional and unchecked. */
+        callindirect(sym,lval1);
+        return FALSE;
+      } /* if */
       if (sym==NULL
           || (sym->ident!=iFUNCTN && sym->ident!=iREFFUNC))
       {
@@ -2651,6 +2684,61 @@ SC_FUNC int getcallargvariadic(void)
 {
   return callargvariadic;
 }
+/*  callindirect - emit an INDIRECT call through a Callback: value (experiment 015).
+ *
+ *  "cb(args)" where cb holds an entry address (an "inline" passed via "using inline
+ *  Name"): evaluate and push the positional arguments (reversed via the staging
+ *  reorder markers, exactly like callfunction), push the argument byte-count, load
+ *  the callback's stored entry address into PRI, and "call.pri" (opcode 50). The
+ *  callee is opaque -- there is no arglist to type-check against -- so arguments are
+ *  positional and unchecked (like a function pointer). Milestone 0: no closure
+ *  static-link argument yet. */
+static void callindirect(symbol *cbvar,value *lval_result)
+{
+  int nargs=0;
+  int close;
+  cell val;
+  int tag;
+  value cbval;
+
+  markusage(cbvar,uREAD);
+  stgmark(sSTARTREORDER);
+  close=matchtoken(')');
+  if (!close) {
+    do {
+      stgmark((char)(sEXPRSTART+nargs));   /* beginning of this argument in the stage */
+      tag=0;
+      expression(&val,&tag,NULL,FALSE);    /* argument value -> PRI */
+      pushreg(sPRI);                       /* push the argument */
+      markexpr(sPARM,NULL,0);              /* mark the end of a sub-expression */
+      nargs++;
+      close=!matchtoken(',');
+    } while (!close);
+    needtoken(')');
+  } /* if */
+  stgmark(sENDREORDER);                    /* end of the reversed argument evaluation */
+  pushval((cell)nargs*sizeof(cell));       /* push the argument byte-count */
+
+  /* load the callback value (the entry address) into PRI, then indirect-call */
+  clear_value(&cbval);
+  cbval.ident=iVARIABLE;
+  cbval.sym=cbvar;
+  rvalue(&cbval);                          /* PRI = cbvar's stored entry address */
+  stgwrite("\tcall.pri\n");                /* indirect call (opcode 50) */
+  code_idx+=opcodes(1);
+
+  clear_value(lval_result);
+  lval_result->ident=iEXPRESSION;          /* the call result is in PRI */
+  pc_sideeffect=TRUE;
+
+  /* account for the pushed arguments + count cell + the call in the frame size */
+  if (curfunc!=NULL) {
+    long totalsize=declared+decl_heap+nargs+2;   /* +1 argcount cell, +1 for call */
+    if (curfunc->x.stacksize<totalsize)
+      curfunc->x.stacksize=totalsize;
+  } /* if */
+}
+
 static void callfunction(symbol *sym,value *lval_result,int matchparanthesis)
 {
 static long nest_stkusage=0L;
