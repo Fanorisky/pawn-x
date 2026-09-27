@@ -3439,11 +3439,16 @@ static void inline_emit_prologue(void)
   declared+=1;
   linkcell=-declared*(cell)sizeof(cell);
   pc_inlinelink=linkcell;               /* captured-local access indexes off this cell */
+  /* The static link arrives in ALT. modstk() emits the "stack" opcode, which does
+   * "alt=stk" and would DESTROY the link before we save it -- so move the link into
+   * PRI first, allocate, then store PRI. */
+  stgwrite("\tmove.pri\n");             /* PRI = ALT = the static link */
+  code_idx+=opcodes(1);
   modstk(-(int)sizeof(cell));
   assert(curfunc!=NULL);
   if (curfunc->x.stacksize<declared+1)
     curfunc->x.stacksize=declared+1;
-  stgwrite("\tstor.s.alt ");            /* linkcell = ALT = the enclosing frame's FRM */
+  stgwrite("\tstor.s.pri ");            /* linkcell = PRI = the enclosing frame's FRM */
   outval(linkcell,TRUE);
   code_idx+=opcodes(1)+opargs(1);
 }

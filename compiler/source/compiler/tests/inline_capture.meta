@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+fives=3
+
+a=27 b=54
+
+inline_capture.amx returns 0
+"""
+}
