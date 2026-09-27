@@ -35,6 +35,8 @@
  *   - <hash>      : the native `hash()` string-hash intrinsic's runtime stock
  *                   (`hash_rt`); `hash("literal")` folds at compile time and
  *                   needs no include.
+ *   - <timers>    : thin `Timer_Repeat`/`Timer_Once`/`Timer_Stop` wrappers over
+ *                   the host `SetTimer` natives (deferred/stateful work: <async>).
  *
  *  Varargs forwarding (`___`) is a compiler keyword and needs no include.
  * </library>
@@ -45,3 +47,4 @@
 #include <hook>
 #include <dynhook>
 #include <hash>
+#include <timers>
