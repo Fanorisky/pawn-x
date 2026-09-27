@@ -2407,6 +2407,23 @@ SC_FUNC int lex(cell *lexvalue,char **lexsym)
       tokptr+=1;
       continue;
     } /* if */
+    /* "hash" is a soft keyword: it is the compile-time/runtime string-hash
+     * intrinsic ONLY in call position (directly followed by '('). Anywhere
+     * else -- "new hash", "hash = x", a parameter named hash -- it is an
+     * ordinary identifier. Peek without consuming; if the next non-blank
+     * char is not '(', skip the keyword match and let it lex as a symbol. */
+    if (i==tHASH
+        && lptr[0]=='h' && lptr[1]=='a' && lptr[2]=='s' && lptr[3]=='h'
+        && !alphanum(lptr[4])) {
+      const unsigned char *p=(const unsigned char *)(lptr+4);
+      while (*p==' ' || *p=='\t')
+        p++;
+      if (*p!='(') {
+        i+=1;
+        tokptr+=1;
+        continue;
+      } /* if */
+    } /* if */
     if (*lptr==**tokptr && match(*tokptr,TRUE)) {
       _lextok=i;
       errorset(sRESET,0); /* reset error flag (clear the "panic mode")*/
