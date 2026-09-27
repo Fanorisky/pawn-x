@@ -1783,23 +1783,23 @@ static int hier2(value *lval)
     needtoken('(');
     htok=lex(&hval,&hstr);
     if (htok==tSTRING) {
+      /* a string LITERAL always folds to a compile-time constant. It takes
+       * exactly one operand, so require ')' next: a following token (a second
+       * string, a comma, ...) is a clean arity error, never a silent drop. */
       litstart=(int)hval;               /* start index into the literal queue */
-      if (matchtoken(')')) {            /* a lone string literal -> fold */
-        h=5381UL;
-        for (i=litstart; litq[i]!=0; i++)
-          h=((h<<5)+h+(unsigned long)litq[i]) & 0xFFFFFFFFUL;  /* h*33 + c */
-        litidx=litstart;                /* discard the literal we consumed */
-        clear_value(lval);
-        lval->ident=iCONSTEXPR;
-        lval->constval=(cell)h;
-        lval->tag=0;
-        ldconst(lval->constval,sPRI);
-        return FALSE;
-      } /* if */
-      lexpush();                        /* "a" "b" etc. -> runtime path */
-    } else {
-      lexpush();                        /* non-literal operand -> runtime path */
+      h=5381UL;
+      for (i=litstart; litq[i]!=0; i++)
+        h=((h<<5)+h+(unsigned long)litq[i]) & 0xFFFFFFFFUL;  /* h*33 + c */
+      litidx=litstart;                  /* discard the literal we consumed */
+      needtoken(')');
+      clear_value(lval);
+      lval->ident=iCONSTEXPR;
+      lval->constval=(cell)h;
+      lval->tag=0;
+      ldconst(lval->constval,sPRI);
+      return FALSE;
     } /* if */
+    lexpush();                          /* non-literal operand -> runtime path */
     rt=findglb("hash_rt",sGLOBAL);
     if (rt==NULL || rt->ident!=iFUNCTN) {
       error(17,"hash_rt");              /* undefined symbol: need #include <hash> */
