@@ -2395,7 +2395,7 @@ SC_FUNC int lex(cell *lexvalue,char **lexsym)
      * as genuine keywords ("retry: await ...", "loop: foreach ...", "Float:await"),
      * so they are downgraded only after the unambiguous declaration specifiers, not
      * after tLABEL. */
-    if (((i==tHOOK || i==tASYNC || i==tITERFUNC)
+    if (((i==tHOOK || i==tASYNC || i==tITERFUNC || i==tINLINE || i==tUSING)
             && (prevtok==tLABEL || prevtok==tNEW || prevtok==tSTATIC || prevtok==tSTOCK
                 || prevtok==tPUBLIC || prevtok==tFORWARD || prevtok==tNATIVE
                 || prevtok==tCONST || prevtok==tOPERATOR || prevtok=='.'))

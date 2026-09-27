@@ -521,6 +521,7 @@ enum {
   tGOTO,
   tHOOK,
   tIF,
+  tINLINE,
   tITERFUNC,
   t__NAMEOF,
   tNATIVE,
@@ -539,6 +540,7 @@ enum {
   tSWITCH,
   tTAGOF,
   tTHEN,
+  tUSING,
   tWHILE,
   tYIELD,
 
