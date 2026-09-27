@@ -454,6 +454,8 @@ SC_FUNC void rvalue(value *lval)
     /* indirect fetch, but address not yet in PRI */
     assert(sym!=NULL);
     assert(sym->vclass==sLOCAL);/* global references don't exist in Pawn */
+    if ((sym->usage & uCAPTURED)!=0)
+      error(98);                /* a by-reference parameter cannot be captured by an inline (its cell is in the enclosing frame; pass by value) */
     if (sym->vclass==sLOCAL)
       stgwrite("\tlref.s.pri ");
     else
@@ -499,6 +501,8 @@ SC_FUNC void address(symbol *sym,regid reg)
 {
   assert(sym!=NULL);
   assert(reg==sPRI || reg==sALT);
+  if ((sym->usage & uCAPTURED)!=0 && sym->ident==iREFERENCE)
+    error(98);                    /* a by-reference parameter cannot be captured by an inline (pass by value) */
   if (lifted_local(sym)) {
     /* the lifted local's address is B + addr, an absolute data address. For
      * sPRI compute it directly (ALT untouched); for sALT route it through PRI
@@ -571,6 +575,8 @@ SC_FUNC void store(value *lval)
     code_idx+=opcodes(1)+opargs(1);
   } else if (lval->ident==iREFERENCE) {
     assert(sym!=NULL);
+    if ((sym->usage & uCAPTURED)!=0)
+      error(98);                /* a by-reference parameter cannot be captured by an inline (pass by value) */
     if (sym->vclass==sLOCAL)
       stgwrite("\tsref.s.pri ");
     else
