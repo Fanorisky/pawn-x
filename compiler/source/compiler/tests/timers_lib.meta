@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+ST OnTick 1000 1
+
+t=42
+
+ST OnceOff 5000 0
+
+STE OnHit 250 1 dd
+
+KT 42
+
+timers_lib.amx returns 0
+"""
+}
