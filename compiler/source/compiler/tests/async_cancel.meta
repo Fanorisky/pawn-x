@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+start active=1
+
+worker cancelled=1
+
+after cancel cleaned=1 active=0
+
+after kill killed=1 active=0
+
+kill dead token=0
+
+async_cancel.amx returns 0
+"""
+}

@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+start active=1 done=0
+
+done=1 has=1 result=125 active=1
+
+reresume result=125 active=1
+
+release active=0 has=0
+
+async_keep.amx returns 0
+"""
+}

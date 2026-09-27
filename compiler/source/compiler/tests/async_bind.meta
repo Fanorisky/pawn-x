@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+fired tok=1 val=43
+
+detach tok=0 val=0
+
+keepbind tok=1 val=105 result=105
+
+async_bind.amx returns 0
+"""
+}

@@ -90,6 +90,10 @@
  *   * Async_Fail(err) inside an async body, followed by "return", AUTO-RAISES err
  *     into the awaiter of a composed "await asyncFn()" -- fault propagation up the
  *     compose chain, no explicit re-signal at each level. See the fault-channel block.
+ *   * IMPLICIT auto-raise: a leaf fault an inner NEVER observed (it did not read
+ *     Async_Failed()/Async_Error()) is auto-raised into its awaiter on return, so an
+ *     ignored failure never silently drops. An inner that OBSERVES and recovers, or
+ *     returns with no fault, hands its awaiter a clean channel. See the fault-channel block.
  *   * MID-EXPRESSION await -- "await" may sit inside a larger expression with live
  *     operand temporaries ("p + await F()", "base + await asyncFn()", ...). The live
  *     operand-stack region is spilled into B before the suspend and restored after
@@ -137,10 +141,6 @@
  *     shape works -- see SUPPORTED.)
  *   * A suspend at arbitrary call-stack depth inside a non-async helper is
  *     unsupported (needs whole-frame handling).
- *   * IMPLICIT fault auto-raise: a leaf fault an inner IGNORED does not raise by
- *     itself -- the inner must call Async_Fail(err) to propagate (explicit raise IS
- *     supported and shipped; see below). A normally-returning inner (incl. one that
- *     RECOVERED from a leaf fault) hands its awaiter a clean channel.
  *   * Single compilation unit (one .amx).
  *
  * ============================ NON-GOALS (MVP) ============================
@@ -241,6 +241,33 @@ static stock g_asyncB[ASYNC_SLOTS];       /* slot -> state block B (0 = empty) *
 static stock g_asyncAlive[ASYNC_SLOTS];   /* slot -> 1 while the coroutine is allocated/parked */
 static stock g_asyncRunning[ASYNC_SLOTS]; /* slot -> 1 while its body is ON THE STACK (reentrancy guard) */
 
+/* ---- COMPLETION STATE (task_keep / Async_Result / task_bind / cancellation) ----
+ * A coroutine's final value is normally discarded on the free-on-complete path.
+ * The compiler now hands it to __async_complete(B, retval) at BOTH completion
+ * points (explicit "return" and fall-off-the-end), so a task can KEEP its result
+ * for later reading (task_keep parity) and a bound callback can fire with it
+ * (task_bind parity). These per-slot tables are all cleared when a slot is claimed
+ * (Async_Alloc / Async_Register) and released (Async_Free), so a reused slot never
+ * inherits a previous coroutine's keep flag, result, or binding. */
+static stock g_asyncResVal[ASYNC_SLOTS];    /* slot -> last completion value */
+static stock g_asyncResSet[ASYNC_SLOTS];    /* slot -> 1 once a result has been recorded */
+static stock g_asyncKeep[ASYNC_SLOTS];      /* slot -> 1 = do NOT free on completion (task_keep) */
+static stock g_asyncCompleted[ASYNC_SLOTS]; /* slot -> 1 = completed+kept: result readable, re-resume refused */
+
+/* task_bind: a per-slot completion-callback name. When set, __async_complete fires
+ * it with (token, result) as the coroutine completes. The actual host dispatch is
+ * CallLocalFunction, a SA-MP/open.mp native absent from pawnruns and the bundled
+ * includes, so it is compiled ONLY when the host defines ASYNC_HOST_CALLBACKS (the
+ * open.mp adapter does). Regardless of host, g_asyncFiredTok/Val record the last
+ * fire so the binding LOGIC is verifiable off-host. */
+#if !defined ASYNC_BOUND_NAME_MAX
+    #define ASYNC_BOUND_NAME_MAX 32     /* max chars of a bound callback's public name */
+#endif
+static stock g_asyncBoundName[ASYNC_SLOTS][ASYNC_BOUND_NAME_MAX];
+static stock g_asyncBoundSet[ASYNC_SLOTS];  /* slot -> 1 while a callback name is bound */
+stock g_asyncFiredTok = 0;                  /* token of the most recent bound-callback fire */
+stock g_asyncFiredVal = 0;                  /* result value of the most recent bound-callback fire */
+
 /* Slot chosen by the most recent Async_Alloc, so Async_Start can turn the
  * returned block address back into its token. -1 means the arena was full. */
 stock g_asyncAllocSlot = -1;
@@ -328,6 +355,19 @@ stock __async_bcell(B, k)
 }
 
 
+/* __async_slot_reset_completion(idx): wipe the per-slot completion/keep/bind state
+ * so a freshly claimed or released slot never inherits a previous coroutine's kept
+ * result, keep flag, completed mark, or bound callback. Internal. */
+stock __async_slot_reset_completion(idx)
+{
+    g_asyncResVal[idx]    = 0;
+    g_asyncResSet[idx]    = 0;
+    g_asyncKeep[idx]      = 0;
+    g_asyncCompleted[idx] = 0;
+    g_asyncBoundSet[idx]  = 0;
+    g_asyncBoundName[idx][0] = 0;
+}
+
 /* Async_Alloc(): claim a free arena slot sized for "blkcells" and return the
  * STABLE data address of its block (which the compiler uses as B). Records the
  * chosen slot in g_asyncAllocSlot so Async_Start can recover the token. Returns
@@ -365,6 +405,7 @@ stock Async_Alloc(blkcells)
             g_asyncRunning[i] = 0;
             g_asyncB[i]       = B;
             g_asyncAllocSlot  = i;
+            __async_slot_reset_completion(i);
             return B;
         }
     }
@@ -400,6 +441,7 @@ stock Async_Register(B)
             g_asyncB[i]       = B;
             g_asyncAlive[i]   = 1;
             g_asyncRunning[i] = 0;
+            __async_slot_reset_completion(i);
             return i + 1;               /* token: 1-based */
         }
     }
@@ -419,6 +461,7 @@ stock Async_Free(token)
     g_asyncAlive[idx]   = 0;
     g_asyncRunning[idx] = 0;
     g_asyncB[idx]       = 0;
+    __async_slot_reset_completion(idx);
 }
 
 /* Async_Complete(token): a coroutine finished -> free its slot. Kept as a name
@@ -439,6 +482,162 @@ stock Async_FreeByAddr(B)
     if (idx < 0)
         return;                         /* not an arena block base: no-op */
     Async_Free(idx + 1);                /* double-free safe */
+}
+
+/* ===================== COMPLETION RESULT / KEEP / BIND ======================
+ * The compiler calls __async_complete(B, retval) at a coroutine's completion (both
+ * the explicit-"return" and fall-off-the-end paths), handing over the block address
+ * and the coroutine's final value. This is where a KEPT task retains its result and
+ * a BOUND callback fires (task_keep / task_bind parity). A non-kept task is freed
+ * here exactly as before (free-on-complete); this replaces the old bare
+ * Async_FreeByAddr on the completion path. */
+
+/* __async_fire_bound(idx, result): if slot idx has a bound callback, record the fire
+ * (g_asyncFiredTok/Val, always) and dispatch it on the host (CallLocalFunction, only
+ * when ASYNC_HOST_CALLBACKS is defined -- that native is absent off-host). Internal. */
+stock __async_fire_bound(idx, result)
+{
+    if (idx < 0 || idx >= ASYNC_SLOTS || !g_asyncBoundSet[idx])
+        return;
+    g_asyncFiredTok = idx + 1;
+    g_asyncFiredVal = result;
+    #if defined ASYNC_HOST_CALLBACKS
+        CallLocalFunction(g_asyncBoundName[idx], "dd", idx + 1, result);
+    #endif
+}
+
+/* __async_complete(B, retval): the coroutine whose block base is B has completed
+ * with value "retval". Record the result, fire any bound callback, then either KEEP
+ * the slot (task_keep -- result stays readable, re-resume refused) or free it
+ * (default free-on-complete). A non-arena/already-free B is a safe no-op. */
+stock __async_complete(B, retval)
+{
+    new idx = async_slot_of_addr(B);
+    if (idx < 0 || !g_asyncAlive[idx])
+        return;                         /* not an arena block base / already freed */
+    g_asyncResVal[idx] = retval;
+    g_asyncResSet[idx] = 1;
+    __async_fire_bound(idx, retval);
+    if (g_asyncKeep[idx])
+    {
+        g_asyncCompleted[idx] = 1;      /* kept: alive, result readable, no re-resume */
+        g_asyncRunning[idx]   = 0;
+    }
+    else
+    {
+        Async_Free(idx + 1);            /* free-on-complete (default) */
+    }
+}
+
+/* Async_Keep(token): mark a task so it is NOT freed when it completes; its result
+ * stays readable with Async_Result until Async_Release. Call it right after
+ * Async_Start (before the task completes). Out-of-range/dead token: safe no-op. */
+stock Async_Keep(token)
+{
+    new idx = token - 1;
+    if (idx < 0 || idx >= ASYNC_SLOTS || !g_asyncAlive[idx])
+        return;
+    g_asyncKeep[idx] = 1;
+}
+
+/* Async_HasResult(token): 1 if the task has recorded a completion result. */
+stock Async_HasResult(token)
+{
+    new idx = token - 1;
+    if (idx < 0 || idx >= ASYNC_SLOTS)
+        return 0;
+    return g_asyncResSet[idx];
+}
+
+/* Async_Result(token): the task's completion value (0 if none recorded). Meaningful
+ * for a KEPT task after it completes (a non-kept task's slot is freed on completion,
+ * clearing the result). */
+stock Async_Result(token)
+{
+    new idx = token - 1;
+    if (idx < 0 || idx >= ASYNC_SLOTS || !g_asyncResSet[idx])
+        return 0;
+    return g_asyncResVal[idx];
+}
+
+/* Async_Done(token): 1 if a KEPT task has completed (result final, re-resume
+ * refused). A freed (non-kept, completed) or unknown token reads 0. */
+stock Async_Done(token)
+{
+    new idx = token - 1;
+    if (idx < 0 || idx >= ASYNC_SLOTS)
+        return 0;
+    return g_asyncCompleted[idx];
+}
+
+/* Async_Release(token): release a KEPT task, returning its slot to the pool and
+ * clearing its result (task_reset/task_delete for a kept task). To RE-RUN a task,
+ * call Async_Start(Fn, args) again -- coroutines are bound to their callee at the
+ * start site, so there is no in-place "reset and rerun". Async_Reset is an alias. */
+stock Async_Release(token)
+{
+    Async_Free(token);
+}
+#define Async_Reset(%1) Async_Release(%1)
+
+/* ===================== CANCELLATION ========================================
+ * Reserved fault codes delivered by the cancel/timeout paths. They sit at the top
+ * of the signed range so a real host error code (small positive/negative) never
+ * collides. A body detects them right after an await with Async_Cancelled() /
+ * Async_TimedOut(), or generically with Async_Failed()/Async_Error(). Override
+ * before including <async> if a host genuinely uses these exact values. */
+#if !defined ASYNC_ERR_CANCELLED
+    #define ASYNC_ERR_CANCELLED (cellmax - 1)   /* Async_Cancel's default code */
+#endif
+#if !defined ASYNC_ERR_TIMEOUT
+    #define ASYNC_ERR_TIMEOUT   (cellmax - 2)   /* Async_Timeout's default code */
+#endif
+
+/* Async_Kill(token): HARD teardown -- free the slot immediately without notifying
+ * the coroutine. Refused (returns 0) while the body is on the stack (running), since
+ * freeing a live frame's slot would corrupt it; returns 1 when it freed a parked
+ * task. A parked coroutine killed this way never runs its post-await code, so use
+ * Async_Cancel when the body must clean up. Unknown/dead token: returns 0. */
+stock Async_Kill(token)
+{
+    new idx = token - 1;
+    if (idx < 0 || idx >= ASYNC_SLOTS)
+        return 0;
+    if (!g_asyncAlive[idx] || g_asyncRunning[idx])
+        return 0;                       /* dead, or a body is on the stack */
+    Async_Free(token);
+    return 1;
+}
+
+/* Async_Bind(token, name): fire public "name" (as name(token, result)) when the task
+ * completes -- task_bind parity. One binding per task; a later Async_Bind replaces
+ * it. The dispatch is CallLocalFunction on the host (compiled under
+ * ASYNC_HOST_CALLBACKS); off-host the fire is still recorded in g_asyncFiredTok/Val.
+ * Unknown/dead token, or a name too long for ASYNC_BOUND_NAME_MAX, is a no-op. */
+stock Async_Bind(token, const name[])
+{
+    new idx = token - 1;
+    if (idx < 0 || idx >= ASYNC_SLOTS || !g_asyncAlive[idx])
+        return;
+    new i = 0;
+    while (i < ASYNC_BOUND_NAME_MAX - 1 && name[i] != 0)
+    {
+        g_asyncBoundName[idx][i] = name[i];
+        i++;
+    }
+    g_asyncBoundName[idx][i] = 0;
+    g_asyncBoundSet[idx] = (i > 0) ? 1 : 0;
+}
+
+/* Async_Detach(token): remove a task's completion binding (task_detach). No-op if
+ * nothing was bound. */
+stock Async_Detach(token)
+{
+    new idx = token - 1;
+    if (idx < 0 || idx >= ASYNC_SLOTS)
+        return;
+    g_asyncBoundSet[idx]     = 0;
+    g_asyncBoundName[idx][0] = 0;
 }
 
 /* Async_ActiveCount(): number of arena slots currently allocated (parked or
@@ -476,6 +675,10 @@ stock g_asyncFailed = 0;                /* did the await the coroutine just resu
 stock g_asyncErr    = 0;                /* error code delivered with that failure */
 stock g_asyncPropagate    = 0;          /* an async body called Async_Fail() -> raise into its awaiter */
 stock g_asyncPropagateErr = 0;          /* the code to raise */
+stock g_asyncFaultObserved = 0;         /* did the body READ the fault (Async_Failed/Error/Cancelled/TimedOut)?
+                                         * reset each resume; used by __async_clearfault to distinguish a
+                                         * RECOVERED leaf fault (observed -> no raise) from an IGNORED one
+                                         * (unobserved -> AUTO-RAISE into the awaiter). */
 
 /* ---- MULTI-RESULT (array) inbox state (see Async_ResumeArr / Async_InboxArr) ----
  * Declared here (before __async_deliver) so every resume can reset the delivered
@@ -501,12 +704,15 @@ stock __async_deliver(token, value, bool:failed, err, arrlen)
         return;                         /* unknown token */
     if (!g_asyncAlive[idx])
         return;                         /* never parked / already completed */
+    if (g_asyncCompleted[idx])
+        return;                         /* KEPT + completed: result is final, refuse re-resume */
     if (g_asyncRunning[idx])
         return;                         /* REENTRANCY GUARD: refuse to re-enter a running body */
     new B = g_asyncB[idx];              /* a live slot's block (0 IS a valid address, so no B==0 reject) */
 
     g_asyncFailed = failed ? 1 : 0;     /* fault channel: body checks Async_Failed() after the await */
     g_asyncErr    = err;
+    g_asyncFaultObserved = 0;           /* fresh resume: the body has not read the fault yet */
     g_asyncPropagate = 0;               /* bound any pending raise to a single resume cycle */
     g_asyncResultLen[idx] = arrlen;     /* array inbox: 0 unless Async_ResumeArr staged one */
 
@@ -514,8 +720,8 @@ stock __async_deliver(token, value, bool:failed, err, arrlen)
     new done = __async_resume(B, value);
     if (g_asyncAlive[idx])              /* still allocated (a nested completion may have freed it) */
         g_asyncRunning[idx] = 0;        /* body left the stack; still parked */
-    if (done)
-        Async_Free(token);             /* completed -> reclaim the slot (no-op if already freed) */
+    if (done && g_asyncAlive[idx] && !g_asyncKeep[idx])
+        Async_Free(token);             /* completed -> reclaim (unless KEPT; __async_complete already ran) */
 }
 
 stock Async_Resume(token, value)
@@ -531,6 +737,23 @@ stock Async_ResumeError(token, err)
 {
     __async_deliver(token, err, true, err, 0);
 }
+
+/* Async_Cancel(token, err): SOFT cancel -- resume the parked coroutine through the
+ * fault channel with a cancellation code, so its body observes Async_Cancelled()
+ * right after the await and can clean up and "return" (which completes+frees it).
+ * Unlike Async_Kill it lets the body run its post-await code; a body that ignores
+ * the fault and awaits again stays alive (a cooperative cancel). Delegates to the
+ * resume seam, so a running/dead/unknown token is the same safe no-op it is there. */
+stock Async_Cancel(token, err = ASYNC_ERR_CANCELLED)
+{
+    Async_ResumeError(token, err);
+}
+
+/* Async_Cancelled() / Async_TimedOut(): right after an await, distinguish the two
+ * reserved fault causes from an ordinary Async_ResumeError. Valid only in the run
+ * immediately following the await, like Async_Failed(). */
+#define Async_Cancelled() (Async_Failed() && Async_Error() == ASYNC_ERR_CANCELLED)
+#define Async_TimedOut()  (Async_Failed() && Async_Error() == ASYNC_ERR_TIMEOUT)
 
 /* ---- MULTI-RESULT (array) delivery: PawnPlus await_arr parity -----------------
  * A single "await" yields one cell. To hand a coroutine several values at once (a
@@ -588,31 +811,44 @@ stock __async_inbox_arr(idx, dest[], size)
 /* Async_Failed() / Async_Error(): inspect the fault channel right after an await
  * -- Async_Failed() is nonzero iff that await was completed via
  * Async_ResumeError; Async_Error() is the code. Valid only in the run
- * immediately following the await. */
-#define Async_Failed() (g_asyncFailed)
-#define Async_Error()  (g_asyncErr)
+ * immediately following the await. Reading EITHER marks the fault as OBSERVED, so a
+ * composed inner that checks and recovers hands its awaiter a clean channel, while
+ * an inner that IGNORES the fault has it AUTO-RAISED on return (see __async_clearfault). */
+stock __async_failed()  { g_asyncFaultObserved = 1; return g_asyncFailed; }
+stock __async_error()   { g_asyncFaultObserved = 1; return g_asyncErr; }
+#define Async_Failed() (__async_failed())
+#define Async_Error()  (__async_error())
 
 /* __async_clearfault(_): the compiler emits a call to this on the return-to-
- * awaiter resume path (doreturn). It EITHER raises a pending fault into the
- * awaiter -- when the inner called Async_Fail(err) just before returning, so a
- * composed "await asyncFn()" faults automatically (AUTO-RAISE) -- OR resets the
- * channel clean, so an inner that returned NORMALLY (incl. one that observed and
- * RECOVERED from a leaf fault) hands its awaiter Async_Failed()==0 rather than a
- * stale 1. The argument is ignored; it exists only so the compiler can emit the
- * call through the same one-argument path it uses for Async_FreeByAddr. */
+ * awaiter resume path (doreturn). It decides what the awaiter's composed
+ * "await asyncFn()" observes when the inner returns:
+ *   1. the inner called Async_Fail(err) -> AUTO-RAISE err (explicit propagation);
+ *   2. else the inner had a leaf fault it NEVER read (unobserved) -> AUTO-RAISE that
+ *      fault, so an IGNORED leaf failure no longer silently drops (implicit raise);
+ *   3. else clean the channel -- the inner returned NORMALLY, either with no fault or
+ *      having OBSERVED (Async_Failed/Error) and RECOVERED from one.
+ * The argument is ignored; it exists only so the compiler can emit the call through
+ * the same one-argument path it uses for Async_FreeByAddr. */
 stock __async_clearfault(_ignored)
 {
     if (g_asyncPropagate)
     {
-        g_asyncFailed    = 1;           /* AUTO-RAISE: awaiter's await observes the fault */
+        g_asyncFailed    = 1;           /* AUTO-RAISE (explicit): awaiter's await observes the fault */
         g_asyncErr       = g_asyncPropagateErr;
         g_asyncPropagate = 0;           /* consumed for this hop (re-raise = call Async_Fail again) */
     }
+    else if (g_asyncFailed && !g_asyncFaultObserved)
+    {
+        /* AUTO-RAISE (implicit): the inner was resumed with a leaf fault it never
+         * inspected and returned anyway -- propagate it rather than drop it. g_asyncErr
+         * already holds the leaf's code; leave it for the awaiter to observe. */
+    }
     else
     {
-        g_asyncFailed = 0;              /* normal return: clean channel for the awaiter */
+        g_asyncFailed = 0;              /* normal / recovered return: clean channel for the awaiter */
         g_asyncErr    = 0;
     }
+    g_asyncFaultObserved = 0;           /* next compose hop starts fresh */
     /* The awaiter (which did "await asyncFn()") is about to resume via the compiler's
      * return-to-awaiter call.pri chain, which BYPASSES __async_deliver -- so reset the
      * awaiter's array-result length here too, or a stale Async_ResumeArr count from a
