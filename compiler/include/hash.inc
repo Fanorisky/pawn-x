@@ -3,33 +3,65 @@
 #endif
 #define _INC_hash
 
+#include <string>   // for ispacked() (packed/unpacked-aware runtime hashing)
+
 /**
  * <library name="hash">
- *  Native string hashing for pawn-x. The `hash()` intrinsic (a compiler
- *  keyword in call position) folds a string LITERAL to a compile-time
- *  constant, and lowers `hash(expr)` (a non-literal argument) to a call to
- *  the `hash_rt` stock below. Compile-time and runtime values are identical
- *  by construction.
+ *  Native string hashing for pawn-x (the y_stringhash replacement). Four
+ *  intrinsics, each a compiler keyword in call position:
  *
- *    switch (hash(params))          // runtime hash of a variable
- *    {
- *        case hash("gun"):    ...   // folded to a constant at compile time
- *        case hash("health"): ...
- *    }
+ *    hash(s)    djb2 ("Bernstein"), case-sensitive
+ *    ihash(s)   djb2, case-INsensitive (A-Z folded to a-z)
+ *    fnv1(s)    FNV-1  (32-bit)
+ *    fnv1a(s)   FNV-1a (32-bit)
  *
- *  Algorithm: forward djb2 ("Bernstein"), h = h*33 + c per character over an
- *  unpacked string, 32-bit wrap (natural in cell arithmetic). Case-sensitive.
- *  Any byte is allowed in a literal (unlike YSI's a-z/0-9/_/space limit).
+ *  hash("literal") (a string LITERAL) folds to a compile-time constant, usable
+ *  in switch/case; hash(expr) (a variable) lowers to the matching *_rt stock
+ *  below. Compile-time and runtime values are identical by construction. Any
+ *  byte is allowed in a literal (unlike YSI's a-z/0-9/_/space limit), and both
+ *  packed and unpacked strings are supported.
+ *
+ *    switch (hash(params)) { case hash("gun"): ...; case hash("car"): ...; }
  * </library>
  */
 
-/// <summary>Runtime forward-djb2 hash of a string; matches hash("literal") exactly.</summary>
-/// <param name="str">The (unpacked, NUL-terminated) string to hash.</param>
-/// <returns>The djb2 hash as a cell.</returns>
+#if !defined HASH_FNV_OFFSET
+	#define HASH_FNV_OFFSET  (0x811C9DC5)   // 2166136261, as a cell bit pattern
+	#define HASH_FNV_PRIME   (0x01000193)   // 16777619
+#endif
+
+/// <summary>djb2 hash of a string (matches hash("literal")). Packed or unpacked.</summary>
 stock hash_rt(const str[])
 {
-	new h = 5381;
-	for (new i = 0; str[i]; ++i)
-		h = h * 33 + str[i];	// 32-bit wrap is automatic in cell math
+	new h = 5381, c, i = 0;
+	if (ispacked(str)) { while ((c = str{i++})) h = h * 33 + c; }
+	else               { while ((c = str[i++])) h = h * 33 + c; }
+	return h;
+}
+
+/// <summary>Case-insensitive djb2 hash (matches ihash("literal")). Packed or unpacked.</summary>
+stock ihash_rt(const str[])
+{
+	new h = 5381, c, i = 0;
+	if (ispacked(str)) { while ((c = str{i++})) { if (c >= 'A' && c <= 'Z') c += 32; h = h * 33 + c; } }
+	else               { while ((c = str[i++])) { if (c >= 'A' && c <= 'Z') c += 32; h = h * 33 + c; } }
+	return h;
+}
+
+/// <summary>FNV-1 (32-bit) hash of a string (matches fnv1("literal")). Packed or unpacked.</summary>
+stock fnv1_rt(const str[])
+{
+	new h = HASH_FNV_OFFSET, c, i = 0;
+	if (ispacked(str)) { while ((c = str{i++})) { h = h * HASH_FNV_PRIME; h ^= c; } }
+	else               { while ((c = str[i++])) { h = h * HASH_FNV_PRIME; h ^= c; } }
+	return h;
+}
+
+/// <summary>FNV-1a (32-bit) hash of a string (matches fnv1a("literal")). Packed or unpacked.</summary>
+stock fnv1a_rt(const str[])
+{
+	new h = HASH_FNV_OFFSET, c, i = 0;
+	if (ispacked(str)) { while ((c = str{i++})) { h ^= c; h = h * HASH_FNV_PRIME; } }
+	else               { while ((c = str[i++])) { h ^= c; h = h * HASH_FNV_PRIME; } }
 	return h;
 }

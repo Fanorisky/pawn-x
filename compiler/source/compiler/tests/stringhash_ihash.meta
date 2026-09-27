@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+ci=1
+
+eq=1
+
+rt=1
+
+stringhash_ihash.amx returns 0
+"""
+}

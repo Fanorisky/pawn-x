@@ -2407,21 +2407,22 @@ SC_FUNC int lex(cell *lexvalue,char **lexsym)
       tokptr+=1;
       continue;
     } /* if */
-    /* "hash" is a soft keyword: it is the compile-time/runtime string-hash
-     * intrinsic ONLY in call position (directly followed by '('). Anywhere
-     * else -- "new hash", "hash = x", a parameter named hash -- it is an
-     * ordinary identifier. Peek without consuming; if the next non-blank
-     * char is not '(', skip the keyword match and let it lex as a symbol. */
-    if (i==tHASH
-        && lptr[0]=='h' && lptr[1]=='a' && lptr[2]=='s' && lptr[3]=='h'
-        && !alphanum(lptr[4])) {
-      const unsigned char *p=(const unsigned char *)(lptr+4);
-      while (*p==' ' || *p=='\t')
-        p++;
-      if (*p!='(') {
-        i+=1;
-        tokptr+=1;
-        continue;
+    /* the string-hash intrinsics (hash/ihash/fnv1/fnv1a) are soft keywords:
+     * each is the intrinsic ONLY in call position (directly followed by '(').
+     * Anywhere else -- "new hash", "fnv1 = x", a parameter named ihash -- it is
+     * an ordinary identifier. Peek without consuming; if the next non-blank
+     * char after the keyword is not '(', skip the match and lex it as a symbol. */
+    if (i==tHASH || i==tIHASH || i==tFNV1 || i==tFNV1A) {
+      int kwlen=(int)strlen(*tokptr);
+      if (strncmp((const char *)lptr,*tokptr,kwlen)==0 && !alphanum(lptr[kwlen])) {
+        const unsigned char *p=(const unsigned char *)(lptr+kwlen);
+        while (*p==' ' || *p=='\t')
+          p++;
+        if (*p!='(') {
+          i+=1;
+          tokptr+=1;
+          continue;
+        } /* if */
       } /* if */
     } /* if */
     if (*lptr==**tokptr && match(*tokptr,TRUE)) {

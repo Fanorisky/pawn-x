@@ -1454,6 +1454,78 @@ static int hier3(value *lval)
   return plnge(list3,0,hier2,lval,NULL,FALSE);
 }
 
+/* --- native string-hash intrinsics (y_stringhash replacement) --------------
+ * hash/ihash/fnv1/fnv1a. A string LITERAL folds to a compile-time constant; a
+ * non-literal operand lowers to a call to the matching plugin-free runtime
+ * stock (<hash>). Compile-time and runtime use the identical algorithm and
+ * 32-bit wrap, so a folded `case` label and a runtime `switch` value agree.
+ * algo: 0=djb2 (h*33+c), 1=FNV-1, 2=FNV-1a. nocase: fold A-Z to a-z. */
+#define HASH_FNV_PRIME  0x01000193UL
+#define HASH_FNV_OFFSET 0x811c9dc5UL
+static unsigned long hashstep(unsigned long h,int algo,unsigned long c)
+{
+  switch (algo) {
+  case 1:  return (((h*HASH_FNV_PRIME) & 0xFFFFFFFFUL) ^ c) & 0xFFFFFFFFUL;  /* FNV-1  */
+  case 2:  return ((h ^ c) * HASH_FNV_PRIME) & 0xFFFFFFFFUL;                 /* FNV-1a */
+  default: return ((h<<5) + h + c) & 0xFFFFFFFFUL;                           /* djb2   */
+  } /* switch */
+}
+
+static int hash_intrinsic(value *lval,int algo,int nocase,const char *rtname)
+{
+  cell hval; char *hstr; int htok, litstart, packed;
+  unsigned long h;
+  symbol *rt;
+  needtoken('(');
+  htok=lex(&hval,&hstr);
+  if (htok==tSTRING) {
+    /* a string LITERAL folds to a compile-time constant. It takes exactly one
+     * operand, so require ')' next: a following token is a clean arity error,
+     * never a silent drop. Hash the CHARACTER sequence -- for a packed literal
+     * (pc_ispackedstr) unpack 4 chars/cell -- so the fold matches the runtime
+     * stock over the same characters. */
+    litstart=(int)hval;
+    packed=pc_ispackedstr;
+    h=(algo==0) ? 5381UL : HASH_FNV_OFFSET;
+    if (packed) {
+      int ci,done=0;
+      for (ci=litstart; !done; ci++) {
+        unsigned long w=(unsigned long)(unsigned int)litq[ci];
+        int sh;
+        for (sh=24; sh>=0; sh-=8) {
+          int c=(int)((w>>sh)&0xFFUL);
+          if (c==0) { done=1; break; }
+          if (nocase && c>='A' && c<='Z') c+=32;
+          h=hashstep(h,algo,(unsigned long)c);
+        } /* for */
+      } /* for */
+    } else {
+      int k;
+      for (k=litstart; litq[k]!=0; k++) {
+        int c=(int)litq[k];
+        if (nocase && c>='A' && c<='Z') c+=32;
+        h=hashstep(h,algo,(unsigned long)c);
+      } /* for */
+    } /* if */
+    litidx=litstart;                    /* discard the literal we consumed */
+    needtoken(')');
+    clear_value(lval);
+    lval->ident=iCONSTEXPR;
+    lval->constval=(cell)h;
+    lval->tag=0;
+    ldconst(lval->constval,sPRI);
+    return FALSE;
+  } /* if */
+  lexpush();                            /* non-literal operand -> runtime path */
+  rt=findglb(rtname,sGLOBAL);
+  if (rt==NULL || rt->ident!=iFUNCTN) {
+    error(17,(char *)rtname);           /* undefined symbol: need #include <hash> */
+    return FALSE;
+  } /* if */
+  callfunction(rt,lval,TRUE);           /* '(' already consumed, operand pending */
+  return FALSE;
+}
+
 static int hier2(value *lval)
 {
   int lvalue,tok;
@@ -1771,43 +1843,10 @@ static int hier2(value *lval)
     while (paranthese--)
       needtoken(')');
     return FALSE;
-  case tHASH: {
-    /* native string-hash intrinsic (y_stringhash replacement).
-     * hash("literal") folds to a compile-time constant (forward djb2, 32-bit
-     * wrap); hash(expr) lowers to a call to the plugin-free runtime stock
-     * hash_rt (<hash>). '(' is consumed here; the runtime branch hands off to
-     * callfunction(...,TRUE), which expects the '(' already parsed. */
-    cell hval; char *hstr; int htok, litstart, i;
-    unsigned long h;
-    symbol *rt;
-    needtoken('(');
-    htok=lex(&hval,&hstr);
-    if (htok==tSTRING) {
-      /* a string LITERAL always folds to a compile-time constant. It takes
-       * exactly one operand, so require ')' next: a following token (a second
-       * string, a comma, ...) is a clean arity error, never a silent drop. */
-      litstart=(int)hval;               /* start index into the literal queue */
-      h=5381UL;
-      for (i=litstart; litq[i]!=0; i++)
-        h=((h<<5)+h+(unsigned long)litq[i]) & 0xFFFFFFFFUL;  /* h*33 + c */
-      litidx=litstart;                  /* discard the literal we consumed */
-      needtoken(')');
-      clear_value(lval);
-      lval->ident=iCONSTEXPR;
-      lval->constval=(cell)h;
-      lval->tag=0;
-      ldconst(lval->constval,sPRI);
-      return FALSE;
-    } /* if */
-    lexpush();                          /* non-literal operand -> runtime path */
-    rt=findglb("hash_rt",sGLOBAL);
-    if (rt==NULL || rt->ident!=iFUNCTN) {
-      error(17,"hash_rt");              /* undefined symbol: need #include <hash> */
-      return FALSE;
-    } /* if */
-    callfunction(rt,lval,TRUE);         /* '(' already consumed, operand pending */
-    return FALSE;
-  } /* case tHASH */
+  case tHASH:   return hash_intrinsic(lval,0,0,"hash_rt");
+  case tIHASH:  return hash_intrinsic(lval,0,1,"ihash_rt");
+  case tFNV1:   return hash_intrinsic(lval,1,0,"fnv1_rt");
+  case tFNV1A:  return hash_intrinsic(lval,2,0,"fnv1a_rt");
   case tSIZEOF:
     paranthese=0;
     while (matchtoken('('))
