@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+mode=1 caught err=55
+
+mode=2 ok r=777
+
+active=0
+
+async_fault_autoraise.amx returns 0
+"""
+}

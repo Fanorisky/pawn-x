@@ -90,6 +90,10 @@
  *   * Async_Fail(err) inside an async body, followed by "return", AUTO-RAISES err
  *     into the awaiter of a composed "await asyncFn()" -- fault propagation up the
  *     compose chain, no explicit re-signal at each level. See the fault-channel block.
+ *   * IMPLICIT auto-raise: a leaf fault an inner NEVER observed (it did not read
+ *     Async_Failed()/Async_Error()) is auto-raised into its awaiter on return, so an
+ *     ignored failure never silently drops. An inner that OBSERVES and recovers, or
+ *     returns with no fault, hands its awaiter a clean channel. See the fault-channel block.
  *   * MID-EXPRESSION await -- "await" may sit inside a larger expression with live
  *     operand temporaries ("p + await F()", "base + await asyncFn()", ...). The live
  *     operand-stack region is spilled into B before the suspend and restored after
@@ -137,10 +141,6 @@
  *     shape works -- see SUPPORTED.)
  *   * A suspend at arbitrary call-stack depth inside a non-async helper is
  *     unsupported (needs whole-frame handling).
- *   * IMPLICIT fault auto-raise: a leaf fault an inner IGNORED does not raise by
- *     itself -- the inner must call Async_Fail(err) to propagate (explicit raise IS
- *     supported and shipped; see below). A normally-returning inner (incl. one that
- *     RECOVERED from a leaf fault) hands its awaiter a clean channel.
  *   * Single compilation unit (one .amx).
  *
  * ============================ NON-GOALS (MVP) ============================
@@ -675,6 +675,10 @@ stock g_asyncFailed = 0;                /* did the await the coroutine just resu
 stock g_asyncErr    = 0;                /* error code delivered with that failure */
 stock g_asyncPropagate    = 0;          /* an async body called Async_Fail() -> raise into its awaiter */
 stock g_asyncPropagateErr = 0;          /* the code to raise */
+stock g_asyncFaultObserved = 0;         /* did the body READ the fault (Async_Failed/Error/Cancelled/TimedOut)?
+                                         * reset each resume; used by __async_clearfault to distinguish a
+                                         * RECOVERED leaf fault (observed -> no raise) from an IGNORED one
+                                         * (unobserved -> AUTO-RAISE into the awaiter). */
 
 /* ---- MULTI-RESULT (array) inbox state (see Async_ResumeArr / Async_InboxArr) ----
  * Declared here (before __async_deliver) so every resume can reset the delivered
@@ -708,6 +712,7 @@ stock __async_deliver(token, value, bool:failed, err, arrlen)
 
     g_asyncFailed = failed ? 1 : 0;     /* fault channel: body checks Async_Failed() after the await */
     g_asyncErr    = err;
+    g_asyncFaultObserved = 0;           /* fresh resume: the body has not read the fault yet */
     g_asyncPropagate = 0;               /* bound any pending raise to a single resume cycle */
     g_asyncResultLen[idx] = arrlen;     /* array inbox: 0 unless Async_ResumeArr staged one */
 
@@ -747,8 +752,8 @@ stock Async_Cancel(token, err = ASYNC_ERR_CANCELLED)
 /* Async_Cancelled() / Async_TimedOut(): right after an await, distinguish the two
  * reserved fault causes from an ordinary Async_ResumeError. Valid only in the run
  * immediately following the await, like Async_Failed(). */
-#define Async_Cancelled() (g_asyncFailed && g_asyncErr == ASYNC_ERR_CANCELLED)
-#define Async_TimedOut()  (g_asyncFailed && g_asyncErr == ASYNC_ERR_TIMEOUT)
+#define Async_Cancelled() (Async_Failed() && Async_Error() == ASYNC_ERR_CANCELLED)
+#define Async_TimedOut()  (Async_Failed() && Async_Error() == ASYNC_ERR_TIMEOUT)
 
 /* ---- MULTI-RESULT (array) delivery: PawnPlus await_arr parity -----------------
  * A single "await" yields one cell. To hand a coroutine several values at once (a
@@ -806,31 +811,44 @@ stock __async_inbox_arr(idx, dest[], size)
 /* Async_Failed() / Async_Error(): inspect the fault channel right after an await
  * -- Async_Failed() is nonzero iff that await was completed via
  * Async_ResumeError; Async_Error() is the code. Valid only in the run
- * immediately following the await. */
-#define Async_Failed() (g_asyncFailed)
-#define Async_Error()  (g_asyncErr)
+ * immediately following the await. Reading EITHER marks the fault as OBSERVED, so a
+ * composed inner that checks and recovers hands its awaiter a clean channel, while
+ * an inner that IGNORES the fault has it AUTO-RAISED on return (see __async_clearfault). */
+stock __async_failed()  { g_asyncFaultObserved = 1; return g_asyncFailed; }
+stock __async_error()   { g_asyncFaultObserved = 1; return g_asyncErr; }
+#define Async_Failed() (__async_failed())
+#define Async_Error()  (__async_error())
 
 /* __async_clearfault(_): the compiler emits a call to this on the return-to-
- * awaiter resume path (doreturn). It EITHER raises a pending fault into the
- * awaiter -- when the inner called Async_Fail(err) just before returning, so a
- * composed "await asyncFn()" faults automatically (AUTO-RAISE) -- OR resets the
- * channel clean, so an inner that returned NORMALLY (incl. one that observed and
- * RECOVERED from a leaf fault) hands its awaiter Async_Failed()==0 rather than a
- * stale 1. The argument is ignored; it exists only so the compiler can emit the
- * call through the same one-argument path it uses for Async_FreeByAddr. */
+ * awaiter resume path (doreturn). It decides what the awaiter's composed
+ * "await asyncFn()" observes when the inner returns:
+ *   1. the inner called Async_Fail(err) -> AUTO-RAISE err (explicit propagation);
+ *   2. else the inner had a leaf fault it NEVER read (unobserved) -> AUTO-RAISE that
+ *      fault, so an IGNORED leaf failure no longer silently drops (implicit raise);
+ *   3. else clean the channel -- the inner returned NORMALLY, either with no fault or
+ *      having OBSERVED (Async_Failed/Error) and RECOVERED from one.
+ * The argument is ignored; it exists only so the compiler can emit the call through
+ * the same one-argument path it uses for Async_FreeByAddr. */
 stock __async_clearfault(_ignored)
 {
     if (g_asyncPropagate)
     {
-        g_asyncFailed    = 1;           /* AUTO-RAISE: awaiter's await observes the fault */
+        g_asyncFailed    = 1;           /* AUTO-RAISE (explicit): awaiter's await observes the fault */
         g_asyncErr       = g_asyncPropagateErr;
         g_asyncPropagate = 0;           /* consumed for this hop (re-raise = call Async_Fail again) */
     }
+    else if (g_asyncFailed && !g_asyncFaultObserved)
+    {
+        /* AUTO-RAISE (implicit): the inner was resumed with a leaf fault it never
+         * inspected and returned anyway -- propagate it rather than drop it. g_asyncErr
+         * already holds the leaf's code; leave it for the awaiter to observe. */
+    }
     else
     {
-        g_asyncFailed = 0;              /* normal return: clean channel for the awaiter */
+        g_asyncFailed = 0;              /* normal / recovered return: clean channel for the awaiter */
         g_asyncErr    = 0;
     }
+    g_asyncFaultObserved = 0;           /* next compose hop starts fresh */
     /* The awaiter (which did "await asyncFn()") is about to resume via the compiler's
      * return-to-awaiter call.pri chain, which BYPASSES __async_deliver -- so reset the
      * awaiter's array-result length here too, or a stale Async_ResumeArr count from a
