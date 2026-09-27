@@ -1560,11 +1560,14 @@ static int hier2(value *lval)
     lval->tag=tag;
     return lvalue;
   case tUSING: {
-    /* "using inline Name" -> a Callback: value naming an "inline" defined earlier
-     * in THIS function. Milestone 0: the value is the inline's entry address (no
-     * closure capture yet); a receiver taking a Callback: parameter calls it. */
+    /* "using inline Name" -> a Callback: value naming an "inline" defined earlier in
+     * THIS function. The value is a pointer to a 2-cell record {entry, FRM} allocated
+     * in the enclosing frame: entry is the inline's code address, FRM is this frame
+     * (the static link, so the inline can reach captured enclosing locals). A receiver
+     * taking a Callback: parameter calls it via callindirect. */
     char hidden[sNAMEMAX+1];
     symbol *isym;
+    cell recoff;
     if (!needtoken(tINLINE))
       return FALSE;
     tok=lex(&val,&st);
@@ -1577,11 +1580,27 @@ static int hier2(value *lval)
     if (isym==NULL || isym->ident!=iFUNCTN)
       return error(17,st);      /* no "inline" of that name in this function */
     markusage(isym,uREAD);
+    /* allocate the {entry, FRM} record in the enclosing frame (freed with the frame) */
+    declared+=2;
+    recoff=-declared*(cell)sizeof(cell);
+    modstk(-2*(int)sizeof(cell));
+    if (curfunc->x.stacksize<declared+1)
+      curfunc->x.stacksize=declared+1;
+    ldconst(isym->addr,sPRI);            /* PRI = inline entry address */
+    stgwrite("\tstor.s.pri ");           /* record[0] = entry */
+    outval(recoff,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    getfrm();                            /* PRI = FRM (the static link) */
+    stgwrite("\tstor.s.pri ");           /* record[1] = FRM */
+    outval(recoff+(cell)sizeof(cell),TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    stgwrite("\taddr.pri ");             /* PRI = &record = FRM + recoff */
+    outval(recoff,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
     clear_value(lval);
-    lval->ident=iCONSTEXPR;
-    lval->constval=isym->addr;  /* entry address = the callback value */
+    lval->ident=iEXPRESSION;             /* a runtime value (the record address) */
     lval->tag=pc_addtag("Callback");
-    return FALSE;               /* a constant, not an lvalue */
+    return FALSE;
   } /* case */
   case t__ADDRESSOF: {
     static const char allowed_sym_types[]="-variable, array, array cell, label or function-";
@@ -2719,21 +2738,37 @@ static void callindirect(symbol *cbvar,value *lval_result)
   stgmark(sENDREORDER);                    /* end of the reversed argument evaluation */
   pushval((cell)nargs*sizeof(cell));       /* push the argument byte-count */
 
-  /* load the callback value (the entry address) into PRI, then indirect-call */
+  /* The callback value is a pointer to a {entry, FRM} record. Load the static link
+   * (record[1] = the enclosing frame) into ALT -- the inline's prologue saves ALT so
+   * captured locals resolve -- and the entry address (record[0]) into PRI, then
+   * indirect-call. */
   clear_value(&cbval);
   cbval.ident=iVARIABLE;
   cbval.sym=cbvar;
-  rvalue(&cbval);                          /* PRI = cbvar's stored entry address */
-  stgwrite("\tcall.pri\n");                /* indirect call (opcode 50) */
+  rvalue(&cbval);                          /* PRI = record address */
+  stgwrite("\tpush.pri\n");                /* save the record address */
+  code_idx+=opcodes(1);
+  stgwrite("\tadd.c ");                    /* PRI = &record[1] */
+  outval((cell)sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.i\n");                  /* PRI = record[1] = static link (FRM) */
+  code_idx+=opcodes(1);
+  stgwrite("\tmove.alt\n");                /* ALT = static link */
+  code_idx+=opcodes(1);
+  stgwrite("\tpop.pri\n");                 /* PRI = record address */
+  code_idx+=opcodes(1);
+  stgwrite("\tload.i\n");                  /* PRI = record[0] = entry address */
+  code_idx+=opcodes(1);
+  stgwrite("\tcall.pri\n");                /* indirect call (opcode 50); ALT carries the link */
   code_idx+=opcodes(1);
 
   clear_value(lval_result);
   lval_result->ident=iEXPRESSION;          /* the call result is in PRI */
   pc_sideeffect=TRUE;
 
-  /* account for the pushed arguments + count cell + the call in the frame size */
+  /* account for the pushed arguments + count cell + the saved record ptr + the call */
   if (curfunc!=NULL) {
-    long totalsize=declared+decl_heap+nargs+2;   /* +1 argcount cell, +1 for call */
+    long totalsize=declared+decl_heap+nargs+3;
     if (curfunc->x.stacksize<totalsize)
       curfunc->x.stacksize=totalsize;
   } /* if */
