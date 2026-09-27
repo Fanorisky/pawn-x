@@ -211,6 +211,13 @@ costs one pass; the fold itself needs no include. Full YSI parity: **`ihash()`**
 runtime stock, via `ispacked`). `hash` (and the other three) stays usable as an
 ordinary identifier everywhere except call position. See tests `stringhash_*`.
 
+**Timer wrappers (`<timers>`)** — a thin, plugin-free convenience layer over the
+host `SetTimer` natives: `Timer_Repeat` / `Timer_Once` (+ `*Ex` arg-forwarding
+variants built on `___` varargs) and `Timer_Stop`, with tagged `Timer:` handles.
+Deliberately *not* a native compiler feature: unlike YSI `y_timers` it does no
+bytecode scan and no auto-registration, and deferred/stateful work belongs to
+`async`/`await` (`await Async_Ms(ms)`) instead. See test `timers_lib`.
+
 ## Build
 
 ```sh
