@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+mode=1 ok r=77
+
+mode=2 timeout=1
+
+mode=3 timeout=1
+
+done active=0 gates=0
+
+async_timeout.amx returns 0
+"""
+}
