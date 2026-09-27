@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+gun=193493135
+
+empty=5381
+
+s=after
+
+match=1
+
+stringhash_fold.amx returns 0
+"""
+}

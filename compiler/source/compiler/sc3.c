@@ -1771,6 +1771,43 @@ static int hier2(value *lval)
     while (paranthese--)
       needtoken(')');
     return FALSE;
+  case tHASH: {
+    /* native string-hash intrinsic (y_stringhash replacement).
+     * hash("literal") folds to a compile-time constant (forward djb2, 32-bit
+     * wrap); hash(expr) lowers to a call to the plugin-free runtime stock
+     * hash_rt (<hash>). '(' is consumed here; the runtime branch hands off to
+     * callfunction(...,TRUE), which expects the '(' already parsed. */
+    cell hval; char *hstr; int htok, litstart, i;
+    unsigned long h;
+    symbol *rt;
+    needtoken('(');
+    htok=lex(&hval,&hstr);
+    if (htok==tSTRING) {
+      litstart=(int)hval;               /* start index into the literal queue */
+      if (matchtoken(')')) {            /* a lone string literal -> fold */
+        h=5381UL;
+        for (i=litstart; litq[i]!=0; i++)
+          h=((h<<5)+h+(unsigned long)litq[i]) & 0xFFFFFFFFUL;  /* h*33 + c */
+        litidx=litstart;                /* discard the literal we consumed */
+        clear_value(lval);
+        lval->ident=iCONSTEXPR;
+        lval->constval=(cell)h;
+        lval->tag=0;
+        ldconst(lval->constval,sPRI);
+        return FALSE;
+      } /* if */
+      lexpush();                        /* "a" "b" etc. -> runtime path */
+    } else {
+      lexpush();                        /* non-literal operand -> runtime path */
+    } /* if */
+    rt=findglb("hash_rt",sGLOBAL);
+    if (rt==NULL || rt->ident!=iFUNCTN) {
+      error(17,"hash_rt");              /* undefined symbol: need #include <hash> */
+      return FALSE;
+    } /* if */
+    callfunction(rt,lval,TRUE);         /* '(' already consumed, operand pending */
+    return FALSE;
+  } /* case tHASH */
   case tSIZEOF:
     paranthese=0;
     while (matchtoken('('))
