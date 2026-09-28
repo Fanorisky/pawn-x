@@ -2852,9 +2852,9 @@ static void hook_set_prototype(symbol *disp,symbol *proto)
  *    move.alt                             ; ALT = result (preserved by eq.c.alt)
  *    eq.c.alt -1 / jnz ret0               ; HOOK_STOP    -> return 0
  *    eq.c.alt -2 / jnz ret1               ; HOOK_STOP_1  -> return 1
- *    move.pri                             ; PRI = result (running chain value)
+ *    load.s.pri chain / or (or and)       ; combine result into the running value
  *    ; after the last hook:
- *    retn                                 ; return the last chain value
+ *    retn                                 ; return the combined chain value
  *    ret0: zero.pri  / retn
  *    ret1: const.pri 1 / retn
  *
@@ -2868,6 +2868,8 @@ static void hook_emit_dispatchers(void)
   cell argbytes,chainaddr;
   cell origaddr;                /* addr of a user-defined `public` body for the callback (issue #6) */
   int has_orig;
+  cell defval;                  /* chain seed + combine mode from `hook default` (issue #5/#12) */
+  int use_and;                  /* default 1 -> AND the returns; default 0 (implicit) -> OR */
 
   if (hook_registry==NULL)
     return;
@@ -2919,7 +2921,15 @@ static void hook_emit_dispatchers(void)
     modstk(-(int)sizeof(cell));
     if (disp->x.stacksize<grp->argcount+4)
       disp->x.stacksize=grp->argcount+4;
-    ldconst(0,sPRI);
+    /* return-value combining (Y-Less issue #5/#12): the chain seed and combine
+     * operator come from `hook default`. default 0 (implicit) ORs the returns,
+     * so any hook that claims the callback (returns 1) wins; default 1 ANDs them
+     * (YSI's confirm semantics). This replaces the old last-value model, where a
+     * later "not handled" hook could clobber an earlier claim (the /help bug). */
+    if (!hook_get_default(grp->name,&defval))
+      defval=0;                 /* implicit default 0 -> OR, seed 0 */
+    use_and=(defval==1);        /* default 1 -> AND, seed 1 */
+    ldconst(defval,sPRI);
     stgwrite("\tstor.s.pri ");
     outval(chainaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
@@ -2960,9 +2970,16 @@ static void hook_emit_dispatchers(void)
       outval(-2,TRUE);
       code_idx+=opcodes(1)+opargs(1);
       jmp_ne0(lbl_ret1);
-      /* CONTINUE / CONTINUE_0: running chain value = result; stash it so a later
-       * skipped hook cannot lose it */
-      moveto1();                /* PRI = ALT = result */
+      /* CONTINUE / CONTINUE_0: combine this hook's result (in ALT) into the
+       * running chain value (OR, or AND when default 1), and stash it so a later
+       * skipped state-hook keeps it. */
+      stgwrite("\tload.s.pri ");
+      outval(chainaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);   /* PRI = running chain value */
+      if (use_and)
+        ob_and();                       /* PRI = running & result(ALT) */
+      else
+        ob_or();                        /* PRI = running | result(ALT) */
       stgwrite("\tstor.s.pri ");
       outval(chainaddr,TRUE);
       code_idx+=opcodes(1)+opargs(1);
@@ -2971,9 +2988,10 @@ static void hook_emit_dispatchers(void)
     } /* for */
 
     /* issue #6: the user's own `public` body is the chain's tail -- call it after
-     * every hook, with the dispatcher's arguments; its return becomes the running
-     * chain value (a plain public returns normal values, not HOOK_STOP codes, so
-     * no STOP checks). Reached only when no hook forced an early STOP. */
+     * every hook, with the dispatcher's arguments; its return combines into the
+     * running chain value like any other link (a plain public returns normal
+     * values, not HOOK_STOP codes, so no STOP checks). Reached only when no hook
+     * forced an early STOP. */
     if (has_orig) {
       for (a=grp->argcount-1; a>=0; a--) {
         stgwrite("\tpush.s ");
@@ -2983,24 +3001,24 @@ static void hook_emit_dispatchers(void)
       pushval(argbytes);
       ldconst(origaddr,sPRI);          /* PRI = user body entry address */
       stgwrite("\tcall.pri\n");         /* call the original (its retn cleans the args) */
-      code_idx+=opcodes(1);
-      stgwrite("\tstor.s.pri ");        /* chain value = original's return */
+      code_idx+=opcodes(1);             /* PRI = original's return */
+      stgwrite("\tload.s.alt ");        /* ALT = running chain value */
+      outval(chainaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      if (use_and)
+        ob_and();                       /* PRI = original & running */
+      else
+        ob_or();                        /* PRI = original | running */
+      stgwrite("\tstor.s.pri ");        /* chain value = combined */
       outval(chainaddr,TRUE);
       code_idx+=opcodes(1)+opargs(1);
     } /* if */
 
-    /* fell through the whole chain: return the declared default if any, else the
-     * running chain value (from the hidden local) */
-    {
-      cell defval;
-      if (hook_get_default(grp->name,&defval)) {
-        ldconst(defval,sPRI);   /* HOOK_RET analogue: forced fall-through return */
-      } else {
-        stgwrite("\tload.s.pri ");
-        outval(chainaddr,TRUE);
-        code_idx+=opcodes(1)+opargs(1);
-      } /* if */
-    }
+    /* fell through the whole chain: return the combined running chain value (the
+     * `hook default` was applied as the seed above, not as a forced override). */
+    stgwrite("\tload.s.pri ");
+    outval(chainaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
     modstk((int)sizeof(cell));  /* release the hidden chain-value local before retn */
     ffret(TRUE);
     /* HOOK_STOP target: return 0 */

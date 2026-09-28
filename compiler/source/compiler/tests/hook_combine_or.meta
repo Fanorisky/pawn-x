@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+help
+
+c1=1
+
+commands
+
+c2=1
+
+c3=0
+
+hook_combine_or.amx returns 0
+"""
+}
