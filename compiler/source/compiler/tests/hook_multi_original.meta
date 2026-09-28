@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+h1
+
+h2
+
+orig
+
+hook_multi_original.amx returns 0
+"""
+}
