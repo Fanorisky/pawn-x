@@ -2305,7 +2305,11 @@ static void dotask(int perplayer)
   constexpr(&interval,NULL,NULL);   /* the repeat interval in ms */
   needtoken(']');
 
-  if (strlen(name)+4>sNAMEMAX) {
+  /* reserve room for the LONGEST mangled name: "@yt_<name>" (task, 4-char
+   * prefix) or "@ptd_<name>" (ptask registration dispatcher, 5-char prefix).
+   * Under-reserving for ptask overflows the regname buffer in timers_emit and
+   * registers the timer under a truncated name (silently never fires). */
+  if (strlen(name)+(perplayer ? 5 : 4)>sNAMEMAX) {
     error(200,name,sNAMEMAX);       /* symbol too long once mangled */
     lexclr(TRUE);
     return;
