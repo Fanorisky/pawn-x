@@ -2257,8 +2257,9 @@ static void hook_register(const char *callback,symbol *hidden,int argcount,int t
  * OnFilterScriptInit via the hook machinery -- no runtime public-table scan. */
 typedef struct timertask {
   struct timertask *next;
-  char pubname[sNAMEMAX+1];     /* "@yt_Name" */
+  char pubname[sNAMEMAX+1];     /* body public: task "@yt_Name", ptask "@pt_Name" */
   cell interval;
+  int perplayer;                /* ptask: dispatch to the body per connected player */
 } timertask;
 static timertask *timer_registry=NULL;
 
@@ -2273,9 +2274,11 @@ static void timers_reset(void)
   timer_registry=NULL;
 }
 
-/*  dotask - parse "task Name[interval]() body" (perplayer: "ptask", not yet
- *  implemented). The body compiles to a hidden public "@yt_Name"; the task is
- *  recorded for timers_emit() to auto-register. */
+/*  dotask - parse "task Name[interval]() body" or, when perplayer, "ptask
+ *  Name[interval](playerid) body". The body compiles to a hidden public
+ *  ("@yt_Name" for task, "@pt_Name" for ptask); the task is recorded for
+ *  timers_emit() to auto-register (ptask gets a synthesised per-player
+ *  dispatcher "@ptd_Name"). */
 static void dotask(int perplayer)
 {
   char name[sNAMEMAX+1];
@@ -2285,12 +2288,6 @@ static void dotask(int perplayer)
   int argcount;
   symbol *hsym;
   timertask *t;
-
-  if (perplayer) {
-    error(1,"task","ptask");    /* TODO ptask: per-player dispatch not implemented yet */
-    lexclr(TRUE);
-    return;
-  } /* if */
 
   if (!needtoken(tSYMBOL)) {
     lexclr(TRUE);
@@ -2308,12 +2305,16 @@ static void dotask(int perplayer)
   constexpr(&interval,NULL,NULL);   /* the repeat interval in ms */
   needtoken(']');
 
-  if (strlen(name)+4>sNAMEMAX) {
+  /* reserve room for the LONGEST mangled name: "@yt_<name>" (task, 4-char
+   * prefix) or "@ptd_<name>" (ptask registration dispatcher, 5-char prefix).
+   * Under-reserving for ptask overflows the regname buffer in timers_emit and
+   * registers the timer under a truncated name (silently never fires). */
+  if (strlen(name)+(perplayer ? 5 : 4)>sNAMEMAX) {
     error(200,name,sNAMEMAX);       /* symbol too long once mangled */
     lexclr(TRUE);
     return;
   } /* if */
-  sprintf(hidden,"@yt_%s",name);
+  sprintf(hidden,perplayer ? "@pt_%s" : "@yt_%s",name);
 
   /* pre-create the hidden public and mark it read so its body is not dropped
    * as dead code before @yt_init (emitted later) references it */
@@ -2335,8 +2336,16 @@ static void dotask(int perplayer)
   argcount=0;
   while (hsym->dim.arglist[argcount].ident!=0)
     argcount++;
-  if (argcount!=0)
-    error(25);                      /* function heading differs: task takes no args (v1) */
+  if (perplayer) {
+    /* ptask takes exactly one ordinary (by-value) parameter: the player id */
+    if (argcount!=1)
+      error(25);                    /* function heading differs: ptask takes (playerid) */
+    else if (hsym->dim.arglist[0].ident!=iVARIABLE)
+      error(35,1);                  /* argument type mismatch: playerid must be a plain cell */
+  } else {
+    if (argcount!=0)
+      error(25);                    /* function heading differs: task takes no args */
+  } /* if */
 
   t=(timertask*)malloc(sizeof(timertask));
   if (t==NULL) {
@@ -2346,6 +2355,7 @@ static void dotask(int perplayer)
   memset(t,0,sizeof(timertask));
   strcpy(t->pubname,hidden);
   t->interval=interval;
+  t->perplayer=perplayer;
   t->next=timer_registry;
   timer_registry=t;
 }
@@ -2357,10 +2367,11 @@ static void dotask(int perplayer)
  *  per-function literal flush for the name strings. */
 static void timers_emit(void)
 {
-  symbol *sym,*savedfunc,*rt;
+  symbol *sym,*savedfunc,*rt,*disp,*ptsym;
   timertask *t;
-  int i,len;
-  cell litstart,nameaddr;
+  int i,len,anyperplayer;
+  cell litstart,nameaddr,recaddr;
+  char regname[sNAMEMAX+1];
 
   if (timer_registry==NULL)
     return;
@@ -2370,29 +2381,78 @@ static void timers_emit(void)
     error(17,"SetTimer");         /* undefined symbol: include the SA-MP/open.mp SDK */
     return;
   } /* if */
-  /* NB: do NOT mark SetTimer uREAD yet. ffcall() assigns a native its sysreq id
-   * lazily in the write pass, and ONLY while uREAD is clear (sc4.c). We mark it
-   * uREAD *after* the first ffcall below, so the id is assigned exactly once
-   * (marking it here would suppress assignment entirely -> corrupt natives
-   * table / bogus sysreq id; marking it never would assign a fresh id per task).
-   * Same pattern as callhook_emit's native-original tail. */
-
-  sym=fetchfunc("@yt_init",0);
-  if (sym==NULL)
-    return;
-  sym->usage|=uREAD;
+  /* NB: do NOT mark SetTimer uREAD yet -- see the uREAD-after-ffcall note below. */
+  anyperplayer=0;
+  for (t=timer_registry; t!=NULL; t=t->next)
+    if (t->perplayer)
+      anyperplayer=1;
+  disp=NULL;
+  if (anyperplayer) {
+    disp=findglb("__ptask_dispatch",sGLOBAL);
+    if (disp==NULL || disp->ident!=iFUNCTN) {
+      error(17,"__ptask_dispatch");  /* ptask needs #include <ptask> (or <pawn-x>) */
+      return;
+    } /* if */
+  } /* if */
 
   savedfunc=curfunc;
+
+  /* (1) one no-arg dispatcher "@ptd_Name" per ptask: it hands a {entry=@pt_Name,
+   * link=0} Callback record (in the data segment) to the plugin-free
+   * __ptask_dispatch helper, which loops the <players> set and calls the body
+   * per connected id. SetTimer registers this dispatcher (not the body). */
+  for (t=timer_registry; t!=NULL; t=t->next) {
+    if (!t->perplayer)
+      continue;
+    ptsym=findglb(t->pubname,sGLOBAL);       /* "@pt_Name" body */
+    if (ptsym==NULL || ptsym->ident!=iFUNCTN)
+      continue;
+    litstart=litidx;
+    litadd(ptsym->addr);                     /* record[0] = entry address */
+    litadd(0);                               /* record[1] = static link (a public has none) */
+    recaddr=(litstart+glb_declared)*(cell)sizeof(cell);
+    sprintf(regname,"@ptd_%s",t->pubname+4); /* base = pubname past "@pt_" */
+    sym=fetchfunc(regname,0);
+    if (sym==NULL)
+      continue;
+    sym->usage|=uREAD|uPUBLIC|uFORWARD;      /* public: SetTimer resolves it by name */
+    sym->addr=code_idx;
+    curfunc=sym;
+    begcseg();
+    startfunc(regname,TRUE);
+    ldconst(recaddr,sPRI);                   /* &record -> the Callback value */
+    pushreg(sPRI);
+    pushval(1*(cell)sizeof(cell));           /* one argument */
+    ffcall(disp,NULL,1);                     /* __ptask_dispatch(&record) */
+    markusage(disp,uREAD);                   /* keep the helper live */
+    ldconst(0,sPRI);
+    ffret(TRUE);
+    endfunc();
+    sym->codeaddr=code_idx;
+  } /* for */
+
+  /* (2) "@yt_init": SetTimer each timer at its registration name
+   * (task -> "@yt_Name", ptask -> "@ptd_Name"), then chain onto the init hooks. */
+  sym=fetchfunc("@yt_init",0);
+  if (sym==NULL) {
+    curfunc=savedfunc;
+    return;
+  } /* if */
+  sym->usage|=uREAD;
   sym->addr=code_idx;             /* address of the "proc" that follows */
   curfunc=sym;
   begcseg();
   startfunc("@yt_init",TRUE);     /* emit "proc" */
 
   for (t=timer_registry; t!=NULL; t=t->next) {
-    len=(int)strlen(t->pubname);
+    if (t->perplayer)
+      sprintf(regname,"@ptd_%s",t->pubname+4);
+    else
+      strcpy(regname,t->pubname);
+    len=(int)strlen(regname);
     litstart=litidx;
     for (i=0; i<len; i++)
-      litadd((cell)t->pubname[i]);
+      litadd((cell)regname[i]);
     litadd(0);                    /* NUL-terminate the name string */
     nameaddr=(litstart+glb_declared)*(cell)sizeof(cell);
     /* SetTimer(name, interval, true): args pushed last-to-first, then the
@@ -2423,7 +2483,7 @@ static void timers_emit(void)
   endfunc();
   sym->codeaddr=code_idx;
 
-  /* flush the name-string literals into the data segment (function-end lit dump) */
+  /* flush all synthesised literals (Callback records + name strings) at once */
   glb_declared+=litidx;
   begdseg();
   dumplits();

@@ -1,0 +1,6 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+ptask_longname.pwn(4) : warning 200: symbol "AAAAAAAAAAAAAAAAAAAAAAAAAAA" is truncated to 31 characters
+"""
+}
