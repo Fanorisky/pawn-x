@@ -2399,7 +2399,7 @@ SC_FUNC int lex(cell *lexvalue,char **lexsym)
             && (prevtok==tLABEL || prevtok==tNEW || prevtok==tSTATIC || prevtok==tSTOCK
                 || prevtok==tPUBLIC || prevtok==tFORWARD || prevtok==tNATIVE
                 || prevtok==tCONST || prevtok==tOPERATOR || prevtok=='.'))
-        || ((i==tAWAIT || i==tYIELD || i==tFOREACH)
+        || ((i==tAWAIT || i==tYIELD || i==tFOREACH || i==tTASK || i==tPTASK)
             && (prevtok==tNEW || prevtok==tSTATIC || prevtok==tSTOCK || prevtok==tPUBLIC
                 || prevtok==tFORWARD || prevtok==tNATIVE || prevtok==tCONST
                 || prevtok==tOPERATOR || prevtok=='.'))) {
