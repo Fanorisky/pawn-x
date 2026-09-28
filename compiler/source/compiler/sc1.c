@@ -2415,7 +2415,12 @@ static void timers_emit(void)
     sym=fetchfunc(regname,0);
     if (sym==NULL)
       continue;
-    sym->usage|=uREAD|uPUBLIC|uFORWARD;      /* public: SetTimer resolves it by name */
+    sym->usage|=uREAD|uPUBLIC|uDEFINE|uPROTOTYPED; /* a DEFINED public: SetTimer
+                                     * resolves it by name at run time. uDEFINE is
+                                     * required -- the publics table only lists
+                                     * uPUBLIC|uDEFINE symbols (sc6.c), so a
+                                     * uFORWARD-only dispatcher is silently absent
+                                     * and the ptask never fires. */
     sym->addr=code_idx;
     curfunc=sym;
     begcseg();
