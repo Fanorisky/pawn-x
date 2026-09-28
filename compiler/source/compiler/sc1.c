@@ -10258,6 +10258,8 @@ static int doforeach(void)
       stgwrite("\tjneq ");             /* loop again while curval != cellmin */
       outval(lbl_cond,TRUE);
       code_idx+=opcodes(1)+opargs(1);
+    } else {
+      error(17,reverse ? "setprev" : "setnext");  /* need a current <foreach> (a stale include with setget but not setnext/setprev would silently loop once) */
     } /* if */
   }
   setlabel(wq[wqEXIT]);

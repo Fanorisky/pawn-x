@@ -246,7 +246,7 @@ static cell AMX_NATIVE_CALL iter_next(AMX *amx,const cell *params)
   /* else compact_search already returned the insertion point (first > afterValue) */
   if (pos<=count)
     return arr[pos];
-  return (cell)(1UL<<(8*sizeof(cell)-1));   /* cellmin sentinel */
+  return (cell)((ucell)1<<(PAWN_CELL_SIZE-1));   /* cellmin sentinel (match codegen; correct on all cell widths) */
 }
 
 /* setprev(array[], beforeValue) - the largest in-set value strictly less than
@@ -265,7 +265,7 @@ static cell AMX_NATIVE_CALL iter_prev(AMX *amx,const cell *params)
   pos--;
   if (pos>=1 && pos<=count)
     return arr[pos];
-  return (cell)(1UL<<(8*sizeof(cell)-1));   /* cellmin sentinel */
+  return (cell)((ucell)1<<(PAWN_CELL_SIZE-1));   /* cellmin sentinel (match codegen; correct on all cell widths) */
 }
 
 /* the native table; registered by pawnruns (the test runner) via amx_Register. */
