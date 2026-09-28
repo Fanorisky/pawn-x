@@ -2568,8 +2568,13 @@ static void dohook(void)
   stateval=0;
   if (matchtoken('<')) {
     constvalue *automaton,*state;
-    if (sc_getstateid(&automaton,&state)) {
-      assert(automaton!=NULL && state!=NULL);
+    /* issue #13 side-note: guard the NULL case. sc_getstateid can report success
+     * yet leave automaton/state NULL on malformed input (e.g. an empty "<>"); in a
+     * release build (NDEBUG) the assert is gone and automaton->value then segfaults.
+     * Require both non-NULL, so a bad state list is a clean skip, never a crash. */
+    automaton=NULL;
+    state=NULL;
+    if (sc_getstateid(&automaton,&state) && automaton!=NULL && state!=NULL) {
       statevar=automaton->value;   /* address of the automaton's state variable */
       stateval=state->value;       /* the required state's index */
       hasstate=1;
@@ -2861,6 +2866,8 @@ static void hook_emit_dispatchers(void)
   symbol *disp,*savedfunc;
   int i,a,lbl_ret0,lbl_ret1;
   cell argbytes,chainaddr;
+  cell origaddr;                /* addr of a user-defined `public` body for the callback (issue #6) */
+  int has_orig;
 
   if (hook_registry==NULL)
     return;
@@ -2870,6 +2877,16 @@ static void hook_emit_dispatchers(void)
     disp=fetchfunc(grp->name,grp->tag);
     if (disp==NULL)
       continue;
+    /* issue #6: if the user ALSO wrote a `public <callback>` body, chain it as
+     * the LAST link (after every hook). At this point (pass 1, before we set
+     * uDEFINE below) uDEFINE means "user defined a real body"; mark uHOOKORIG so
+     * pass 2 still knows (the dispatcher itself carries uDEFINE by then). Capture
+     * the body's entry address BEFORE the dispatcher overwrites disp->addr; parse
+     * re-runs each pass so disp->addr is the user body's address here in both. */
+    origaddr=disp->addr;
+    if ((disp->usage & uDEFINE)!=0)
+      disp->usage|=uHOOKORIG;
+    has_orig=(disp->usage & uHOOKORIG)!=0;
     /* order the chain by priority (higher first), stable so equal priorities
      * keep source order. Done identically in both passes -> the dispatcher emits
      * its calls in the same order each pass, so addresses stay consistent. */
@@ -2952,6 +2969,25 @@ static void hook_emit_dispatchers(void)
       if (lbl_skip>=0)
         setlabel(lbl_skip);     /* skipped hooks land here, chain value intact */
     } /* for */
+
+    /* issue #6: the user's own `public` body is the chain's tail -- call it after
+     * every hook, with the dispatcher's arguments; its return becomes the running
+     * chain value (a plain public returns normal values, not HOOK_STOP codes, so
+     * no STOP checks). Reached only when no hook forced an early STOP. */
+    if (has_orig) {
+      for (a=grp->argcount-1; a>=0; a--) {
+        stgwrite("\tpush.s ");
+        outval((a+3)*sizeof(cell),TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* for */
+      pushval(argbytes);
+      ldconst(origaddr,sPRI);          /* PRI = user body entry address */
+      stgwrite("\tcall.pri\n");         /* call the original (its retn cleans the args) */
+      code_idx+=opcodes(1);
+      stgwrite("\tstor.s.pri ");        /* chain value = original's return */
+      outval(chainaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* if */
 
     /* fell through the whole chain: return the declared default if any, else the
      * running chain value (from the hidden local) */

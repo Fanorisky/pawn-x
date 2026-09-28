@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+hook
+
+public
+
+hook_original_public.amx returns 0
+"""
+}
