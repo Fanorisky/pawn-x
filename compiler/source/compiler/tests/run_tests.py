@@ -121,7 +121,7 @@ class PCodeCheckTest:
       if output:
         self.fail_reason += '\n\nOutput:\n\n{}'.format(output)
       return False
-    with open(self.name + '.lst', 'r') as dump_file:
+    with open(self.name + '.lst', 'r', encoding='latin-1') as dump_file:
       dump = dump_file.read()
       if self.code_pattern:
         dump = remove_asm_comments(dump)

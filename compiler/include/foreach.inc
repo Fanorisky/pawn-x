@@ -42,6 +42,8 @@ native setfree(const array[]);     // smallest non-negative integer not in the s
 native setrandom(const array[]);   // a random member, or -1 if empty
 native setget(const array[], index);   // value at 0-based ascending position, or -1
 native setalloc(array[]);          // allocate + return the smallest free id
+native setnext(const array[], value);  // smallest member > value, or ITER_STOP if none (foreach uses this: removal-safe)
+native setprev(const array[], value);  // largest member < value, or ITER_STOP if none (Reverse uses this)
 
 /**
  * Lazy generators (`iterfunc`): a function called once per iteration that

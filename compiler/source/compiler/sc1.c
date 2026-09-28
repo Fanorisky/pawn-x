@@ -10172,89 +10172,57 @@ static int doforeach(void)
   lbl_cond=getlabel();
   setline(TRUE);
 
-  /* Pointer walk: keep a live pointer "p" (in kaddr) and a bound pointer
-   * (in cntaddr). The set is compact -- array[0]=count, values in
-   * array[1..count] contiguously. Ascending: p runs &array[1]..&array[count+1),
-   * bound = "pend" = &array[count+1], exit when p >= pend. Reverse: p runs
-   * &array[count]..&array[1], bound = "pstop" = &array[0] = base, exit when
-   * p <= pstop. Both leave p in PRI so the condition can skip reloading it. */
+  /* Value-based, removal-safe set walk (Y-Less issue #1). The set is compact
+   * (array[0]=count, values in array[1..count] ascending); a raw pointer walk
+   * desyncs when setremove compacts it mid-loop. Instead: cnt = setlen(base);
+   * empty -> skip to exit; first member = setget(base, 0) ascending /
+   * setget(base, cnt-1) descending. kaddr holds the current value; the advance
+   * block (after the body) moves to the next/previous member by value. */
   if (validarray) {
-    if (reverse) {
-      /* pstop = base (&array[0]) */
-      stgwrite("\tload.s.pri ");
-      outval(baseaddr,TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      stgwrite("\tstor.s.pri ");  /* pstop = base */
-      outval(cntaddr,TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      /* p = base + count*cell = &array[count] */
-      stgwrite("\tload.s.alt ");  /* ALT = base */
-      outval(baseaddr,TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      ldconst(0,sPRI);            /* PRI = index 0 */
-      stgwrite("\tlidx\n");       /* PRI = array[0] = count */
-      code_idx+=opcodes(1);
-      stgwrite("\tload.s.alt ");  /* ALT = base */
-      outval(baseaddr,TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      stgwrite("\tidxaddr\n");    /* PRI = base + count*cell = &array[count] */
-      code_idx+=opcodes(1);
-      stgwrite("\tstor.s.pri ");  /* p = PRI */
-      outval(kaddr,TRUE);
-      code_idx+=opcodes(1)+opargs(1);
+    symbol *n_len=findglb("setlen",sGLOBAL);
+    symbol *n_get=findglb("setget",sGLOBAL);
+    if (n_len==NULL || n_get==NULL) {
+      error(17,"setget");              /* need #include <foreach> */
     } else {
-      /* pend = base + (count+1)*cell */
-      stgwrite("\tload.s.alt ");  /* ALT = cached base address of the array/row */
+      stgwrite("\tload.s.pri ");       /* PRI = base address */
       outval(baseaddr,TRUE);
       code_idx+=opcodes(1)+opargs(1);
-      ldconst(0,sPRI);            /* PRI = index 0 */
-      stgwrite("\tlidx\n");       /* PRI = [ALT + 0*cell] = array[0] = count */
-      code_idx+=opcodes(1);
-      addconst(1);                /* PRI = count+1 */
-      stgwrite("\tload.s.alt ");  /* ALT = base address again */
+      pushreg(sPRI);
+      pushval(1*(cell)sizeof(cell));
+      ffcall(n_len,NULL,1);            /* PRI = count */
+      markusage(n_len,uREAD);
+      stgwrite("\tjzer ");             /* empty set -> skip the whole loop */
+      outval(wq[wqEXIT],TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      if (reverse)
+        addconst(-1);                  /* index = count-1 (PRI still holds count) */
+      else
+        ldconst(0,sPRI);               /* index = 0 */
+      pushreg(sPRI);                   /* arg2 = index */
+      stgwrite("\tload.s.pri ");       /* PRI = base address */
       outval(baseaddr,TRUE);
       code_idx+=opcodes(1)+opargs(1);
-      stgwrite("\tidxaddr\n");    /* PRI = ALT + (count+1)*cell = &array[count+1] = pend */
-      code_idx+=opcodes(1);
-      stgwrite("\tstor.s.pri ");  /* pend = PRI */
-      outval(cntaddr,TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      /* p = &array[1] = base + cell */
-      stgwrite("\tload.s.pri ");
-      outval(baseaddr,TRUE);
-      code_idx+=opcodes(1)+opargs(1);
-      addconst((int)sizeof(cell)); /* PRI = base + cell = &array[1] */
-      stgwrite("\tstor.s.pri ");  /* p = PRI */
+      pushreg(sPRI);                   /* arg1 = set */
+      pushval(2*(cell)sizeof(cell));
+      ffcall(n_get,NULL,2);            /* PRI = first member value */
+      markusage(n_get,uREAD);
+      stgwrite("\tstor.s.pri ");       /* curval = PRI */
       outval(kaddr,TRUE);
       code_idx+=opcodes(1)+opargs(1);
     } /* if */
   } else {
-    /* degenerate loop: p == bound == 0 so the condition exits immediately */
-    ldconst(0,sPRI);
-    stgwrite("\tstor.s.pri ");
-    outval(kaddr,TRUE);
-    code_idx+=opcodes(1)+opargs(1);
-    stgwrite("\tstor.s.pri ");
-    outval(cntaddr,TRUE);
-    code_idx+=opcodes(1)+opargs(1);
+    /* degenerate (operand not an array; already errored): skip the loop */
+    jumplabel(wq[wqEXIT]);
   } /* if */
 
   setlabel(lbl_cond);
-  /* PRI already holds p on every entry to this label: the initialiser leaves
-   * p in PRI (its last op is "stor.s.pri p", which preserves PRI), and the
-   * increment block below ends the same way before jumping back here. So the
-   * per-iteration "load.s.pri p" is elided -- only "pend" is (re)loaded. */
-  stgwrite("\tload.s.alt ");    /* ALT = bound pointer (PRI still holds p) */
-  outval(cntaddr,TRUE);
+  /* value-based walk: kaddr holds the current member value (set by the
+   * initialiser and by the advance block below). Bind the loop variable to it.
+   * The empty-set case was already skipped to wqEXIT by the initialiser, and
+   * termination (curval == cellmin) is tested after the advance. */
+  stgwrite("\tload.s.pri ");
+  outval(kaddr,TRUE);
   code_idx+=opcodes(1)+opargs(1);
-  /* ascending: exit when p >= pend; reverse: exit when p <= pstop */
-  stgwrite(reverse ? "\tjsleq " : "\tjsgeq ");
-  outval(wq[wqEXIT],TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-
-  /* bind the loop variable to *p (the value); PRI still holds p */
-  stgwrite("\tload.i\n");       /* PRI = [p] = array value */
-  code_idx+=opcodes(1);
   if (loopsym->vclass==sLOCAL)
     stgwrite("\tstor.s.pri ");
   else
@@ -10264,15 +10232,34 @@ static int doforeach(void)
 
   statement(NULL,FALSE);        /* the loop body; "i" is live here */
 
-  setlabel(wq[wqLOOP]);         /* "continue" lands here: advance p */
-  stgwrite("\tload.s.pri ");
-  outval(kaddr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  addconst(reverse ? -(int)sizeof(cell) : (int)sizeof(cell));  /* reverse: p -= cell, else p += cell */
-  stgwrite("\tstor.s.pri ");
-  outval(kaddr,TRUE);
-  code_idx+=opcodes(1)+opargs(1);
-  jumplabel(lbl_cond);
+  setlabel(wq[wqLOOP]);         /* "continue" lands here: advance to next member */
+  /* advance BY VALUE (setnext, or setprev for Reverse): the removal-safe step.
+   * setnext/setprev of the last-visited value still returns the correct
+   * successor even if that value or others were removed by the body. kaddr
+   * holds the current value and is overwritten with the result. */
+  {
+    symbol *n_step=findglb(reverse ? "setprev" : "setnext",sGLOBAL);
+    if (n_step!=NULL) {
+      stgwrite("\tload.s.pri ");       /* PRI = curval */
+      outval(kaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      pushreg(sPRI);                   /* arg2 = curval */
+      stgwrite("\tload.s.pri ");       /* PRI = base address */
+      outval(baseaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      pushreg(sPRI);                   /* arg1 = set */
+      pushval(2*(cell)sizeof(cell));
+      ffcall(n_step,NULL,2);           /* PRI = next/prev value, or cellmin */
+      markusage(n_step,uREAD);
+      stgwrite("\tstor.s.pri ");       /* curval = PRI (stor preserves PRI) */
+      outval(kaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      ldconst((cell)((ucell)1 << (PAWN_CELL_SIZE-1)),sALT);  /* ALT = cellmin sentinel */
+      stgwrite("\tjneq ");             /* loop again while curval != cellmin */
+      outval(lbl_cond,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* if */
+  }
   setlabel(wq[wqEXIT]);
   delwhile();
 

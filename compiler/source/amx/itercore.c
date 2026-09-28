@@ -229,6 +229,45 @@ static cell AMX_NATIVE_CALL iter_alloc(AMX *amx,const cell *params)
   return id;
 }
 
+/* setnext(array[], afterValue) - the smallest in-set value strictly greater
+ * than afterValue, or cellmin (ITER_STOP) if none. This is what makes `foreach`
+ * removal-safe: iterating by VALUE (not by shifting position), removing the
+ * current or a future element mid-loop still yields the correct next value. */
+static cell AMX_NATIVE_CALL iter_next(AMX *amx,const cell *params)
+{
+  cell *arr;
+  int count,pos;
+
+  amx_GetAddr(amx,params[1],&arr);
+  count=(int)arr[0];
+  pos=compact_search(arr,(int)params[2]);
+  if (pos<=count && arr[pos]==params[2])
+    pos++;                    /* afterValue is present -> first strictly greater */
+  /* else compact_search already returned the insertion point (first > afterValue) */
+  if (pos<=count)
+    return arr[pos];
+  return (cell)(1UL<<(8*sizeof(cell)-1));   /* cellmin sentinel */
+}
+
+/* setprev(array[], beforeValue) - the largest in-set value strictly less than
+ * beforeValue, or cellmin if none. The descending mirror of setnext, used by
+ * `foreach (... : Reverse(s))`. */
+static cell AMX_NATIVE_CALL iter_prev(AMX *amx,const cell *params)
+{
+  cell *arr;
+  int count,pos;
+
+  amx_GetAddr(amx,params[1],&arr);
+  count=(int)arr[0];
+  pos=compact_search(arr,(int)params[2]);
+  /* whether beforeValue is present or not, compact_search lands on the first
+   * slot >= beforeValue, so slot pos-1 holds the largest value < beforeValue */
+  pos--;
+  if (pos>=1 && pos<=count)
+    return arr[pos];
+  return (cell)(1UL<<(8*sizeof(cell)-1));   /* cellmin sentinel */
+}
+
 /* the native table; registered by pawnruns (the test runner) via amx_Register. */
 const AMX_NATIVE_INFO iter_Natives[] = {
   { "setinit",   iter_init },
@@ -240,5 +279,7 @@ const AMX_NATIVE_INFO iter_Natives[] = {
   { "setrandom", iter_random },
   { "setget",    iter_get },
   { "setalloc",  iter_alloc },
+  { "setnext",   iter_next },
+  { "setprev",   iter_prev },
   { NULL, NULL }     /* terminator */
 };

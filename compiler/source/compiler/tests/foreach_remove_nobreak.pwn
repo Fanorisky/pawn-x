@@ -1,14 +1,13 @@
 #include <console>
+
 #include <foreach>
 
-/* Documents the known snapshot-semantics limitation: mutating the set
- * mid-walk WITHOUT breaking is unsupported. The count is snapshotted at
- * loop entry but the array is re-read live per iteration, so an in-body
- * setremove shifts the tail left and the walk skips the value that
- * moved into the current slot while re-reading a now-stale slot. The
- * output pinned in the .meta is the ACTUAL observed behavior (a value is
- * skipped and another emitted twice), not correct iteration -- it exists
- * so this footgun cannot silently change. Do NOT mutate mid-walk. */
+/* Removal-safe iteration (Y-Less issue #1, now FIXED): mutating the set
+ * mid-walk without breaking is supported. `foreach` iterates BY VALUE
+ * (setnext), so an in-body setremove no longer skips or duplicates any
+ * still-to-visit element. Removing the current value (2) here still visits
+ * 3 and 4 exactly once. This was previously a documented footgun that
+ * emitted `1 2 4 4`; it now emits correct `1 2 3 4`. */
 
 new data[8];
 
