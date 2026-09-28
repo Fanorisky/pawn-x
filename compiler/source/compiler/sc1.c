@@ -2370,7 +2370,12 @@ static void timers_emit(void)
     error(17,"SetTimer");         /* undefined symbol: include the SA-MP/open.mp SDK */
     return;
   } /* if */
-  rt->usage|=uREAD;
+  /* NB: do NOT mark SetTimer uREAD yet. ffcall() assigns a native its sysreq id
+   * lazily in the write pass, and ONLY while uREAD is clear (sc4.c). We mark it
+   * uREAD *after* the first ffcall below, so the id is assigned exactly once
+   * (marking it here would suppress assignment entirely -> corrupt natives
+   * table / bogus sysreq id; marking it never would assign a fresh id per task).
+   * Same pattern as callhook_emit's native-original tail. */
 
   sym=fetchfunc("@yt_init",0);
   if (sym==NULL)
@@ -2400,6 +2405,17 @@ static void timers_emit(void)
     pushreg(sPRI);
     pushval(3*(cell)sizeof(cell));/* argument count, in bytes */
     ffcall(rt,NULL,3);
+    /* For a NATIVE SetTimer, mark it read AFTER the first ffcall: the first call
+     * (uREAD still clear) assigns its sysreq id, the rest reuse it, and its
+     * library gets listed even in a task-only script with no manual call site.
+     * Guard on uNATIVE -- x.lib is only valid for natives (union), and a pawn
+     * stock target (e.g. a test stub) takes ffcall's plain "call" branch and is
+     * kept live by its own call sites, so it needs neither. */
+    if ((rt->usage & uNATIVE)!=0) {
+      markusage(rt,uREAD);
+      if (rt->x.lib!=NULL)
+        rt->x.lib->value+=1;
+    } /* if */
   } /* for */
 
   ldconst(1,sPRI);                /* HOOK_CONTINUE: let other init hooks run */
