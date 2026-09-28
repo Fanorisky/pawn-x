@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+ST warmup 1 0
+
+ST @yt_Ticker 1000 1
+
+count=0
+
+task_basic.amx returns 0
+"""
+}

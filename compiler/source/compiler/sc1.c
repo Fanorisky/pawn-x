@@ -78,6 +78,9 @@
 static void resetglobals(void);
 static void hook_reset(void);
 static void hook_emit_dispatchers(void);
+static void timers_reset(void);
+static void timers_emit(void);
+static void dotask(int perplayer);
 static void callhook_reset(void);
 static void callhook_emit(void);
 static void generator_emit_helper(void);
@@ -693,6 +696,7 @@ int pc_compile(int argc, char *argv[])
     warnstack_init();
     preprocess();                       /* fetch first line */
     parse();                            /* process all input */
+    timers_emit();                      /* synthesise @yt_init timer registration (addressing pass) */
     hook_emit_dispatchers();            /* synthesise native-hook dispatchers (addressing pass) */
     callhook_emit();                    /* synthesise call-site hook wrappers/dispatchers (addressing pass) */
     generator_emit_helper();            /* synthesise @yield.emit for coroutine generators */
@@ -788,6 +792,7 @@ int pc_compile(int argc, char *argv[])
   warnstack_init();
   preprocess();                         /* fetch first line */
   parse();                              /* process all input */
+  timers_emit();                        /* synthesise @yt_init timer registration (code-emission pass) */
   hook_emit_dispatchers();              /* synthesise native-hook dispatchers (code-emission pass) */
   callhook_emit();                      /* synthesise call-site hook wrappers/dispatchers (code-emission pass) */
   generator_emit_helper();              /* synthesise @yield.emit for coroutine generators */
@@ -1010,6 +1015,7 @@ static void resetglobals(void)
   emit_stgbuf_idx=-1;
   hook_reset();         /* clear the per-pass native-hook registry */
   callhook_reset();     /* clear the per-pass call-site hook registry */
+  timers_reset();       /* clear the per-pass timer-task registry */
 }
 
 static void initglobals(void)
@@ -2062,6 +2068,19 @@ static void parse(void)
        * identifier. */
       dohook();
       break;
+    case tTASK:
+      /* "task Name[interval]() body": a repeating timer. The body compiles to a
+       * hidden public ("@yt.Name"); the compiler auto-registers a SetTimer for
+       * it at end-of-parse (timers_emit) by chaining a synthesised handler onto
+       * OnGameModeInit/OnFilterScriptInit -- no runtime public-table scan. */
+      dotask(FALSE);
+      break;
+    case tPTASK:
+      /* "ptask Name[interval](playerid) body": like "task", but fires for every
+       * connected player each interval (the synthesised handler loops the
+       * <players> set and calls the body per id). */
+      dotask(TRUE);
+      break;
     case t__STATIC_ASSERT:
     case t__STATIC_CHECK: {
       int use_warning=(tok==t__STATIC_CHECK);
@@ -2230,6 +2249,177 @@ static void hook_register(const char *callback,symbol *hidden,int argcount,int t
  *  the hidden names differ, the normal duplicate-definition gate (error 021)
  *  never fires for repeated hooks of one callback.
  */
+/* --- native "task" timers (y_timers periodic-task replacement) -------------
+ * "task Name[interval]() body" is a repeating timer. The body is hoisted into a
+ * hidden PUBLIC "@yt_Name" (SetTimer resolves it by name at run time); the task
+ * is recorded here, and at end-of-parse timers_emit() synthesises one "@yt_init"
+ * that SetTimer-registers them all and chains itself onto OnGameModeInit /
+ * OnFilterScriptInit via the hook machinery -- no runtime public-table scan. */
+typedef struct timertask {
+  struct timertask *next;
+  char pubname[sNAMEMAX+1];     /* "@yt_Name" */
+  cell interval;
+} timertask;
+static timertask *timer_registry=NULL;
+
+/* timers_reset - free the per-pass timer registry (called from resetglobals) */
+static void timers_reset(void)
+{
+  timertask *t,*n;
+  for (t=timer_registry; t!=NULL; t=n) {
+    n=t->next;
+    free(t);
+  } /* for */
+  timer_registry=NULL;
+}
+
+/*  dotask - parse "task Name[interval]() body" (perplayer: "ptask", not yet
+ *  implemented). The body compiles to a hidden public "@yt_Name"; the task is
+ *  recorded for timers_emit() to auto-register. */
+static void dotask(int perplayer)
+{
+  char name[sNAMEMAX+1];
+  char hidden[sNAMEMAX+1];
+  cell val,interval;
+  char *str;
+  int argcount;
+  symbol *hsym;
+  timertask *t;
+
+  if (perplayer) {
+    error(1,"task","ptask");    /* TODO ptask: per-player dispatch not implemented yet */
+    lexclr(TRUE);
+    return;
+  } /* if */
+
+  if (!needtoken(tSYMBOL)) {
+    lexclr(TRUE);
+    return;
+  } /* if */
+  tokeninfo(&val,&str);
+  assert(strlen(str)<=sNAMEMAX);
+  strcpy(name,str);
+
+  if (!needtoken('[')) {
+    lexclr(TRUE);
+    return;
+  } /* if */
+  interval=0;
+  constexpr(&interval,NULL,NULL);   /* the repeat interval in ms */
+  needtoken(']');
+
+  if (strlen(name)+4>sNAMEMAX) {
+    error(200,name,sNAMEMAX);       /* symbol too long once mangled */
+    lexclr(TRUE);
+    return;
+  } /* if */
+  sprintf(hidden,"@yt_%s",name);
+
+  /* pre-create the hidden public and mark it read so its body is not dropped
+   * as dead code before @yt_init (emitted later) references it */
+  hsym=fetchfunc(hidden,0);
+  if (hsym!=NULL)
+    hsym->usage|=uREAD|uPUBLIC|uFORWARD;   /* uFORWARD: it is its own prototype (no warning 235) */
+
+  /* parse "(params) body" under the hidden name, as a public */
+  if (!newfunc(hidden,0,TRUE,FALSE,FALSE)) {
+    error(10);                      /* illegal function or declaration */
+    lexclr(TRUE);
+    litidx=0;
+    return;
+  } /* if */
+  hsym=findglb(hidden,sGLOBAL);
+  if (hsym==NULL || hsym->ident!=iFUNCTN)
+    return;                         /* body was only a prototype or was rejected */
+  hsym->usage|=uPUBLIC|uREAD;
+  argcount=0;
+  while (hsym->dim.arglist[argcount].ident!=0)
+    argcount++;
+  if (argcount!=0)
+    error(25);                      /* function heading differs: task takes no args (v1) */
+
+  t=(timertask*)malloc(sizeof(timertask));
+  if (t==NULL) {
+    error(103);                     /* insufficient memory */
+    return;
+  } /* if */
+  memset(t,0,sizeof(timertask));
+  strcpy(t->pubname,hidden);
+  t->interval=interval;
+  t->next=timer_registry;
+  timer_registry=t;
+}
+
+/*  timers_emit - at end-of-parse (both passes, before hook_emit_dispatchers),
+ *  synthesise "@yt_init": for each task, SetTimer("@yt_Name", interval, true);
+ *  then chain @yt_init onto OnGameModeInit / OnFilterScriptInit so it runs at
+ *  startup. Modelled on generator_emit_helper() (function synthesis) + the
+ *  per-function literal flush for the name strings. */
+static void timers_emit(void)
+{
+  symbol *sym,*savedfunc,*rt;
+  timertask *t;
+  int i,len;
+  cell litstart,nameaddr;
+
+  if (timer_registry==NULL)
+    return;
+
+  rt=findglb("SetTimer",sGLOBAL);
+  if (rt==NULL || rt->ident!=iFUNCTN) {
+    error(17,"SetTimer");         /* undefined symbol: include the SA-MP/open.mp SDK */
+    return;
+  } /* if */
+  rt->usage|=uREAD;
+
+  sym=fetchfunc("@yt_init",0);
+  if (sym==NULL)
+    return;
+  sym->usage|=uREAD;
+
+  savedfunc=curfunc;
+  sym->addr=code_idx;             /* address of the "proc" that follows */
+  curfunc=sym;
+  begcseg();
+  startfunc("@yt_init",TRUE);     /* emit "proc" */
+
+  for (t=timer_registry; t!=NULL; t=t->next) {
+    len=(int)strlen(t->pubname);
+    litstart=litidx;
+    for (i=0; i<len; i++)
+      litadd((cell)t->pubname[i]);
+    litadd(0);                    /* NUL-terminate the name string */
+    nameaddr=(litstart+glb_declared)*(cell)sizeof(cell);
+    /* SetTimer(name, interval, true): args pushed last-to-first, then the
+     * argument count in bytes; ffcall emits the call + (native) stack cleanup */
+    ldconst(1,sPRI);              /* repeating = true */
+    pushreg(sPRI);
+    ldconst(t->interval,sPRI);    /* interval (ms) */
+    pushreg(sPRI);
+    ldconst(nameaddr,sPRI);       /* address of the public-name string */
+    pushreg(sPRI);
+    pushval(3*(cell)sizeof(cell));/* argument count, in bytes */
+    ffcall(rt,NULL,3);
+  } /* for */
+
+  ldconst(1,sPRI);                /* HOOK_CONTINUE: let other init hooks run */
+  ffret(TRUE);
+  endfunc();
+  sym->codeaddr=code_idx;
+
+  /* flush the name-string literals into the data segment (function-end lit dump) */
+  glb_declared+=litidx;
+  begdseg();
+  dumplits();
+  litidx=0;
+
+  curfunc=savedfunc;
+
+  /* run @yt_init at startup by chaining it onto the init callbacks */
+  hook_register("OnGameModeInit",sym,0,0,0,0,0,0);
+  hook_register("OnFilterScriptInit",sym,0,0,0,0,0,0);
+}
+
 static void dohook(void)
 {
   char callback[sNAMEMAX+1];
