@@ -36,7 +36,7 @@ Two pillars, split by *when the information exists*:
 | compact `switch` codegen (range cases → bounds-check) | *(stock-Pawn table bloat)* | exp 013 |
 | `inline` closures + `using inline`/`using public<sig>` + `Callback:` | `y_inline` | tests `inline_*` |
 | `hash()`/`ihash()`/`fnv1()`/`fnv1a()` string hashing (compile-time + runtime, packed) | `y_stringhash` | tests `stringhash_*` |
-| `task Name[ms]()` repeating timer (compile-time auto-registration) + `<timers>` wrappers | `y_timers` (partial) | tests `task_*` / `timers_lib` |
+| `task`/`ptask Name[ms]()` timers (compile-time auto-registration) + `<timers>` wrappers | `y_timers` | tests `task_*` / `ptask_*` / `timers_lib` |
 
 Most rows were run on a real `omp-server` and diffed against YSI. The `yield`,
 `async`/`await`, `hook native`/`function`/`stock`, and `inline` rows are proven by
@@ -224,8 +224,13 @@ the `hook` machinery. Alongside it, `<timers>` gives thin wrappers over the host
 natives for the on-demand cases: `Timer_Repeat` / `Timer_Once` (+ `*Ex`
 arg-forwarding variants built on `___` varargs) and `Timer_Stop`, with tagged
 `Timer:` handles. Deferred/stateful work (keep locals alive across the wait)
-belongs to `async`/`await` (`await Async_Ms(ms)`). `task` v1 is repeating and
-no-argument; `ptask` (per-player) and timer arguments are not yet implemented.
+belongs to `async`/`await` (`await Async_Ms(ms)`). **`ptask Name[ms](playerid)`**
+(needs `#include <ptask>`) is the per-player variant: it fires the body for every
+connected player each interval (a synthesised dispatcher loops the `<players>`
+set through a `Callback:` indirect call). Arbitrary timer *arguments* are not a
+`task`/`ptask` feature by design (an auto-registered timer has no value to pass);
+that is what `Timer_RepeatEx`/`async` are for. See tests `task_*` / `ptask_*` /
+`timers_lib`.
 See tests `task_basic` / `task_native` / `timers_lib`.
 
 ## Build
