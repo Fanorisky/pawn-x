@@ -47,14 +47,19 @@
  *
  *  Higher priority runs first; equal priority (default 0) keeps source order.
  *
- *  Default return: by default the callback returns the last hook's chain value.
- *  To force a fall-through default (like YSI's HOOK_RET — e.g. a command
- *  callback that must default to 0 unless a hook claims it), declare:
+ *  Return combining: the chain's return is the hook returns combined, seeded and
+ *  operated by `hook default`. The default is 0 unless you declare otherwise,
+ *  which ORs the returns, so the callback returns 1 if ANY hook returns 1 (e.g.
+ *  a command claimed by one handler among many). Declare a default of 1 to AND
+ *  them instead, so the callback returns 1 only if EVERY hook agrees (YSI's
+ *  "confirm" callbacks):
  *
- *    hook default OnPlayerCommandText = 0;
+ *    hook default OnPlayerCommandText = 0;   // OR (also the implicit default)
  *
- *  Then a hook returns HOOK_STOP_1 to claim it (return 1); if none do, the
- *  chain falls through to the declared default instead of the CONTINUE value.
+ *  A hook returns HOOK_CONTINUE (1) to claim/confirm or HOOK_CONTINUE_0 (0) to
+ *  pass, and those get OR'd (or AND'd) down the chain. HOOK_STOP / HOOK_STOP_1
+ *  end the chain immediately with 0 / 1 and skip the rest, the explicit escape
+ *  hatch when a hook must force the final result.
  *
  *  State-scoped hooks: prefix a Pawn automaton state so a hook fires only in
  *  that state (the dispatcher checks the automaton's state variable and skips

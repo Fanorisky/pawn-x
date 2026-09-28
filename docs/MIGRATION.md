@@ -15,6 +15,44 @@ Swap the includes:
 #include <pawn-x>
 ```
 
+## What behaves differently (by design)
+
+pawn-x is a native, cleaner take on YSI's script layer, not a byte-for-byte
+drop-in. A few behaviors differ on purpose. Each has an upgrade path so porting
+stays predictable.
+
+**Hook default return is 0, not 1.** A hook chain with no `hook default` seeds
+at 0 and ORs the hook returns, so it returns 1 if any hook claims the callback,
+matching YSI's default-0 behaviour. YSI's overall implicit default is 1; the
+couple of callbacks that need that get `hook default OnFoo = 1;`, which seeds at
+1 and ANDs the chain (returns 1 only if every hook agrees), again like YSI. So
+the combining matches YSI, only the implicit default differs. `HOOK_STOP` /
+`HOOK_STOP_1` end the chain early with a forced 0 / 1.
+
+**Priority runs higher-first, the opposite of YSI's `@N`.** `hook:100` runs
+before `hook:0`; YSI's `@N` suffix runs the other way. A higher number reads as
+more important, so it goes first. Upgrade: invert the numbers when porting
+`hook Foo@N` to `hook:N Foo`.
+
+**Construct keywords are reserved, so pawn-x and YSI cannot run together.**
+`foreach`, `hook`, `task`, `ptask`, `async`, `await`, `yield`, `inline`, and
+`iterfunc` are real compiler keywords, not optional `__`-prefixed macros. The
+clean syntax is the whole point of moving this into the compiler. The newer
+hash intrinsics (`hash`/`ihash`/`fnv1`/`fnv1a`) are soft in call position
+(usable as identifiers except directly before `(`). Upgrade: rename a variable
+or function that collides, and remove the YSI includes (the pawn-x includes
+detect YSI and stop with a clear error).
+
+**New diagnostics are numbered 253+.** Stock Pawn leaves no free contiguous
+error slots, so pawn-x's new errors live at 253 and up. The known trade-off,
+raised by YSI's author, is that this range blocks future suppressible warnings;
+a dedicated high error range is a possible later refactor.
+
+Everything YSI's author flagged as an actual bug (removal-safe `foreach`,
+calling your own `public` when it is also hooked, the empty-state guard, `set*`
+const-correctness) was fixed, not kept. See [YSI-NOTES](YSI-NOTES.md) for the
+full point-by-point.
+
 ## API mapping
 
 ### Varargs (`y_va` → `___`)

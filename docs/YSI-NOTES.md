@@ -17,6 +17,23 @@ purpose, and this documents them so migration is predictable.
 | #7 no way to detect the compiler | only `#tryinclude` | **`__PawnX`** builtin constant (`#if defined __PawnX`), independent of includes. |
 | #2/#10 no migration shims | — | optional **`<ysi_compat>`**: `Iterator:name<N>` → `name[N+1]` (the count-slot sizing pitfall he flagged) + `Iter_Add`/`Iter_Remove`/… aliases. |
 | #13/#14 `STOP` naming | only `HOOK_STOP`/`ITER_STOP` | added `HOOK_BREAK`/`HOOK_BREAK_1`/`ITER_BREAK` mirroring pawn's `break` (STOP names kept). |
+| #5/#12 hook return combining (last-value silently dropped an earlier claim, the `/help` double-output) | last chain value wins | seed + operator from `hook default`: default 0 **OR**s the returns (1 if any hook claims), default 1 **AND**s them (YSI parity); `HOOK_STOP`/`_1` still claim-and-stop. Tests `hook_combine_or`/`hook_combine_and`, suite 269/2. |
+
+## Verified on a live host
+
+The fixes and the hook semantics were re-run against a real open.mp 1.5.8 server
+(`iterset.so` for the value-set natives), not just the in-repo harness, because
+`pawnruns` lacks `format`/`strcat`/`set*` and uses a different set backend. All
+scenarios behaved correctly: the removal matrix (remove the current, every, or a
+future element), `Reverse`, multi-dim rows, `setalloc`/`setfree`, nested
+`foreach`, `break`, and `sethas` mid-loop. On the hook side (the area Y-Less
+deep-dived): priority runs higher-first, a call-site `continue()` reaches the
+original at the tail, zero `continue()` replaces it and calling it twice runs
+the original twice, a callback chain runs in priority order with the user's own
+`public` as the last link, and `HOOK_STOP_1` claims a value and halts the rest
+of the chain. (This run predated the return-combining fix below; the combine is
+pure in-AMX bytecode with no host-only natives, so the `hook_combine_*` runtime
+tests are authoritative for it.) No new divergences surfaced.
 
 ## Deliberate differences (with upgrade paths)
 
@@ -24,14 +41,9 @@ purpose, and this documents them so migration is predictable.
 natural default); YSI defaults to `1`. As he noted, `0` is "more logically
 correct" but needs a `hook default OnFoo = 1;` for the callbacks that must
 confirm (few of them). **Upgrade:** add `hook default <cb> = 1;` for callbacks
-where YSI relied on the implicit `1`.
-
-**Hook return combining (#4).** pawn-x returns the **last** chain value; YSI
-`OR`s (default 0) or `AND`s (default 1) the whole chain. Both have edge cases (he
-said as much). **Upgrade:** a hook that wants to *claim* a result and stop the
-chain returns `HOOK_STOP_1`/`HOOK_STOP` (`~1`/`~0`) instead of `1`/`0` — this
-ends the chain immediately with that value, which is unambiguous under either
-model.
+where YSI relied on the implicit `1`. Note the combining itself now matches YSI
+(default 0 ORs, default 1 ANDs), so only the implicit default differs, see the
+Fixed table above.
 
 **Hook priority order (#12).** pawn-x runs **higher priority first** (`hook:100`
 before `hook:0`); YSI's `@N` suffix runs the opposite way. **Upgrade:** invert
