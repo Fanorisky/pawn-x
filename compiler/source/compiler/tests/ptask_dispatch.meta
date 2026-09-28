@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+n=3
+
+3 5 7
+
+ptask_dispatch.amx returns 0
+"""
+}
