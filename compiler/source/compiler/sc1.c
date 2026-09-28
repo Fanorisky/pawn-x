@@ -1670,6 +1670,7 @@ static void setconstants(void)
 
   add_builtin_constant("true",1,sGLOBAL,BOOLTAG);/* boolean flags */
   add_builtin_constant("false",0,sGLOBAL,BOOLTAG);
+  add_builtin_constant("__PawnX",100,sGLOBAL,0); /* pawn-x compiler detect (version*100): `#if defined __PawnX` is true only on this compiler, independent of any include */
   add_builtin_constant("EOS",0,sGLOBAL,0);      /* End Of String, or '\0' */
   #if PAWN_CELL_SIZE==16
   add_builtin_constant("cellbits",16,sGLOBAL,0);

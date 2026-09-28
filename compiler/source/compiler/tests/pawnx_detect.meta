@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+detect=100
+
+hookbreak=1
+
+iterbreak=1
+
+pawnx_detect.amx returns 0
+"""
+}
