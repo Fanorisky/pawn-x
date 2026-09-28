@@ -173,3 +173,11 @@ const HOOK_STOP       = -1;
  * <summary>Stop the chain; the callback returns 1.</summary>
  */
 const HOOK_STOP_1     = -2;
+
+/**
+ * <summary>`break`-style aliases (mirror pawn's `continue`/`break`): HOOK_BREAK
+ * stops the chain like HOOK_STOP, HOOK_BREAK_1 like HOOK_STOP_1. The STOP names
+ * remain for existing code.</summary>
+ */
+const HOOK_BREAK      = -1;
+const HOOK_BREAK_1    = -2;

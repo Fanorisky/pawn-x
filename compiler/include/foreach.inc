@@ -33,15 +33,15 @@
  * </library>
  */
 
-native setinit(const array[]);
-native setadd(const array[], value);
-native setremove(const array[], value);
+native setinit(array[]);
+native setadd(array[], value);
+native setremove(array[], value);
 native sethas(const array[], value);
 native setlen(const array[]);
 native setfree(const array[]);     // smallest non-negative integer not in the set
 native setrandom(const array[]);   // a random member, or -1 if empty
 native setget(const array[], index);   // value at 0-based ascending position, or -1
-native setalloc(const array[]);    // allocate + return the smallest free id
+native setalloc(array[]);          // allocate + return the smallest free id
 
 /**
  * Lazy generators (`iterfunc`): a function called once per iteration that
@@ -49,6 +49,7 @@ native setalloc(const array[]);    // allocate + return the smallest free id
  * cur == ITER_STOP (the seed). `foreach (new i : Gen(args))` drives it.
  */
 const ITER_STOP = cellmin;
+const ITER_BREAK = cellmin;   // alias of ITER_STOP: `break`-style naming (mirrors pawn's `break`)
 
 /**
  * Coroutine generators (`yield`): an `iterfunc` whose body contains
