@@ -36,6 +36,7 @@ Two pillars, split by *when the information exists*:
 | compact `switch` codegen (range cases → bounds-check) | *(stock-Pawn table bloat)* | exp 013 |
 | `inline` closures + `using inline`/`using public<sig>` + `Callback:` | `y_inline` | tests `inline_*` |
 | `hash()`/`ihash()`/`fnv1()`/`fnv1a()` string hashing (compile-time + runtime, packed) | `y_stringhash` | tests `stringhash_*` |
+| `task Name[ms]()` repeating timer (compile-time auto-registration) + `<timers>` wrappers | `y_timers` (partial) | tests `task_*` / `timers_lib` |
 
 Most rows were run on a real `omp-server` and diffed against YSI. The `yield`,
 `async`/`await`, `hook native`/`function`/`stock`, and `inline` rows are proven by
@@ -211,12 +212,21 @@ costs one pass; the fold itself needs no include. Full YSI parity: **`ihash()`**
 runtime stock, via `ispacked`). `hash` (and the other three) stays usable as an
 ordinary identifier everywhere except call position. See tests `stringhash_*`.
 
-**Timer wrappers (`<timers>`)** — a thin, plugin-free convenience layer over the
-host `SetTimer` natives: `Timer_Repeat` / `Timer_Once` (+ `*Ex` arg-forwarding
-variants built on `___` varargs) and `Timer_Stop`, with tagged `Timer:` handles.
-Deliberately *not* a native compiler feature: unlike YSI `y_timers` it does no
-bytecode scan and no auto-registration, and deferred/stateful work belongs to
-`async`/`await` (`await Async_Ms(ms)`) instead. See test `timers_lib`.
+**Timers — native `task` + `<timers>` wrappers** — the native `task` keyword is
+a repeating timer that **auto-registers at compile time** (no runtime
+public-table scan, the fragile core of YSI `y_timers`):
+```pawn
+task Announce[60000]() { SendClientMessageToAll(-1, "still up"); }   // that's it
+```
+The body is hoisted to a hidden public and the compiler synthesises its
+`SetTimer` registration, chained onto `OnGameModeInit`/`OnFilterScriptInit` via
+the `hook` machinery. Alongside it, `<timers>` gives thin wrappers over the host
+natives for the on-demand cases: `Timer_Repeat` / `Timer_Once` (+ `*Ex`
+arg-forwarding variants built on `___` varargs) and `Timer_Stop`, with tagged
+`Timer:` handles. Deferred/stateful work (keep locals alive across the wait)
+belongs to `async`/`await` (`await Async_Ms(ms)`). `task` v1 is repeating and
+no-argument; `ptask` (per-player) and timer arguments are not yet implemented.
+See tests `task_basic` / `task_native` / `timers_lib`.
 
 ## Build
 
