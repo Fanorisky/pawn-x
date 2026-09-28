@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+count=3
+
+has7=1
+
+has7=0
+
+sum=8
+
+ysi_compat.amx returns 0
+"""
+}
