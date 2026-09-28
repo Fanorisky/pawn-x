@@ -2,7 +2,6 @@
 
 **Date:** 2026-09-18
 **Compiler commit at run:** 14eea6a941f9f5c01b5413d82c77b780b1f9bfac
-**Spec:** docs/superpowers/specs/2026-09-16-foreach-native-design.md
 **Build:** `cmake -S compiler/source/compiler -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-m32" && cmake --build build -j$(nproc)`
 
 ## What was tried
@@ -21,12 +20,12 @@ keyword+codegen):
 1. **Compact sorted-run layout.** A plain script array is used as a set:
    `array[0]` holds the count, `array[1..count]` holds the distinct
    in-use values in ascending order; `array[count+1..]` is free. No tag
-   machinery, no per-slot occupied bits — a value is present iff it lies
+   machinery, no per-slot occupied bits: a value is present iff it lies
    in the sorted run.
 
 2. **Five natives** in `compiler/source/amx/itercore.c`:
-   `setinit/Add/Remove/Contains/Count`. All are **reference-based** —
-   they take the array by reference (`const array[]`), not by name,
+   `setinit/Add/Remove/Contains/Count`. All are reference-based: they
+   take the array by reference (`const array[]`), not by name,
    because public arrays are forbidden (error 056), so a name-based API
    was infeasible. `setadd` binary-inserts at the sorted position and
    shifts the tail; `setremove` shifts the tail left; `sethas`
@@ -48,34 +47,34 @@ The `<foreach>` header (`compiler/include/foreach.inc`) exposes the five
 ## What worked
 
 - **Full upstream suite: 110 PASSED, 2 FAILED.** The only failures are
-  the two known pre-existing baselines — `__timestamp` and
-  `gh_353_symbol_suggestions` — unrelated to this feature.
+  the two known pre-existing baselines, `__timestamp` and
+  `gh_353_symbol_suggestions`, unrelated to this feature.
 
 - **All 8 foreach/iter behavior + rejection tests pass** (in
   `compiler/source/compiler/tests/`):
-  - `foreach_basic` — add 42, 7 → walk prints 7 then 42 (ascending).
-  - `foreach_duplicate` — add 5 twice → body sees 5 once, count=1.
-  - `foreach_remove_during` — remove-in-body + break behaves per the
+  - `foreach_basic`: add 42, 7 → walk prints 7 then 42 (ascending).
+  - `foreach_duplicate`: add 5 twice → body sees 5 once, count=1.
+  - `foreach_remove_during`: remove-in-body + break behaves per the
     snapshot semantics (count drops to 2).
-  - `foreach_break` — `break` stops mid-iteration.
-  - `foreach_empty` — empty set → body never runs.
-  - `foreach_reject_notarray` — `foreach (new i : 42)` → exact
+  - `foreach_break`: `break` stops mid-iteration.
+  - `foreach_empty`: empty set → body never runs.
+  - `foreach_reject_notarray`: `foreach (new i : 42)` → exact
     `error 255: "foreach" iterates over an array or iterator, not a value`.
-  - `foreach_reject_syntax` — `foreach (new i data)` → exact
+  - `foreach_reject_syntax`: `foreach (new i data)` → exact
     `error 255: "foreach" syntax requires ": <array>" after the loop variable`.
-  - `iter_contains` — true/false paths + count tracking.
+  - `iter_contains`: true/false paths + count tracking.
 
 - **Opcode-only walk (no new opcode).** Disassembly of the compiled
   differential (`pawndisasm`) shows the walk uses only existing AMX
-  mnemonics — `load.s.pri`, `load.i`, `lidx`, `idxaddr`, `inc`,
+  mnemonics: `load.s.pri`, `load.i`, `lidx`, `idxaddr`, `inc`,
   `jsgeq`/`jsleq`/`jsless`/`jzer`/`jump`, `sysreq.c` for the natives, etc.
   No `foreach`- or `iter`-specific opcode appears; `Iter_*` are ordinary
   `sysreq.c` native calls. Unmodified hosts run the output.
 
 - **Differential check** (`experiments/002-foreach/differential.pwn`)
   drives the native `foreach`/`Iter_*` set and a hand-rolled compact set
-  (probe logic) over the SAME sequence — add 20, 7, 30, 7 (dup), 3;
-  remove 20; add 15; remove 999 (absent) — and compares the emitted value
+  (probe logic) over the SAME sequence (add 20, 7, 30, 7 (dup), 3;
+  remove 20; add 15; remove 999 (absent)) and compares the emitted value
   sequences. Observed output under `pawnruns`:
 
   ```
@@ -87,7 +86,7 @@ The `<foreach>` header (`compiler/include/foreach.inc`) exposes the five
 
   Both sets emit the identical ascending, de-duplicated sequence
   `3 7 15 30` (7 de-duplicated, 20 removed, 999 no-op), and both report
-  count 4 — semantic equivalence confirmed. (`console` printf emits a
+  count 4. Semantic equivalence confirmed. (`console` printf emits a
   trailing newline per call, so the raw run shows one value per line;
   the values and order are as above.)
 
@@ -121,21 +120,21 @@ Known limitations (accepted, documented honestly):
 - **Count is snapshotted at loop entry** (standard `foreach` semantics):
   adds/removes during the loop are not re-read. `foreach_remove_during`
   pins the remove+break behavior; `foreach_remove_nobreak` pins the
-  ACTUAL remove-without-break behavior — a mid-walk `setremove` shifts
+  ACTUAL remove-without-break behavior: a mid-walk `setremove` shifts
   the tail left, so one value is skipped and another emitted twice.
   Mutating the set mid-walk without breaking is unsupported and now
   documented by that test.
 - **Not a YSI drop-in.** The compact sorted-run layout is deliberately
   not YSI's circular linked-list, so existing YSI iterator code is not
-  binary-compatible — semantic replacement, not layout replacement.
+  binary-compatible: semantic replacement, not layout replacement.
 - **Deferred (YAGNI, spec §6):** `Iter_Free`, multi-dimensional
   iterators, `Iter_Random*`, user-defined `iterfunc` filter functions.
 
 ## Extension: multi-set via any array-reference operand (2026-09-18)
 
 `foreach` now accepts ANY expression that resolves to an array reference,
-not just a bare array symbol. This gives **multi-set iteration for free**
-over 2D-array rows — no new natives, no YSI-style `Iterator:name<slots,size>`
+not just a bare array symbol. This gives multi-set iteration for free
+over 2D-array rows: no new natives, no YSI-style `Iterator:name<slots,size>`
 machinery:
 
 ```pawn
@@ -148,7 +147,7 @@ foreach (new j : sets[k]) { ... }   // computed index, evaluated once at entry
 ```
 
 - The `Iter_*` natives already operate on a row `sets[k]` (passed by
-  reference) — verified before any compiler change. Only the `foreach`
+  reference), verified before any compiler change. Only the `foreach`
   parser+codegen needed extending.
 - The operand address is evaluated **once** before the loop and cached in
   a hidden loop-scoped cell; the count read and each value read reload from
@@ -156,7 +155,7 @@ foreach (new j : sets[k]) { ... }   // computed index, evaluated once at entry
 - A scalar operand (e.g. `sets[0][1]`, a single cell) is rejected with
   error 255 (`foreach_reject_scalar`).
 - Heap-allocating operands work: `foreach (i : GetSet())` where `GetSet`
-  returns an array — the operand's heap temporary is freed at loop exit
+  returns an array, the operand's heap temporary is freed at loop exit
   (also on `break`), verified net-zero over 100 passes
   (`foreach_heap_operand`).
 - Cheaper and broader than YSI's multi-dimensional iterators: real Pawn 2D
@@ -167,7 +166,7 @@ foreach (new j : sets[k]) { ... }   // computed index, evaluated once at entry
 `foreach` body whose operand allocated heap skips the loop-exit `modheap`
 and leaks that temporary on that path only (OP_RETN does not reset HEA).
 Strictly better than pre-fix (which leaked on all paths); the correct fix
-hooks the function's return-path heap cleanup — a broader change deferred
+hooks the function's return-path heap cleanup, a broader change deferred
 as a follow-up.
 
 ## What is next
@@ -179,7 +178,7 @@ as a follow-up.
 - **Tests for the local `iARRAY` and by-ref `iREFARRAY` foreach paths**
   (the multi-set extension now exercises subscripted `iREFARRAY` rows,
   partially closing this).
-- **`continue` is now tested** (`foreach_continue` — over {1,2,3},
+- **`continue` is now tested** (`foreach_continue`: over {1,2,3},
   `continue` on 2 prints 1 then 3), and **remove-without-break behavior is
   now pinned** by `foreach_remove_nobreak`, closing the two spec §5
   coverage gaps a fresh review flagged.
@@ -196,24 +195,24 @@ and YSI-compile patches: `experiments/002-foreach/bench/README.md`.
 | walk (80M iterations, -d0, min of 3) | time |
 |---|---|
 | YSI `foreach` (index-set linked list) | 404 ms |
-| native `foreach` — indexed `lidx` (initial) | 679 ms |
-| native `foreach` — pointer walk (optimized) | **518 ms** |
+| native `foreach`, indexed `lidx` (initial) | 679 ms |
+| native `foreach`, pointer walk (optimized) | **518 ms** |
 
 - Optimization `perf: foreach walks a pointer` rewrote the walk to `load.i` +
   `jsgeq` (no `lidx`, no per-iteration base reload): **679 → 518 ms, ~1.24×**.
 - Native is now ~1.28× slower than YSI on the walk (was ~1.68×). Residual gap
   is inherent: our **value-set** needs `value = *p` per step, while YSI's
-  **index-set** has value==position (no fetch). Where native should win —
-  `setadd`/`sethas` as compiled C vs YSI's interpreted bytecode — is unmeasured
+  **index-set** has value==position (no fetch). Where native should win
+  (`setadd`/`sethas` as compiled C vs YSI's interpreted bytecode) is unmeasured
   on the server (the `set*` natives aren't registered there; would need an
   open.mp component to benchmark fairly).
-- **AMX size:** native gamemode 940 B vs YSI 69.4 KB (~74×) — YSI's figure is
+- **AMX size:** native gamemode 940 B vs YSI 69.4 KB (~74×). YSI's figure is
   its whole framework, which you must include to use its `foreach`.
 
 ## Keyword renamed: `foreach` → `set_foreach` (2026-09-19)
 
 The native loop keyword is now **`set_foreach`**, not `foreach`. Reason:
-`foreach` collided with YSI's `foreach` macro — our compiler reserved it as a
+`foreach` collided with YSI's `foreach` macro: our compiler reserved it as a
 keyword, so YSI could not compile with our `pawncc` (`error 020: invalid symbol
 name "foreach"`). Renaming frees `foreach` for YSI, so **both coexist in one
 script / one compiler**: `set_foreach (new i : data)` for the native compact set

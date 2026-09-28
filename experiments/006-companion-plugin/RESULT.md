@@ -1,24 +1,24 @@
-# Experiment 006: Companion Plugin — the runtime pillar
+# Experiment 006: Companion Plugin, the runtime pillar
 
 **Date:** 2026-09-22
 **Server:** open.mp `omp-server` (real runtime)
-**Closes:** the one gap exp 005 found — runtime hook add/remove/replace
+**Closes:** the one gap exp 005 found: runtime hook add/remove/replace
 (YSI `DEFINE_HOOK_REPLACEMENT`), which a compiler cannot own.
 **Plan:** two phases (user choice "A lalu B"). **Both phases DONE & proven live.**
 
 ## Two-pillar recap
 
 - **Compiler pillar** (`hook`, exp 004): chain fixed at COMPILE time. Cheap,
-  deterministic, no runtime cost — but immutable.
-- **Companion pillar** (this plugin): the RUNTIME-only capability — mutate the
+  deterministic, no runtime cost, but immutable.
+- **Companion pillar** (this plugin): the RUNTIME-only capability, mutate the
   chain while the server runs. Together they cover everything y_hooks does.
 
-## Phase A — runtime named-event registry (shipped)
+## Phase A: runtime named-event registry (shipped)
 
 `dynhook.cpp`, an open.mp legacy plugin (built `-m32 -shared`, deployed to
 `openmp/Server/plugins/dynhook.so`). Chains live in a C++
 `map<string, vector<string>>`; **no bytecode scanning or rewriting** (YSI's
-fragile technique) — dispatch is plain `amx_FindPublic` + `amx_Exec`.
+fragile technique): dispatch is plain `amx_FindPublic` + `amx_Exec`.
 
 Natives (`compiler/include/dynhook.inc`):
 
@@ -56,7 +56,7 @@ Loading plugin: dynhook
 [DONE] dyn
 ```
 
-Add, remove, and replace all take effect between calls — the exact
+Add, remove, and replace all take effect between calls: the exact
 `DEFINE_HOOK_REPLACEMENT` capability, with none of YSI's runtime bytecode
 rewriting. Better than YSI here: deterministic, JIT-safe, ~zero framework
 weight.
@@ -76,10 +76,10 @@ yourself. It is complete for **custom named events** and runtime-managed chains.
 It does NOT yet transparently intercept a BUILT-IN callback (e.g. make a runtime
 handler fire automatically on the real `OnPlayerConnect`). That is Phase B.
 
-## Phase B — transparent built-in-callback interception (shipped, portable)
+## Phase B: transparent built-in-callback interception (shipped, portable)
 
-Make runtime chains fire **automatically** on real callbacks — matching
-`DEFINE_HOOK_REPLACEMENT` — without the script wiring `dynhook_call` anywhere.
+Make runtime chains fire **automatically** on real callbacks, matching
+`DEFINE_HOOK_REPLACEMENT`, without the script wiring `dynhook_call` anywhere.
 Per the user's choice this is done the **portable** way (works on SA-MP
 `samp03svr` *and* open.mp), NOT as an open.mp-only SDK component:
 
@@ -93,8 +93,8 @@ Per the user's choice this is done the **portable** way (works on SA-MP
   the plugin builds a per-AMX public-index → name table (`amx_NumPublics` +
   `amx_GetPublic`), so `Exec_hook` can map an incoming call index back to a name.
 - On a marked call: capture the args (`paramcount` cells at `STK`), then run the
-  runtime chain as a **PRE-hook** — handlers in registration order, BEFORE the
-  original — honouring the same chain control as the compiler `hook`
+  runtime chain as a **PRE-hook**, handlers in registration order, BEFORE the
+  original, honouring the same chain control as the compiler `hook`
   (`HOOK_CONTINUE` 1/0 → next handler; `HOOK_STOP` -1 → cancel, callback returns
   0; `HOOK_STOP_1` -2 → cancel, returns 1). If no handler stops, the original
   body runs last with its args intact. All internal dispatch uses the subhook
@@ -120,7 +120,7 @@ Loading plugin: dynhook
 ```
 
 `OnThing`'s body never calls `dynhook_call`, yet handlers registered at runtime
-fire when it runs, and `dynhook_remove` takes effect between calls — full
+fire when it runs, and `dynhook_remove` takes effect between calls: full
 transparent interception, portable across both hosts, no bytecode rewriting.
 
 ### Pre-hook + cancel/replace (`dyntest_c.pwn`)
@@ -140,7 +140,7 @@ Handlers run before the original and can cancel it via chain control:
 [DONE] dynC
 ```
 
-`HOOK_STOP` cancels the original and sets the callback's return value — the
+`HOOK_STOP` cancels the original and sets the callback's return value: the
 "replace" half of `DEFINE_HOOK_REPLACEMENT`, at runtime, verified live with no
 VM corruption (the stop path does the amx_Exec stack cleanup by hand).
 

@@ -1,10 +1,10 @@
 # Native port of samp-pp-dialogs (await a dialog, no plugin)
 
 **Question:** can [Hreesang/samp-pp-dialogs](https://github.com/Hreesang/samp-pp-dialogs)
-— a PawnPlus library that makes `ShowPlayerDialog` awaitable — be ported to pawn-x
+(a PawnPlus library that makes `ShowPlayerDialog` awaitable) be ported to pawn-x
 native async, with no PawnPlus and no plugin?
 
-**Answer: yes, and it's a natural fit.** A dialog is the textbook callback-await:
+**Answer:** yes, and it's a natural fit. A dialog is the textbook callback-await:
 show it, park the coroutine, resume from `OnDialogResponse`. That's the exact shape
 `async_omp.inc` already uses for timers, so the port is a thin adapter.
 
@@ -24,8 +24,8 @@ buffer read via `Dialog_Listitem()` / `Dialog_Input()`. Same ergonomics, one ext
 accessor call.
 
 ## Files
-- `../../../compiler/include/dialog_async.inc` — the adapter (built on `async_omp.inc`).
-- `dialog_demo.pwn` — a single-dialog flow (player 0) and a chained two-step login
+- `../../../compiler/include/dialog_async.inc`, the adapter (built on `async_omp.inc`).
+- `dialog_demo.pwn`, a single-dialog flow (player 0) and a chained two-step login
   flow (player 1). Since no game client is connected, the player's answers are
   simulated with real open.mp timers that call `Dialog_Resolve`.
 
@@ -39,8 +39,8 @@ accessor call.
 ```
 
 The login line is the payoff: two sequential dialogs read as straight-line code,
-and the first dialog's result (`name`) is still in scope after the second `await`
-— the coroutine's lifted locals survive both suspends. No nested callbacks, no
+and the first dialog's result (`name`) is still in scope after the second `await`:
+the coroutine's lifted locals survive both suspends. No nested callbacks, no
 plugin.
 
 ## Caveats / production notes

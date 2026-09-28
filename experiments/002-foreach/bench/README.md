@@ -1,4 +1,4 @@
-# foreach benchmark — native vs YSI (real open.mp server)
+# foreach benchmark: native vs YSI (real open.mp server)
 
 A like-for-like iteration benchmark of pawn-x native `foreach` against YSI
 `y_iterate`, both run on the **real omp-server** (v1.5.8.3079), timed with
@@ -9,23 +9,23 @@ A like-for-like iteration benchmark of pawn-x native `foreach` against YSI
 Sum a 400-element set, 200,000 times = **80,000,000 iterations**. Both sides
 compute the identical accumulator, confirming they do the same work.
 
-- `bench_native.pwn` — a global array used as a compact set (`data[0]`=count,
+- `bench_native.pwn`: a global array used as a compact set (`data[0]`=count,
   `data[1..count]`=values), walked by the native `foreach` keyword. The set is
   hand-filled (values 0..399) so the walk needs no `set*` natives (those aren't
   registered on the stock server; the walk itself is pure AMX opcodes).
-- `bench_ysi.pwn` — a real `Iterator:gset<400>`, `Iter_Add`, and YSI `foreach`.
+- `bench_ysi.pwn`: a real `Iterator:gset<400>`, `Iter_Add`, and YSI `foreach`.
 
 ## Toolchains
 
 Two compilers are needed because our modified `pawncc` reserves `foreach` as a
 keyword, which collides with YSI's `foreach` macro:
 
-- **Native side** — our modified `build/pawncc` (has the `foreach` keyword):
+- **Native side**: our modified `build/pawncc` (has the `foreach` keyword):
   ```
   build/pawncc -d0 -i openmp/Server/qawno/include \
     openmp/Server/gamemodes/bench_native.pwn -o .../bench_native
   ```
-- **YSI side** — a pristine stock `pawncc` built from the initial vendored
+- **YSI side**: a pristine stock `pawncc` built from the initial vendored
   commit (no pawn-x features, `sNAMEMAX`=31, which YSI requires):
   ```
   git worktree add /tmp/pawn-stock 461814d
@@ -40,7 +40,7 @@ keyword, which collides with YSI's `foreach` macro:
     openmp/Server/gamemodes/bench_ysi.pwn -o .../bench_ysi
   ```
   Flags: `-Z+` (SA-MP compat: backslash includes), `-d0` (no debug `break`
-  opcodes — required for a fair timing; a debug build inflates both sides
+  opcodes, required for a fair timing; a debug build inflates both sides
   unevenly). `#define AMX_OLD_CALL` and the `FOREACH_NO_*` defines are in the
   `.pwn`.
 
@@ -49,9 +49,9 @@ keyword, which collides with YSI's `foreach` macro:
 
   **YSI patches required to compile against current open.mp stdlib** (this
   YSI 5 predates them; both are peripheral to the iterator being measured):
-  - `YSI_Core/y_utils.inc` — `stock ftouch` guarded out (`#if 0`); open.mp
+  - `YSI_Core/y_utils.inc`: `stock ftouch` guarded out (`#if 0`); open.mp
     stdlib now ships a native `ftouch` (collision, error 021).
-  - `YSI_Data/y_foreach/iterators.inc` — the built-in custom-iterator
+  - `YSI_Data/y_foreach/iterators.inc`: the built-in custom-iterator
     generators (`Range`/`Powers`/`Fib`/`Random`/`Null`/`NonNull`/`Until`/
     `Filter`) wrapped in `#if 0`; they mis-parse under this toolchain
     (`iterfunc ... [cellmin]` → error 009) and are unused by the benchmark.
@@ -71,12 +71,12 @@ Set `config.json` `pawn.main_scripts` to `["bench_native 1"]` (or
 | walk (80M iterations) | time |
 |---|---|
 | YSI `foreach` (index-set linked list) | **404 ms** |
-| native `foreach` — before optimization (indexed `lidx`) | 679 ms |
-| native `foreach` — after pointer-walk optimization | **518 ms** |
+| native `foreach`, before optimization (indexed `lidx`) | 679 ms |
+| native `foreach`, after pointer-walk optimization | **518 ms** |
 
 Optimization (`perf: foreach walks a pointer`): the walk was rewritten from an
 indexed load (`lidx` = index*cell+load, plus base/index reloads each iteration)
-to a **pointer walk** — `p` runs from `&array[1]` to `&array[count+1]`, and each
+to a **pointer walk**: `p` runs from `&array[1]` to `&array[count+1]`, and each
 iteration is `load.s.pri p / load.s.alt pend / jsgeq exit / load.i / stor`, then
 `p += cell / jump`. No `lidx`, no base reload, and `jsgeq` fuses compare+branch
 while leaving `p` in PRI for the immediate `load.i`. Result: **679 → 518 ms
@@ -87,7 +87,7 @@ while leaving `p` in PRI for the immediate `load.i`. Result: **679 → 518 ms
 Native `foreach` is now **~1.28× slower than YSI** on this walk (518 vs 404 ms),
 down from ~1.68×. The residual gap has two causes:
 
-1. **Architectural (inherent):** our compact set is a **value-set** — each step
+1. **Architectural (inherent):** our compact set is a **value-set**: each step
    needs `value = *p` (one indirection). YSI is an **index-set** where the value
    *is* the position, so its walk (`cur = next[cur]`) has no separate value
    fetch. This is the flip side of the value-set design (cheap memory for sparse
@@ -96,9 +96,9 @@ down from ~1.68×. The residual gap has two causes:
 2. **Runtime constraint:** the loop body clobbers PRI/ALT, so `p`/`pend` must
    round-trip through stack cells each iteration (true for YSI too, but YSI does
    fewer such round-trips per step). Closing this further needs register-resident
-   walk state or a dedicated iteration opcode — out of scope here.
+   walk state or a dedicated iteration opcode, out of scope here.
 
-Where native is expected to win (unmeasured on the server — the `set*` natives
+Where native is expected to win (unmeasured on the server, the `set*` natives
 aren't registered there): `setadd`/`sethas` run as compiled C, versus YSI's
 `Iter_Add`/membership in interpreted Pawn bytecode. Measuring that fairly on the
 server would need shipping `set*` as an open.mp component/legacy plugin.
@@ -141,19 +141,19 @@ natives; `bench_ysi_ops.pwn` = stock pawncc + YSI, same flags/patches as above):
 
 | op (server) | native (C plugin) | YSI y_iterate |
 |---|---|---|
-| add — 1.6M inserts | **33 ms** | 2415 ms |
-| has — 4M queries | **86 ms** | 93 ms |
+| add: 1.6M inserts | **33 ms** | 2415 ms |
+| has: 4M queries | **86 ms** | 93 ms |
 
 ### Honest conclusion
 
-- **add**: native is ~73× faster (33 vs 2415 ms) — but read this with the
+- **add**: native is ~73× faster (33 vs 2415 ms), but read this with the
   workload in mind. Inserting `0..N-1` in ascending order is the **best case for
   the compact sorted set**: every `setadd` binary-searches to the end and
   appends with zero tail-shift (O(log n), no memmove). YSI's index-set keeps a
   sorted linked list, and ascending inserts are not similarly free for it. The
   C-vs-bytecode gap is real and large, but this particular ordering flatters the
   compact set; a randomized insertion order (which forces tail-shifts on the
-  native side) would narrow it. The direction (native wins add) is robust; the
+  native side) would narrow it. The direction (native wins add) holds; the
   73× magnitude is workload-specific.
 - **has**: essentially a **tie** (86 vs 93 ms). This is the surprise. Native
   `sethas` is compiled C but O(log n) binary search *and* pays the AMX
@@ -161,12 +161,12 @@ natives; `bench_ysi_ops.pwn` = stock pawncc + YSI, same flags/patches as above):
   (~21 ns/call). YSI `Iter_Contains` on an index-set is O(1) (the value *is* the
   slot) and inlines as bytecode with no call boundary. The C speed advantage and
   the native-call overhead roughly cancel, so "compiled C beats interpreted
-  Pawn" does **not** hold for membership here — the data model and the call
+  Pawn" does **not** hold for membership here: the data model and the call
   boundary matter more than C-vs-bytecode.
 
 Net: native wins the mutation-heavy `add` decisively (with the ordering caveat),
 and membership is a wash. Combined with the iteration result above (native walk
-~1.28× slower than YSI), neither side dominates across the board — each data
+~1.28× slower than YSI), neither side dominates across the board: each data
 model wins the operation that suits its shape.
 
 ### Randomized insertion order
@@ -175,14 +175,14 @@ The ascending benchmark above is the *best* case for the native compact sorted
 set and the *worst* case for YSI, so the 73× add gap flatters native twice over.
 To test the "add" win honestly, `bench_native_ops_rand.pwn` /
 `bench_ysi_ops_rand.pwn` replace the ascending insert with a scrambled
-permutation — `(i * 137) % 400` (137 is coprime to 400, so it yields the distinct
+permutation: `(i * 137) % 400` (137 is coprime to 400, so it yields the distinct
 values `0..399` in random-ish order). Same deterministic sequence on both sides,
 everything else identical (`ADDR=4000`, `N=400` → 1.6M inserts). This forces the
 native `setadd` to do real tail-shifts (`memmove`) instead of always appending,
 and makes YSI's `Iter_Add` land at varied list positions instead of always the
 tail.
 
-| add — 1.6M inserts | native (C plugin) | YSI y_iterate | native/YSI |
+| add: 1.6M inserts | native (C plugin) | YSI y_iterate | native/YSI |
 |---|---|---|---|
 | ascending `0..N-1` | **33 ms** | 2415 ms | 73× faster |
 | randomized `(i*137)%N` | **213 ms** | 1389 ms | ~6.5× faster |
@@ -199,11 +199,11 @@ Randomization moves *both* sides, in opposite directions:
   Random values land nearer the middle on average, roughly halving the walk.
 
 So the original 73× was inflated from both ends. On a fair, order-neutral
-workload native still wins add clearly (~6.5×) — compiled C tail-shifts beat an
-interpreted linked-list walk — but the magnitude is an order of magnitude smaller
+workload native still wins add clearly (~6.5×): compiled C tail-shifts beat an
+interpreted linked-list walk, but the magnitude is an order of magnitude smaller
 than the ascending best case suggested. The *direction* (native wins add) holds;
 the headline multiple does not. `has` is unchanged by ordering (native 92 ms vs
-YSI 97 ms, still a tie), as expected — membership doesn't depend on insert order.
+YSI 97 ms, still a tie), as expected: membership doesn't depend on insert order.
 
 ### Walk codegen squeeze (elide per-iteration `load.s.pri p`)
 
@@ -211,16 +211,16 @@ YSI 97 ms, still a tie), as expected — membership doesn't depend on insert ord
 the increment). Since the increment ends with `stor.s.pri p` (which leaves `p`
 in PRI) and every entry to the condition label comes from either the increment
 or the initialiser (also ending `stor.s.pri p`), the condition's `load.s.pri p`
-is redundant and was elided — 12 → 11 opcodes per iteration (disasm-confirmed).
+is redundant and was elided: 12 → 11 opcodes per iteration (disasm-confirmed).
 
 | walk (80M, -d0, min of 3) | time |
 |---|---|
 | YSI `foreach` | 404 ms |
-| native — pointer walk | 518 ms |
-| native — pointer walk + p-load elided | **506 ms** |
+| native, pointer walk | 518 ms |
+| native, pointer walk + p-load elided | **506 ms** |
 
 Honest read: the win is ~2% (518→506), within run-to-run noise. The elided load
-is real but the residual gap to YSI is **not** codegen waste — it is architectural
+is real but the residual gap to YSI is **not** codegen waste: it is architectural
 (value-set needs `load.i` per step; YSI's index-set fuses value+advance in one
 `lidx`) and interpreter-dispatch-bound (body clobbers PRI/ALT, forcing `p`/`pend`
 stack round-trips). Closing it further needs a dedicated iteration opcode (loses

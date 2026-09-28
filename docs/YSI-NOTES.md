@@ -3,7 +3,7 @@
 Alex "Y-Less" Cole (YSI's author) reviewed pawn-x in issue #1. This file tracks
 each note: what was **fixed**, and what is a **deliberate difference** (with the
 upgrade path he asked for). pawn-x's north star is a *native, cleaner* take on
-YSI's script layer, not a byte-for-byte drop-in — so some differences are on
+YSI's script layer, not a byte-for-byte drop-in, so some differences are on
 purpose, and this documents them so migration is predictable.
 
 ## Fixed
@@ -12,10 +12,10 @@ purpose, and this documents them so migration is predictable.
 |---|---|---|
 | #1 `foreach` remove-mid-loop skipped/duplicated (`1 2 4 5 5`) | position walk over a compacting array | **value-based walk** (`setnext`/`setprev`): removing the current or a future element mid-loop is safe (`1 2 3 4 5`). Live-validated on open.mp. |
 | #6 the user's own `public X` wasn't called when `X` was also hooked | dispatcher orphaned the body | the user `public` is **chained as the last link**, after every hook (`uHOOKORIG`). |
-| #4 (const) `setadd`/`setremove`/`setinit`/`setalloc` marked `const` | wrong — they mutate | `const` dropped; read-only `sethas`/`setlen`/`setget`/`setfree`/`setrandom` keep it. |
-| #13 side-note: empty state `<>` could crash (NULL deref, `assert` gone in release) | latent segfault | guarded — a malformed/empty state list is a clean error, never a crash. |
+| #4 (const) `setadd`/`setremove`/`setinit`/`setalloc` marked `const` | wrong, they mutate | `const` dropped; read-only `sethas`/`setlen`/`setget`/`setfree`/`setrandom` keep it. |
+| #13 side-note: empty state `<>` could crash (NULL deref, `assert` gone in release) | latent segfault | guarded: a malformed/empty state list is a clean error, never a crash. |
 | #7 no way to detect the compiler | only `#tryinclude` | **`__PawnX`** builtin constant (`#if defined __PawnX`), independent of includes. |
-| #2/#10 no migration shims | — | optional **`<ysi_compat>`**: `Iterator:name<N>` → `name[N+1]` (the count-slot sizing pitfall he flagged) + `Iter_Add`/`Iter_Remove`/… aliases. |
+| #2/#10 no migration shims | (none) | optional **`<ysi_compat>`**: `Iterator:name<N>` → `name[N+1]` (the count-slot sizing pitfall he flagged) + `Iter_Add`/`Iter_Remove`/… aliases. |
 | #13/#14 `STOP` naming | only `HOOK_STOP`/`ITER_STOP` | added `HOOK_BREAK`/`HOOK_BREAK_1`/`ITER_BREAK` mirroring pawn's `break` (STOP names kept). |
 | #5/#12 hook return combining (last-value silently dropped an earlier claim, the `/help` double-output) | last chain value wins | seed + operator from `hook default`: default 0 **OR**s the returns (1 if any hook claims), default 1 **AND**s them (YSI parity); `HOOK_STOP`/`_1` still claim-and-stop. Tests `hook_combine_or`/`hook_combine_and`, suite 269/2. |
 
@@ -51,7 +51,7 @@ the numbers when porting `hook Foo@N` → `hook:N Foo`.
 
 **Reserved keywords (#5/#8).** pawn-x reserves its construct keywords
 (`foreach`, `hook`, `task`, `ptask`, `async`, `await`, `yield`, `inline`,
-`iterfunc`) rather than using `__`-prefixed names — the clean syntax is the
+`iterfunc`) rather than using `__`-prefixed names, the clean syntax is the
 point of doing this in the compiler. The newer string-hash intrinsics
 (`hash`/`ihash`/`fnv1`/`fnv1a`) are **call-position soft** (identifiers except
 directly before `(`), which is the friendlier model; the older keywords are
@@ -63,7 +63,7 @@ future option if collisions prove common.
 
 **Error numbering (#11).** pawn-x's new diagnostics live at `253+` (treated as
 non-suppressible errors) because stock Pawn leaves no free contiguous *error*
-numbers — only `095`–`099` were open, and those are used for the `yield`
+numbers, only `095` to `099` were open, and those are used for the `yield`
 diagnostics. His point that `>= 253` blocks future *suppressible* warnings is
 noted as a known constraint; a dedicated high error range is a possible future
 refactor, deferred because renumbering would churn every error-number test and
@@ -72,11 +72,11 @@ the published error tables.
 ## Considered, deferred (design, not fixes)
 
 - **Decorators** (`@hook(2)`, `@timer(1000)`) as an alternative to the `:`/`[]`
-  syntaxes — a larger, orthogonal syntax system; noted, not adopted now.
-- **Full YSI coexistence** (his point that YSI keywords are disableable) — pawn-x
+  syntaxes, a larger, orthogonal syntax system; noted, not adopted now.
+- **Full YSI coexistence** (his point that YSI keywords are disableable), pawn-x
   is currently a standalone replacement by design; running both at once is out of
   scope for now.
-- **Postfix vs infix state syntax** (`hook Foo() <a:b>` vs `hook <a:b> Foo()`) —
+- **Postfix vs infix state syntax** (`hook Foo() <a:b>` vs `hook <a:b> Foo()`):
   the infix form is canonical; the postfix form is accepted where unambiguous.
 
 ## Thanks

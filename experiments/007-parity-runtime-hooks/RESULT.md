@@ -1,4 +1,4 @@
-# Experiment 007: Parity Comparison #2 — RUNTIME hook manipulation
+# Experiment 007: Parity Comparison #2: RUNTIME hook manipulation
 
 **Date:** 2026-09-22
 **Server:** open.mp `omp-server` (real runtime, both scripts run live)
@@ -8,19 +8,19 @@ one gap) and exp 006 (the companion plugin that closed it).
 compare to YSI on the *runtime* hook story?
 
 Two gamemodes, same scenario: a game event `OnEvent(a)` whose **handler set
-changes while the server is running** — enable admin logging, add metrics, then
+changes while the server is running**: enable admin logging, add metrics, then
 disable admin logging, all at runtime.
 
-- `compare2_native.pwn` — pawn-x pawncc + `dynhook` plugin. Uses
+- `compare2_native.pwn`: pawn-x pawncc + `dynhook` plugin. Uses
   `dynhook_intercept` + `dynhook_add`/`dynhook_remove` (Phase B transparent
   interception).
-- `compare2_ysi.pwn` — stock pawncc + YSI 5. Uses `hook OnEvent(a)` bodies.
+- `compare2_ysi.pwn`: stock pawncc + YSI 5. Uses `hook OnEvent(a)` bodies.
 
 ## Observable result: same handler SET fires per tick
 
 Both fire the **same handlers each tick** (the runtime chain is a PRE-hook, so
 native runs the added handlers just before `base`; YSI runs `base` first because
-it is the first compiled `hook` body — order differs, membership is identical):
+it is the first compiled `hook` body; order differs, membership is identical):
 
 | tick | handlers that fire |
 |---|---|
@@ -30,7 +30,7 @@ it is the first compiled `hook` body — order differs, membership is identical)
 | t3 | base + Metrics |
 
 So for the toggle case the two are behaviourally equal. **The difference is in
-what each had to do to get there — and what each *cannot* do.**
+what each had to do to get there, and what each *cannot* do.**
 
 ## How each achieves it (the real finding)
 
@@ -42,7 +42,7 @@ dynhook_add("OnEvent", "AdminLog");     // t1: handler joins the chain, live
 dynhook_add("OnEvent", "Metrics");      // t2
 dynhook_remove("OnEvent", "AdminLog");  // t3: handler actually leaves
 ```
-`dynhook_count("OnEvent")` goes 0 → 1 → 2 → 1 — the chain genuinely grows and
+`dynhook_count("OnEvent")` goes 0 → 1 → 2 → 1: the chain genuinely grows and
 shrinks.
 
 **YSI (fixed chain + flags).** YSI hook chains are built at COMPILE time (ALS).
@@ -52,17 +52,17 @@ them all in and gate each with a boolean:
 ```pawn
 hook OnEvent(a) { if (gAdminLog) printf(...); return 1; }  // always in the chain
 ...
-gAdminLog = true;   // not an add — just un-gating a hard-compiled body
+gAdminLog = true;   // not an add, just un-gating a hard-compiled body
 ```
 
 ## What native can do that YSI structurally cannot
 
 1. **Register a handler decided at runtime.** `dynhook_add("OnEvent", name)`
-   takes a public *name* — it can attach a handler chosen at runtime, e.g. one
+   takes a public *name*: it can attach a handler chosen at runtime, e.g. one
    living in a module/filterscript loaded after the gamemode compiled. YSI's
    chain is frozen at compile time; a handler that wasn't compiled as a `hook`
    body can never join.
-2. **Truly remove a handler** (not just gate it out) — the body stops being
+2. **Truly remove a handler** (not just gate it out): the body stops being
    called and the chain shrinks. YSI's gated body still runs every dispatch.
 3. **Change chain size at runtime.** Native: 0↔N. YSI: fixed at the compiled
    count forever.
@@ -81,7 +81,7 @@ Exp 005 listed "runtime add/remove/replace (`DEFINE_HOOK_REPLACEMENT`)" as
 YSI's edge. On inspection `DEFINE_HOOK_REPLACEMENT` is a compile/init-time
 **name-shortening** table (maps a long callback prefix to a short one), *not* a
 runtime handler API. YSI has **no** runtime handler add/remove. So this is a
-capability pawn-x's companion **adds**, that YSI never had — not a gap native was
+capability pawn-x's companion **adds**, that YSI never had: not a gap native was
 missing.
 
 ## Files

@@ -1,4 +1,4 @@
-# Native `task` / `ptask` — REAL open.mp host validation
+# Native `task` / `ptask`: REAL open.mp host validation
 
 **Date:** 2026-09-28  **Branch:** `fix/ptask-public` (fix on top of `feat/native-task` + `feat/ptask`)  **Server:** open.mp 1.5.8.3079, headless
 
@@ -8,7 +8,7 @@ actually fire on a **real open.mp server**? The in-harness tests use `pawnruns`,
 which has no SA-MP `SetTimer` / player natives, so registration+firing could only
 be validated live.
 
-## Answer: YES — both fire. And the host run caught a real bug the harness missed.
+## Answer: YES, both fire. And the host run caught a real bug the harness missed.
 
 ## Reproduce
 ```
@@ -59,7 +59,7 @@ timer never fired. `task` was unaffected (its `@yt_Name` body is created by
 
 Neither the `ptask_native` pcode-check (the dispatcher *code* was emitted, just
 not exported) nor the `ptask_dispatch` runtime test (it calls `__ptask_dispatch`
-directly, bypassing name resolution) could see this — only a live `SetTimer`
+directly, bypassing name resolution) could see this: only a live `SetTimer`
 resolving the name by the publics table exposed it.
 
 **Fix:** flag `@ptd_Name` `uREAD|uPUBLIC|uDEFINE|uPROTOTYPED` (mirroring
@@ -68,6 +68,6 @@ RED (pre-fix): `[ptask]` fires 0. GREEN (post-fix): fires 9.
 
 ## Note
 The `[Error] Invalid index parameter (bad entry point)` line at startup is a
-pre-existing open.mp quirk for a minimal gamemode with no `main()` — it appears
+pre-existing open.mp quirk for a minimal gamemode with no `main()`: it appears
 with a bare `hook OnGameModeInit()` and no timers at all, and is unrelated to
 `task`/`ptask`.

@@ -7,8 +7,8 @@ auto-wired on connect/disconnect/create/destroy; pawn-x ships none."
 
 ## What shipped: `Player` iterator (`compiler/include/players.inc`)
 
-A batteries-included connected-players set, kept in sync by hooking the callbacks
-— no macros, no bytecode scan, just the native pieces:
+A batteries-included connected-players set, kept in sync by hooking the callbacks,
+no macros, no bytecode scan, just the native pieces:
 
 ```pawn
 new Player[MAX_PLAYERS + 1];
@@ -47,14 +47,14 @@ Connects simulated via `CallLocalFunction` (headless server has no real players)
 YSI also ships `Iterator:Vehicle/Actor`, maintained by wrapping the **native**
 `CreateVehicle`/`DestroyVehicle`/`CreateActor`/... calls (YSI does this with ALS
 macro redefinition of the native). pawn-x deliberately does **not** hook native
-call sites (see the hook audit — it's a symmetric non-goal of the hook engine),
+call sites (see the hook audit, it's a symmetric non-goal of the hook engine),
 so an auto-maintained Vehicle iterator can't be built the same way. Two honest
 options, to decide with the user:
 
-1. **Tracked wrappers** — ship `veh_create(...)`/`veh_destroy(...)` that call the
+1. **Tracked wrappers**: ship `veh_create(...)`/`veh_destroy(...)` that call the
    native and `setadd`/`setremove` a `Vehicle` set. Clean, native, portable, but
    changes the user's call sites (they call the wrapper, not `CreateVehicle`).
-2. **Native-call interception in `dynhook`** — extend the companion to hook the
+2. **Native-call interception in `dynhook`**: extend the companion to hook the
    AMX native dispatch (`amx_Callback`/native table) so `CreateVehicle` is
    intercepted transparently. Bigger, and the only route to true drop-in vehicle
    tracking; still no bytecode scan.
@@ -62,7 +62,7 @@ options, to decide with the user:
 Players need neither (their lifecycle is callback-driven), which is why the
 Player iterator ships now and the others wait on that decision.
 
-## Decision: wrapper includes (shipped) — `<vehicles>`, `<actors>`
+## Decision: wrapper includes (shipped): `<vehicles>`, `<actors>`
 
 User chose the tracked-wrapper approach (not native interception). Shipped
 `compiler/include/vehicles.inc` and `actors.inc`: thin `stock` wrappers that
@@ -88,7 +88,7 @@ Vehicle_Destroy(v);
 `Actor_Create`/`Actor_Destroy` are the same pattern (compile-verified).
 
 **Documented limitation:** only entities created *through the wrapper* are
-tracked — a raw `CreateVehicle` or another script's vehicles are not in the set.
+tracked: a raw `CreateVehicle` or another script's vehicles are not in the set.
 True auto-tracking of every vehicle would need native-call interception in
 `dynhook` (deferred; the wrapper is the portable, no-surprises choice).
 

@@ -34,10 +34,10 @@ Updated 2026-09-15 after the fix round for `tools/run-tests.sh`
 paths and accepts an optional `-r <pawnruns>` argument, so both
 invocation forms below were run from the repo root with relative paths.
 
-**Without the runner** — `tools/run-tests.sh build`:
+**Without the runner**, `tools/run-tests.sh build`:
 **90 PASSED, 3 FAILED** out of 93.
 
-**With the runner** — `tools/run-tests.sh -r build/pawnruns build`:
+**With the runner**, `tools/run-tests.sh -r build/pawnruns build`:
 **91 PASSED, 2 FAILED** out of 93.
 
 | Test | Type | Without `-r` | With `-r` | Cause |

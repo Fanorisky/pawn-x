@@ -1,24 +1,24 @@
 # pawn-x
 
-**Native Pawn language features that replace YSI's script-side layer** — for the
+Native Pawn language features that replace YSI's script-side layer, for the
 [open.mp](https://github.com/openmultiplayer) / SA-MP Pawn compiler.
 
 YSI implements varargs, iterators, and hooks with fragile script-side machinery
 (macros, `#emit` assembly, and runtime bytecode scanning/rewriting). pawn-x moves
 those into the compiler and a small companion plugin, so you get the same
-abilities — **cheaper, deterministic, ~19× smaller output, and no bytecode
-surgery** — as a standalone replacement (not a co-resident of YSI).
+abilities (cheaper, deterministic, ~19× smaller output, and no bytecode
+surgery) as a standalone replacement (not a co-resident of YSI).
 
 Two pillars, split by *when the information exists*:
 
-- **Compiler** — anything known at compile time: `___` varargs, the `foreach`
+- **Compiler**, anything known at compile time: `___` varargs, the `foreach`
   keyword + compact-set natives, `iterfunc` generators, the `hook` keyword, and
   leaner `switch` codegen (a `case a..b:` range compiles to one bounds-check
   instead of one table record per value). Pure codegen, no new opcodes; the
   `.amx` runs on any AMX host.
-- **Companion plugin** (`dynhook`) — the runtime-only piece: add / remove /
+- **Companion plugin** (`dynhook`), the runtime-only piece: add / remove /
   replace hook handlers while the server runs, and transparently intercept
-  built-in callbacks. Inline-hooks `amx_Exec` via subhook — no open.mp SDK, so
+  built-in callbacks. Inline-hooks `amx_Exec` via subhook, no open.mp SDK, so
   it stays SA-MP compatible too.
 
 ## Features vs YSI
@@ -29,7 +29,7 @@ Two pillars, split by *when the information exists*:
 | `foreach` + `set*` natives (+ multi-dim) | `y_iterate` / `y_foreach` | exp 002/003/005 |
 | `iterfunc` generators | y_iterate custom iterators | exp 003 |
 | `yield` coroutine generators | `#define Iterator@N iteryield` + `yield` | tests `yield_*` |
-| `async`/`await` coroutines | `y_async` (*abandoned sketch — never shipped*) | tests `async_*` |
+| `async`/`await` coroutines | `y_async` (*abandoned sketch, never shipped*) | tests `async_*` |
 | `hook` keyword (+ `hook:N` priority) | `y_hooks` (compile-time) | exp 004/005 |
 | `hook native`/`function`/`stock` + `continue` (call-site, incl. variadic `...` targets) | `y_hooks` real fn/native hooking | tests `chook_*` |
 | `dynhook` runtime hooks | *(YSI has no runtime equivalent)* | exp 006/007 |
@@ -65,13 +65,13 @@ main()
 }
 ```
 
-Do **not** include YSI's `y_va` / `y_iterate` / `y_hooks` in the same script —
-pawn-x reserves `foreach` and `hook` as keywords and the includes error out if
-YSI is detected. Coming from YSI? See `docs/MIGRATION.md` for the full API mapping.
+Do not include YSI's `y_va` / `y_iterate` / `y_hooks` in the same script. pawn-x
+reserves `foreach` and `hook` as keywords and the includes error out if YSI is
+detected. Coming from YSI? See `docs/MIGRATION.md` for the full API mapping.
 
 ## Feature reference
 
-**Varargs (`___`)** — forward a variadic tail into any function/native:
+**Varargs (`___`)**. Forward a variadic tail into any function/native:
 ```pawn
 Log(const fmt[], ...)              { printf(fmt, ___); }        // forward all
 After(a, b, const fmt[], ...)      { printf(fmt, ___); }        // after fixed args
@@ -79,7 +79,7 @@ Build(dst[], size, const f[], ...) { format(dst, size, f, ___); }
 Fmt(const fmt[], ...)              { new s[96]; format(s, sizeof s, fmt, ___); return s; }
 ```
 
-**Iteration (`foreach` + compact-set natives)** — a plain array is a sorted set:
+**Iteration (`foreach` + compact-set natives)**. A plain array is a sorted set:
 ```pawn
 new s[64];
 setadd(s, 7); setremove(s, 3); sethas(s, 7); setlen(s);
@@ -90,20 +90,20 @@ new grid[MAX_VEH][CAP];                 // multi-dimensional = plain 2D array
 foreach (new p : grid[vid]) { }
 ```
 
-**Generators (`iterfunc`)** — lazy, zero-alloc; `<iterators>` ships Range/RangeStep/Powers/Fib:
+**Generators (`iterfunc`)**. Lazy, zero-alloc; `<iterators>` ships Range/RangeStep/Powers/Fib:
 ```pawn
 iterfunc stock Count(cur, lo, hi) { if (cur==ITER_STOP) return lo<hi?lo:ITER_STOP; return cur+1<hi?cur+1:ITER_STOP; }
 foreach (new i : Count(0, 10)) { }
 iterfunc stock Fib(&acc, cur, lim) { ... }   // leading &ref = persistent state (Fibonacci etc.)
 ```
 
-**Coroutine generators (`yield`)** — write the sequence straight-line; each `yield return` suspends and resumes on the next step (no `#define Iterator@N iteryield` needed, unlike YSI):
+**Coroutine generators (`yield`)**. Write the sequence straight-line; each `yield return` suspends and resumes on the next step (no `#define Iterator@N iteryield` needed, unlike YSI):
 ```pawn
 iterfunc Count(n) { for (new i = 0; i != n; ++i) yield return i; }   // scalar locals only
 foreach (new v : Count(3)) { }               // v = 0, 1, 2; `return;` ends the sequence
 ```
 
-**Native `async`/`await` (`#include <async>`)** — write sequential code over callback-style ops; the function suspends at each `await` and resumes when the op completes. Single-threaded (a coroutine transform, not parallelism), single-`.amx`. Scalar **and** array/string/multi-dim *locals* survive an `await` — they are lifted into the coroutine's own state block, natively, no plugin. YSI only ever *sketched* `y_async` — pawn-x is the first to actually implement it:
+**Native `async`/`await` (`#include <async>`)**. Write sequential code over callback-style ops; the function suspends at each `await` and resumes when the op completes. Single-threaded (a coroutine transform, not parallelism), single-`.amx`. Scalar and array/string/multi-dim *locals* survive an `await`, they are lifted into the coroutine's own state block, natively, no plugin. YSI only ever *sketched* `y_async`. pawn-x is the first to actually implement it:
 ```pawn
 #include <async>
 
@@ -121,9 +121,9 @@ main()
     Async_Resume(t, AddScore(7, 100));        // a pump/host completion resumes it
 }
 ```
-`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)` — a synthetic pump in tests, the shipped `async_omp.inc` timer/callback adapter on a live host. Combinators are native: `Async_All(n)`/`Async_Any(n)` + `await Async_Wait(g)` fan several operations into one awaiter (`task_all`/`task_any` parity), driven by the `Async_GateFeed` seam. Faults are native too: `Async_ResumeError`/`Async_GateFail` report failure, observed via `Async_Failed()`/`Async_Error()` after the await; `Async_Fail(err)` + `return` auto-raises up a composed `await asyncFn()` chain (`task_set_error` parity). A real host adapter ships: `async_omp.inc` gives `await Async_Ms(ms)` on open.mp `SetTimerEx` — validated on a live open.mp 1.5.8 server (real timers resume coroutines off the tick loop, arrays/scalars survive, combinators + faults work, arena returns to baseline; see `experiments/012-native-async/HOST-VALIDATION.md`). Supported across an `await`: scalar and array/string/multi-dim *locals*; **fixed-size array/string *parameters*** (copied into the coroutine block — `foo(buf[4])`); a *leaf* await in a `for`/`while`/`do` loop; **mid-expression** await, leaf or composed (`p + await F()`, `base + await Work()`); a **composed** `await asyncFn()` inside a loop; a leaf `await` as an argument to a **fixed-arity** call (`foo(await F(), p, q)`, any position); and **multiple awaits in one statement** (`await A() + await B()`). Multi-result delivery via `Async_ResumeArr`/`Async_InboxArr` (`await_arr` parity). **Task management** rounds out the PawnPlus parity: `Async_Keep`/`Async_Result`/`Async_Release` retain a completed task's return value for later reading (`task_keep`); `Async_Cancel` (cooperative, fault-notified via `Async_Cancelled()`) and `Async_Kill` (hard) tear a task down (`task_delete`); `Async_Bind`/`Async_Detach` fire a completion callback (`task_bind`); `Async_Timeout`/`Async_TimeoutGate` fault a task or a gate after a delay (`task_set_error_ms`); and an unobserved leaf fault now **auto-raises** to its awaiter instead of dropping silently. Still compile-rejected (error): **unsized**/multi-dim/`&`reference *params* (268), `await` inside a `foreach` (099), a leaf `await` inside a **variadic** call's argument list (099 — no safe spill bound; hoist to a statement), a **composed-then-leaf** pair in one expression (099 — reorder or split), and a suspend at arbitrary call-stack depth in a non-async helper. See `docs/MIGRATION.md` for the `y_async` mapping and the PawnPlus comparison.
+`await asyncFn(args)` composes (the inner `return` resumes the awaiter). Completion is driven by `Async_Resume(token, value)`: a synthetic pump in tests, the shipped `async_omp.inc` timer/callback adapter on a live host. Combinators are native: `Async_All(n)`/`Async_Any(n)` + `await Async_Wait(g)` fan several operations into one awaiter (`task_all`/`task_any` parity), driven by the `Async_GateFeed` seam. Faults are native too: `Async_ResumeError`/`Async_GateFail` report failure, observed via `Async_Failed()`/`Async_Error()` after the await; `Async_Fail(err)` + `return` auto-raises up a composed `await asyncFn()` chain (`task_set_error` parity). A real host adapter ships: `async_omp.inc` gives `await Async_Ms(ms)` on open.mp `SetTimerEx`, validated on a live open.mp 1.5.8 server (real timers resume coroutines off the tick loop, arrays/scalars survive, combinators + faults work, arena returns to baseline; see `experiments/012-native-async/HOST-VALIDATION.md`). Supported across an `await`: scalar and array/string/multi-dim *locals*; **fixed-size array/string *parameters*** (copied into the coroutine block, `foo(buf[4])`); a *leaf* await in a `for`/`while`/`do` loop; **mid-expression** await, leaf or composed (`p + await F()`, `base + await Work()`); a **composed** `await asyncFn()` inside a loop; a leaf `await` as an argument to a **fixed-arity** call (`foo(await F(), p, q)`, any position); and **multiple awaits in one statement** (`await A() + await B()`). Multi-result delivery via `Async_ResumeArr`/`Async_InboxArr` (`await_arr` parity). **Task management** rounds out the PawnPlus parity: `Async_Keep`/`Async_Result`/`Async_Release` retain a completed task's return value for later reading (`task_keep`); `Async_Cancel` (cooperative, fault-notified via `Async_Cancelled()`) and `Async_Kill` (hard) tear a task down (`task_delete`); `Async_Bind`/`Async_Detach` fire a completion callback (`task_bind`); `Async_Timeout`/`Async_TimeoutGate` fault a task or a gate after a delay (`task_set_error_ms`); and an unobserved leaf fault now **auto-raises** to its awaiter instead of dropping silently. Still compile-rejected (error): **unsized**/multi-dim/`&`reference *params* (268), `await` inside a `foreach` (099), a leaf `await` inside a **variadic** call's argument list (099, no safe spill bound; hoist to a statement), a **composed-then-leaf** pair in one expression (099, reorder or split), and a suspend at arbitrary call-stack depth in a non-async helper. See `docs/MIGRATION.md` for the `y_async` mapping and the PawnPlus comparison.
 
-**Native `inline` closures (`inline` / `using inline`)** — a function defined *inside* another function that closes over the enclosing locals (read **and** write), passed to a receiver as a `Callback:` value and called indirectly. pawn-x's native, plugin-free `y_inline`:
+**Native `inline` closures (`inline` / `using inline`)**. A function defined *inside* another function that closes over the enclosing locals (read and write), passed to a receiver as a `Callback:` value and called indirectly. pawn-x's native, plugin-free `y_inline`:
 ```pawn
 ForEach(const arr[], size, Callback:cb) { for (new i; i < size; i++) cb(arr[i]); }
 CountFives(const arr[], size) {
@@ -133,9 +133,9 @@ CountFives(const arr[], size) {
     return count;                                 // reflects the inline's writes
 }
 ```
-The closure captures via a **static link** (the enclosing frame), so mutations write straight back — no `Callback_Restore`. Scalars, arrays/strings, multiple independent closures, and inline return values are supported; `inline const` makes the captured locals read-only (compile error on write); `using public Name<sig>` passes a plain public as a `Callback:` too. This is the synchronous/visitor case `async` does not cover; deferred callbacks that outlive the frame use `async`/`await`. Capturing a by-`&`reference parameter is rejected (error 098). See tests `inline_*`.
+The closure captures via a **static link** (the enclosing frame), so mutations write straight back, no `Callback_Restore`. Scalars, arrays/strings, multiple independent closures, and inline return values are supported; `inline const` makes the captured locals read-only (compile error on write); `using public Name<sig>` passes a plain public as a `Callback:` too. This is the synchronous/visitor case `async` does not cover; deferred callbacks that outlive the frame use `async`/`await`. Capturing a by-`&`reference parameter is rejected (error 098). See tests `inline_*`.
 
-**Entity iterators** — ready-made connected-players / tracked-vehicle sets:
+**Entity iterators**. Ready-made connected-players / tracked-vehicle sets:
 ```pawn
 #include <players>                          // Player: auto-tracked via connect/disconnect hooks
 foreach (new id : Player) { }
@@ -144,14 +144,14 @@ new v = Vehicle_Create(model, x,y,z, a, c1,c2, respawn);
 foreach (new id : Vehicle) { }               // (<actors> is the same pattern)
 ```
 
-**Hooks (`hook`)** — many handlers per callback, source order, optional priority + default return:
+**Hooks (`hook`)**. Many handlers per callback, source order, optional priority + default return:
 ```pawn
 hook OnFoo(a)     { ...; return HOOK_CONTINUE; }   // 1 run next / 0 = HOOK_CONTINUE_0
 hook:100 OnFoo(a) { ...; return HOOK_STOP;     }   // higher priority first; -1 cancels, returns 0
 hook default OnPlayerCommandText = 0;              // fall-through default (like YSI HOOK_RET)
 ```
 
-**Call-site hooks (`hook native`/`function`/`stock` + `continue`)** — intercept every in-script call to a real native or pawn function/stock (single-`.amx`; fixed-arity or variadic `...` targets):
+**Call-site hooks (`hook native`/`function`/`stock` + `continue`)**. Intercept every in-script call to a real native or pawn function/stock (single-`.amx`; fixed-arity or variadic `...` targets):
 ```pawn
 hook function ComputeScore(p) { return continue(p) + 1; }  // continue = next hook, else the original
 hook native random(range)     { return continue(range) % 8; }
@@ -168,7 +168,7 @@ dynhook_add("OnPlayerDeath", "MyHandler");          // add / remove / replace at
 dynhook_call("MyCustomEvent", "is", id, "hi");      // or dispatch a custom event
 ```
 
-**Compact `switch` codegen** — stock Pawn expands a `case a..b:` range into one
+**Compact `switch` codegen**. Stock Pawn expands a `case a..b:` range into one
 `(value, address)` table record *per value*, so `case 0..9999:` alone becomes
 10 000 records (a ~31 KB `.amx`). pawn-x coalesces each range into a single
 inline bounds-check and only sends the leftover discrete values through the
@@ -186,11 +186,11 @@ switch (state)
     default:           Other();
 }
 ```
-Nothing changes in how you write `switch` — only the emitted code shrinks. See
+Nothing changes in how you write `switch`, only the emitted code shrinks. See
 `experiments/013-switch-codegen/RESULT.md` (measured + validated on a live
 open.mp 1.5.8 server).
 
-**Native string hashing (`hash()`)** — compile-time string hashing, the native
+**Native string hashing (`hash()`)**. Compile-time string hashing, the native
 replacement for YSI `y_stringhash`. `hash("literal")` folds to a compile-time
 constant (usable anywhere a constant is, above all in `switch`/`case`);
 `hash(expr)` on a runtime string lowers to a plugin-free djb2 `stock`. Both use
@@ -212,8 +212,8 @@ costs one pass; the fold itself needs no include. Full YSI parity: **`ihash()`**
 runtime stock, via `ispacked`). `hash` (and the other three) stays usable as an
 ordinary identifier everywhere except call position. See tests `stringhash_*`.
 
-**Timers — native `task` + `<timers>` wrappers** — the native `task` keyword is
-a repeating timer that **auto-registers at compile time** (no runtime
+**Timers: native `task` + `<timers>` wrappers**. The native `task` keyword is
+a repeating timer that auto-registers at compile time (no runtime
 public-table scan, the fragile core of YSI `y_timers`):
 ```pawn
 task Announce[60000]() { SendClientMessageToAll(-1, "still up"); }   // that's it
@@ -244,7 +244,7 @@ cmake --build build -j$(nproc)
 gcc -m32 -shared -fPIC -DLINUX -Icompiler/source/amx -Icompiler/source/linux \
   deps/iterset/iterset.c -o iterset.so
 
-# 3. dynhook plugin (runtime hooks) — needs subhook (upstream Zeex/subhook is
+# 3. dynhook plugin (runtime hooks): needs subhook (upstream Zeex/subhook is
 #    gone; clone the Dasharo/subhook or tianocore/edk2-subhook mirror to deps/subhook)
 gcc -m32 -fPIC -DSUBHOOK_STATIC -c deps/subhook/subhook.c -o /tmp/subhook.o
 g++ -m32 -shared -fPIC -DLINUX -DSUBHOOK_STATIC -Icompiler/source/amx \
@@ -272,4 +272,4 @@ See `docs/CODING_STANDARDS.md` before contributing.
 ## License
 
 Vendored compiler © ITB CompuPhase 1997-2006, community-modified (`compiler/license.txt`).
-subhook © Zeex (BSD). YSI is MPL 1.1 — see `CREDITS.md`.
+subhook © Zeex (BSD). YSI is MPL 1.1, see `CREDITS.md`.
