@@ -24,3 +24,7 @@ __pycache__/
 
 # Fetched external deps (amx_assembly, samp-stdlib) for YSI benchmark
 deps/
+
+# Local planning and working notes (not part of the shipped project)
+docs/superpowers/
+.superpowers/
