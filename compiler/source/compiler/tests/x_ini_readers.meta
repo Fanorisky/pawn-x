@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+score=42
+
+color=16746496
+
+flags=11
+
+admin=1
+
+name=Bob
+
+x_ini_readers.amx returns 0
+"""
+}

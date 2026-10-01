@@ -1,0 +1,26 @@
+{
+  'test_type': 'runtime',
+  'output': """
+heal=0
+
+kick=1
+
+heal2=0
+
+valid=1
+
+dis=1
+
+diskick=0
+
+hid=1
+
+poff=1
+
+name=heal
+
+unk=1
+
+x_commands_api.amx returns 0
+"""
+}

@@ -224,6 +224,118 @@ call's arguments, and a composed-then-leaf await pair in one expression (error
   `numargs()`/`getarg(n)`/`setarg(n)` use the user index (the hidden chain index
   is invisible). Cross-`.amx` call-site hooking is out of scope (like the
   callback `hook`).
-- **Other YSI libraries** (`y_commands`, `y_ini`, `y_inline`, `y_timers`,
-  `y_groups`, …) are out of scope, keep using them or an open.mp alternative;
-  they don't clash with pawn-x.
+- **YSI's app libraries** (`y_commands`, `y_ini`, `y_inline`, `y_timers`,
+  `y_groups`, ...) are being rebuilt on the native core, not kept alongside.
+  `y_inline` and `y_timers` already have native equivalents (`inline`,
+  `task`/`ptask`); the rest are ported as `x_`-prefixed wrapper libraries.
+  `x_commands` and `x_ini` are the first two. See the App layer section below.
+
+## App layer (`y_*` → `x_*`)
+
+Because pawn-x owns the core keywords, YSI cannot run alongside it, so the
+libraries that used to sit on top of YSI are rewritten on the native core.
+They keep an `x_` prefix mirroring YSI's `y_`, so porting is mostly a rename.
+Each is an explicit include; they are not pulled in by `<pawn-x>`.
+
+### Commands (`y_commands` → `x_commands`)
+
+`#include <x_commands>`. This is a drop-in: the handler syntax is the y_commands
+one, `YCMD:name(playerid, params[], help)`, and the ZCMD-style `CMD:` and
+`COMMAND:` (two params, no help) also work. In expression position `YCMD:name`
+resolves to the command id, so it feeds straight into x_groups.
+
+```pawn
+YCMD:heal(playerid, params[], help)
+{
+    if (help) return COMMAND_OK;
+    SetPlayerHealth(playerid, 100.0);
+    return COMMAND_OK;
+}
+```
+
+| y_commands | x_commands |
+| --- | --- |
+| `YCMD:name(playerid, params[], help)` / `CMD:` / `COMMAND:` | same names |
+| `YCMD:name` as an id (e.g. for groups) | same, resolves to `Command_GetID("name")` |
+| `e_COMMAND_ERRORS` (`COMMAND_OK`, `COMMAND_UNDEFINED`, ...) | same enum, same values |
+| `OnPlayerCommandReceived` / `OnPlayerCommandPerformed` | same callbacks, same tags |
+| `Command_GetID` / `Command_SetDisabled` / `Command_SetHidden` / `Command_SetPlayerDisabled` | same names, by command id |
+| `Command_AddAltNamed` / `Command_SetUnknownReturn` | same names |
+
+The dispatcher hooks `OnPlayerCommandText`, parses the command, resolves
+aliases, checks the per-command / per-player state, and, when `<x_groups>` is
+included before it, gates by `Group_PlayerAllowed(playerid, cmdid)` returning
+`COMMAND_DENIED`. Not carried over: the multi-script master and the `#emit`
+fast-call path, which are y_commands internals a single module does not need.
+
+### INI (`y_ini` → `x_ini`)
+
+`#include <x_ini>`. This is a drop-in: the declarative loader syntax is the
+same as y_ini. You write an `INI:file[tag](name[], value[])` callback and call
+`INI_Load("file")`, and each `key = value` line under `[tag]` reaches your
+callback, where the readers match a key and return.
+
+```pawn
+INI:users[data](name[], value[])
+{
+    INI_Int("score", gScore);
+    INI_Float("health", gHealth);
+    INI_String("name", gName);
+    return 1;
+}
+// load: INI_Load("users");
+```
+
+The reader macros are the y_ini ones: `INI_Int`, `INI_Float`, `INI_Hex`,
+`INI_Bin`, `INI_Bool`, `INI_String`. Writing uses the same buffered handle
+API, `INI_Open` returning an `INI:` handle down to `INI_Close`:
+
+| y_ini | x_ini |
+| --- | --- |
+| `INI:file[tag](name[], value[])` + `INI_Load` / `INI_ParseFile` | same names, same shape |
+| `INI_Int` / `INI_Float` / `INI_Hex` / `INI_Bin` / `INI_Bool` / `INI_String` | same names |
+| `INI_Open` / `INI_SetTag` / `INI_Close` / `INI_NO_FILE` | same names |
+| `INI_WriteString` / `WriteInt` / `WriteFloat` / `WriteBool` / `WriteHex` / `WriteBin` | same names |
+| `INI_RemoveEntry` / `INI_DeleteTag` | same names |
+
+What differs is underneath, not in the source: the writer maps onto open.mp's
+config natives (`writecfg` / `writecfgvalue` / `deletecfg`) instead of YSI's
+temp-file rewrite, so a write needs no plugin. The loader reads the file with
+the file natives and dispatches with `CallLocalFunction`. Not yet matched:
+tag inheritance (`[child] : parent`) and exact comment-preserving rewrites.
+
+### Groups (`y_groups` → `x_groups`)
+
+`#include <x_groups>`. This is a drop-in: same `Group:` tag, same
+`ALLOW`/`DENY`/`UNDEF` constants (tag `E_GROUP_SET`), same `GROUP_GLOBAL`. A
+group is a set of players; each group holds a tri-state permission over an
+"entity", any integer id the caller assigns. A command id is an entity, so
+`YCMD:name` passes straight into the command family. Everyone is implicitly in
+`GROUP_GLOBAL`, whose per-entity default is `ALLOW`. The model is plain Pawn,
+no plugin and no host native.
+
+```pawn
+new Group:gAdmins = Group_Create("admins");
+Group_SetPlayer(gAdmins, playerid, true);
+Group_SetCommand(gAdmins, YCMD:ban, ALLOW);
+// gate a command: if (!Group_PlayerAllowed(playerid, YCMD:ban)) return 0;
+```
+
+| y_groups | x_groups |
+| --- | --- |
+| `Group:` tag, `GROUP_GLOBAL`, `ALLOW`/`DENY`/`UNDEF` (`E_GROUP_SET`) | same names and tag |
+| `Group_Create` / `Group_Destroy` / `Group_IsValid` / `Group_GetID` | same names, `Group_Create` returns `Group:` |
+| `Group_SetPlayer` / `Group_GetPlayer` / `Group_GetCount` / `Group_SetName` | same names |
+| `Group_SetCommand` / `Group_GetCommand` / `Group_CommandAllowed` / `Group_CommandDenied` | same names |
+| `Group_SetGlobalCommand` / `Group_GlobalCommandAllowed` / `Group_SetGlobalCommandDefault` | same names |
+
+Resolution matches y_groups: a `DENY` in any of the player's groups (or the
+global group) blocks the entity outright, otherwise a single `ALLOW` permits
+it, and if nothing is set explicitly the global default decides
+(`Group_SetGlobalDefault`). `Group_PlayerAllowed(playerid, entity)` /
+`Group_PlayerDenied` run that resolution; `Group_GetName` fills a buffer
+(`Group_GetName(g, dest[], size)`) rather than returning a string inline. The
+library hooks `OnPlayerDisconnect` to clear a leaving player's membership
+(define `X_GROUPS_STANDALONE` to drop that hook where host callbacks do not
+exist). Not ported: the `Group_Set<Lib>...` metaprogramming that YSI stamps
+out per library, group hierarchy, gangs, colours, and balanced groups.

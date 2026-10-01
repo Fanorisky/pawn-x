@@ -1,0 +1,32 @@
+{
+  'test_type': 'runtime',
+  'output': """
+d1=1
+
+d2=0
+
+d3=1
+
+ca=1
+
+d4=0
+
+d5=1
+
+d6=1
+
+d7=0
+
+d8=1
+
+d9=0
+
+cnt=1
+
+id=2
+
+glob=1
+
+x_groups_perms.amx returns 0
+"""
+}
