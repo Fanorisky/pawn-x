@@ -1810,6 +1810,11 @@ int AMXAPI amx_PushString(AMX *amx, cell *amx_addr, cell **phys_addr, const char
   #define IABS(a)       ((a)>=0 ? (a) : (-a))
 #endif
 
+/* Most-negative cell. Dividing it by -1 overflows the signed range, which is
+ * undefined behaviour in C and raises SIGFPE on x86, so the sdiv opcodes guard
+ * against it explicitly (the wrapped two's-complement result is CELL_MIN). */
+#define CELL_MIN        ((cell)((ucell)1 << (8*sizeof(cell)-1)))
+
 /* The pseudo-instructions come from the code stream. Normally, these are just
  * accessed from memory. When the instructions must be fetched in some other
  * way, the definition below must be pre-defined.
@@ -2408,6 +2413,10 @@ static const void * const amx_opcodelist[] = {
   op_sdiv:
     if (alt==0)
       ABORT(amx,AMX_ERR_DIVIDE);
+    if (alt==-1 && pri==CELL_MIN) {   /* overflow: quotient wraps to CELL_MIN, remainder 0 */
+      alt=0;
+      NEXT(cip);
+    } /* if */
     /* use floored division and matching remainder */
     offs=alt;
     #if defined TRUNC_SDIV
@@ -2429,6 +2438,11 @@ static const void * const amx_opcodelist[] = {
   op_sdiv_alt:
     if (pri==0)
       ABORT(amx,AMX_ERR_DIVIDE);
+    if (pri==-1 && alt==CELL_MIN) {   /* overflow: quotient wraps to CELL_MIN, remainder 0 */
+      pri=alt;
+      alt=0;
+      NEXT(cip);
+    } /* if */
     /* use floored division and matching remainder */
     offs=pri;
     #if defined TRUNC_SDIV
@@ -2771,10 +2785,13 @@ static const void * const amx_opcodelist[] = {
     while(i<=num){
       /* /2*2 to truncate */
       offs=(i+num)/2;
-      val=*(cptr+offs*2+2)-pri;
-      if (val<0) {
+      /* compare the case value against PRI directly; a subtraction
+       * (case-pri) overflows when the two straddle more than the signed
+       * cell range (e.g. a 0x80000000 case label), breaking the search */
+      val=*(cptr+offs*2+2);
+      if (val<pri) {
         i=offs+1;
-      } else if (val>0) {
+      } else if (val>pri) {
         num=offs-1;
       } else {
         cip=JUMPABS(code,cptr+offs*2+3); /* case found */
@@ -3577,6 +3594,10 @@ int AMXAPI amx_Exec(AMX *amx, cell *retval, int index)
     case OP_SDIV:
       if (alt==0)
         ABORT(amx,AMX_ERR_DIVIDE);
+      if (alt==-1 && pri==CELL_MIN) {   /* overflow: quotient wraps to CELL_MIN, remainder 0 */
+        alt=0;
+        break;
+      } /* if */
       /* use floored division and matching remainder */
       offs=alt;
       #if defined TRUNC_SDIV
@@ -3598,6 +3619,11 @@ int AMXAPI amx_Exec(AMX *amx, cell *retval, int index)
     case OP_SDIV_ALT:
       if (pri==0)
         ABORT(amx,AMX_ERR_DIVIDE);
+      if (pri==-1 && alt==CELL_MIN) {   /* overflow: quotient wraps to CELL_MIN, remainder 0 */
+        pri=alt;
+        alt=0;
+        break;
+      } /* if */
       /* use floored division and matching remainder */
       offs=pri;
       #if defined TRUNC_SDIV
@@ -3938,10 +3964,12 @@ int AMXAPI amx_Exec(AMX *amx, cell *retval, int index)
       while(i<=num){
         /* /2*2 to truncate */
         offs=(i+num)/2;
-        val=*(cptr+offs*2+2)-pri;
-        if (val<0) {
+        /* compare against PRI directly; (case-pri) overflows when the two
+         * straddle more than the signed cell range (e.g. a 0x80000000 case) */
+        val=*(cptr+offs*2+2);
+        if (val<pri) {
           i=offs+1;
-        } else if (val>0) {
+        } else if (val>pri) {
           num=offs-1;
         } else {
           cip=JUMPABS(code,cptr+offs*2+3); /* case found */

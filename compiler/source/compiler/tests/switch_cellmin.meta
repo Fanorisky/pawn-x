@@ -1,0 +1,18 @@
+{
+  'test_type': 'runtime',
+  'output': """
+min=100
+
+neg=101
+
+zero=102
+
+pos=103
+
+max=104
+
+def=-1
+
+switch_cellmin.amx returns 0
+"""
+}

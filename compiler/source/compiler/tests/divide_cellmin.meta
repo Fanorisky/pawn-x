@@ -1,0 +1,16 @@
+{
+  'test_type': 'runtime',
+  'output': """
+half=-1073741824
+
+hmod=0
+
+neg=-2147483648
+
+nmod=0
+
+maxneg=-2147483647
+
+divide_cellmin.amx returns 0
+"""
+}
