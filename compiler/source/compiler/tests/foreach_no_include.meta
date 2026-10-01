@@ -1,0 +1,7 @@
+{
+  'test_type': 'output_check',
+  'errors': """
+foreach_no_include.pwn(8) : error 255: the "foreach" keyword needs #include <foreach> (it lowers to the set* natives)
+foreach_no_include.pwn(11) : error 255: the "foreach" keyword needs #include <foreach> (it lowers to the set* natives)
+"""
+}

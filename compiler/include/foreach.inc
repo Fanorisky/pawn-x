@@ -33,17 +33,114 @@
  * </library>
  */
 
+// The set* operations. By DEFAULT they are pure-Pawn stocks, so `foreach` and
+// the set need NO plugin and run on any AMX host. Define FOREACH_NATIVE_SET
+// before including to use the faster C natives instead (those need the set
+// runtime, e.g. iterset.so on open.mp). Layout: data[0] = count, data[1..count]
+// = sorted, distinct, non-negative values.
+#if defined FOREACH_NATIVE_SET
 native setinit(array[]);
 native setadd(array[], value);
 native setremove(array[], value);
 native sethas(const array[], value);
 native setlen(const array[]);
-native setfree(const array[]);     // smallest non-negative integer not in the set
-native setrandom(const array[]);   // a random member, or -1 if empty
-native setget(const array[], index);   // value at 0-based ascending position, or -1
-native setalloc(array[]);          // allocate + return the smallest free id
-native setnext(const array[], value);  // smallest member > value, or ITER_STOP if none (foreach uses this: removal-safe)
-native setprev(const array[], value);  // largest member < value, or ITER_STOP if none (Reverse uses this)
+native setfree(const array[]);
+native setrandom(const array[]);
+native setget(const array[], index);
+native setalloc(array[]);
+native setnext(const array[], value);
+native setprev(const array[], value);
+#else
+// lower_bound: smallest slot in [1..count] whose value is >= v, else count+1.
+static stock XSet_LB(const a[], v)
+{
+	new lo = 1, hi = a[0];
+	while (lo <= hi)
+	{
+		new mid = (lo + hi) >> 1;
+		if (a[mid] == v)
+			return mid;
+		if (a[mid] < v)
+			lo = mid + 1;
+		else
+			hi = mid - 1;
+	}
+	return lo;
+}
+stock setinit(array[])
+	array[0] = 0;
+stock setlen(const array[])
+	return array[0];
+stock sethas(const array[], value)
+{
+	new pos = XSet_LB(array, value);
+	return (pos <= array[0] && array[pos] == value) ? 1 : 0;
+}
+stock setget(const array[], index)
+	return (0 <= index < array[0]) ? array[1 + index] : -1;
+stock setadd(array[], value)
+{
+	if (value < 0)
+		return 0;                       // non-negative values only
+	new count = array[0];
+	new pos = XSet_LB(array, value);
+	if (pos <= count && array[pos] == value)
+		return 0;                       // already present
+	for (new i = count; i >= pos; --i)  // shift the tail up one slot
+		array[i + 1] = array[i];
+	array[pos] = value;
+	array[0] = count + 1;
+	return 1;
+}
+stock setremove(array[], value)
+{
+	new count = array[0];
+	new pos = XSet_LB(array, value);
+	if (pos > count || array[pos] != value)
+		return 0;                       // absent
+	for (new i = pos; i < count; ++i)   // shift the tail down one slot
+		array[i] = array[i + 1];
+	array[0] = count - 1;
+	return 1;
+}
+stock setfree(const array[])
+{
+	new count = array[0], expected = 0;
+	for (new i = 1; i <= count; ++i)
+	{
+		if (array[i] == expected)
+			++expected;
+		else if (array[i] > expected)
+			break;                      // first gap
+	}
+	return expected;
+}
+stock setalloc(array[])
+{
+	new id = setfree(array);
+	setadd(array, id);
+	return id;
+}
+stock setrandom(const array[])
+{
+	new count = array[0];
+	return count != 0 ? array[1 + random(count)] : -1;
+}
+stock setnext(const array[], value)
+{
+	new count = array[0];
+	new pos = XSet_LB(array, value);
+	if (pos <= count && array[pos] == value)
+		++pos;                          // skip the equal value: want strictly greater
+	return (pos <= count) ? array[pos] : cellmin;
+}
+stock setprev(const array[], value)
+{
+	new pos = XSet_LB(array, value) - 1;   // slot before the first >= value
+	return (pos >= 1) ? array[pos] : cellmin;
+}
+#endif
+
 
 // Capacity-aware queries. The set's capacity is its array size minus the count
 // slot; `size` is filled by the compiler from `sizeof` at the call site, so you

@@ -10240,7 +10240,7 @@ static int doforeach(void)
     symbol *n_len=findglb("setlen",sGLOBAL);
     symbol *n_get=findglb("setget",sGLOBAL);
     if (n_len==NULL || n_get==NULL) {
-      error(17,"setget");              /* need #include <foreach> */
+      error(255,"the \"foreach\" keyword needs #include <foreach> (it lowers to the set* natives)");
     } else {
       stgwrite("\tload.s.pri ");       /* PRI = base address */
       outval(baseaddr,TRUE);
@@ -10317,7 +10317,7 @@ static int doforeach(void)
       outval(lbl_cond,TRUE);
       code_idx+=opcodes(1)+opargs(1);
     } else {
-      error(17,reverse ? "setprev" : "setnext");  /* need a current <foreach> (a stale include with setget but not setnext/setprev would silently loop once) */
+      error(255,"the \"foreach\" keyword needs #include <foreach> (it lowers to the set* natives)");  /* setnext/setprev absent: stale or missing include */
     } /* if */
   }
   setlabel(wq[wqEXIT]);
