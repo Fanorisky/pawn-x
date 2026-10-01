@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+10
+
+kw_yield_off.amx returns 0
+"""
+}

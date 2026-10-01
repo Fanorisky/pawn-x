@@ -1181,6 +1181,8 @@ SC_VDECL int sc_curstates;    /* ID of the current state list */
 SC_VDECL int pc_optimize;     /* (peephole) optimization level */
 SC_VDECL int pc_memflags;     /* special flags for the stack/heap usage */
 SC_VDECL int pc_naked;        /* if true mark following function as naked */
+SC_VDECL int pc_kw_async;     /* native-async keywords (async/await) are reserved only when TRUE; opt-in via "#pragma pawnx_async", which <async> emits. Default FALSE so the words are ordinary identifiers (PawnPlus await/yield coexist). Reset per pass. */
+SC_VDECL int pc_kw_yield;     /* generator "yield" keyword reserved only when TRUE; opt-in via "#pragma pawnx_yield", which <foreach> emits. Default FALSE. Reset per pass. */
 SC_VDECL int pc_compat;       /* running in compatibility mode? */
 SC_VDECL int pc_recursion;    /* enable detailed recursion report? */
 SC_VDECL int pc_retexpr;      /* true if the current expression is a part of a "return" statement */

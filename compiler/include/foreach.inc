@@ -3,6 +3,12 @@
 #endif
 #define _INC_foreach
 
+/* Turn on the generator "yield" keyword. It is opt-in (off by default), so a
+ * script that does not include <foreach> keeps "yield" as an ordinary
+ * identifier (and PawnPlus's own yield can coexist). Generators are driven by
+ * foreach, so <foreach> is the opt-in. */
+#pragma pawnx_yield
+
 // pawn-x reserves `foreach` as a compiler KEYWORD, so it cannot coexist with
 // YSI's `foreach` macro. If YSI's iterator lib was included first, stop now with
 // a clear message instead of a cryptic keyword clash deeper in the build.

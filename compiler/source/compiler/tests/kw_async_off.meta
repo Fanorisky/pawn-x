@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+42
+
+kw_async_off.amx returns 0
+"""
+}

@@ -3,6 +3,12 @@
 #endif
 #define _inc_async
 
+/* Turn on the native-async keywords. They are opt-in (off by default), so a
+ * script that does not include <async> keeps "async"/"await" as ordinary
+ * identifiers and can use PawnPlus's own await/yield instead. Including <async>
+ * is the opt-in. */
+#pragma pawnx_async
+
 /* async.inc -- native async/await runtime library (pawn-x experiment 012).
  *
  * pawn on SA-MP/open.mp is single-threaded, so async/await here is NOT

@@ -1001,6 +1001,8 @@ static void resetglobals(void)
   stmtindent=0;         /* current indent of the statement */
   indent_nowarn=FALSE;  /* do not skip warning "217 loose indentation" */
   sc_allowtags=TRUE;    /* allow/detect tagnames */
+  pc_kw_async=FALSE;    /* native-async keywords off until <async> opts in (re-emitted each pass) */
+  pc_kw_yield=FALSE;    /* generator "yield" keyword off until <foreach> opts in (re-emitted each pass) */
   sc_status=statIDLE;
   sc_allowproccall=FALSE;
   pc_addlibtable=TRUE;  /* by default, add a "library table" to the output file */

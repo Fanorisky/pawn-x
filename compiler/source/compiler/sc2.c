@@ -1376,6 +1376,10 @@ static int command(void)
           } while (comma);
         } else if (strcmp(str,"naked")==0) {
           pc_naked=TRUE;
+        } else if (strcmp(str,"pawnx_async")==0) {
+          pc_kw_async=TRUE;     /* reserve async/await for the rest of this pass (emitted by <async>) */
+        } else if (strcmp(str,"pawnx_yield")==0) {
+          pc_kw_yield=TRUE;     /* reserve the generator "yield" keyword (emitted by <foreach>) */
         } else if (strcmp(str,"warning")==0) {
           int ok=lex(&val,&str)==tSYMBOL;
           if (ok) {
@@ -2381,6 +2385,18 @@ SC_FUNC int lex(cell *lexvalue,char **lexsym)
     tokptr+=1;
   } /* while */
   while (i<=tLAST) {    /* match reserved words and compiler directives */
+    /* OPT-IN gate: the native-coroutine keywords are reserved only when their
+     * feature has been turned on (async/await by "#pragma pawnx_async", which
+     * <async> emits; yield by "#pragma pawnx_yield", which <foreach> emits).
+     * Off by default, so these words are ordinary identifiers and do not clash
+     * with user variables or with PawnPlus's own await/yield. Checked before the
+     * contextual-downgrade logic below, which only applies once they ARE on. */
+    if (((i==tASYNC || i==tAWAIT) && !pc_kw_async)
+        || (i==tYIELD && !pc_kw_yield)) {
+      i+=1;
+      tokptr+=1;
+      continue;
+    } /* if */
     /* pawn-x soft keywords: skip matching them as keywords when the previous token
      * puts us in a name-introducing position, so they parse as identifiers (see the
      * note at the top of lex()). Their own statement/expression uses are unaffected
