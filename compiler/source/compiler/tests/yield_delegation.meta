@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+dr_sum=14011 dr_count=5
+
+ft_sum=1
+
+wrap_sum=101
+
+yield_delegation.amx returns 0
+"""
+}

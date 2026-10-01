@@ -322,6 +322,7 @@ typedef struct s_callhookgroup {
  * Cleared as soon as the inline body is compiled. */
 #define uCAPTURED   0x100000
 #define uHOOKORIG   0x200000 /* set on a hooked callback's dispatcher symbol when the user ALSO defined a `public` body for it: that body is chained as the last link (runs after all hooks). Persists across passes (uDEFINE is set on every dispatcher, so cannot discriminate in pass 2). */
+#define uSNAPSHOT   0x400000 /* set on a "yield" generator whose body keeps LIVE STACK storage across a yield (e.g. a nested "foreach" driving another generator). Its frame [STK..FRM) is copied into a per-block snapshot area on suspend and copied back on resume (which lands at the same absolute stack depth), so the residual stack survives without a host patch. gen_reserved() then reserves x.stacksize head cells after the continuation for that snapshot area. */
 /* uRETNONE is not stored in the "usage" field of a symbol. It is
  * used during parsing a function, to detect a mix of "return;" and
  * "return value;" in a few special cases.

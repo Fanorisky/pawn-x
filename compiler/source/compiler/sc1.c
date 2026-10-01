@@ -3709,7 +3709,17 @@ static int generator_isgen(symbol *sym)
 #define ASYNC_AWAITER_SLOT 3    /* B[3] holds the awaiter's B (0 = top-level, no awaiter) */
 static int gen_reserved(const symbol *sym)
 {
-  return (sym!=NULL && (sym->usage & uASYNC)!=0) ? 4 : 1;
+  if (sym==NULL)
+    return 1;
+  if ((sym->usage & uASYNC)!=0)
+    return 4;
+  /* a snapshot "yield" generator reserves, after the single continuation cell,
+   * x.stacksize head cells for the frame snapshot area (B[1 .. 1+stacksize));
+   * lifted slots follow. x.stacksize is pass-stable here: it only grows, and is
+   * final from the prologue onward in every pass after the first. */
+  if ((sym->usage & uSNAPSHOT)!=0)
+    return 1+sym->x.stacksize;
+  return 1;
 }
 
 /*  generator_helper - the symbol of the hidden "@yield.emit" helper, creating
@@ -3895,14 +3905,35 @@ static void generator_emit_prologue(void)
         nparm++;
         continue;
       } /* if */
+      if ((curfunc->usage & uASYNC)==0 && sym->ident==iREFERENCE) {
+        /* a "yield" generator's by-"&"reference parameter: LIFT the pointer.
+         * The referent lives in the driving "foreach" frame, which stays alive
+         * for the whole loop (unlike an "async" coroutine's caller, whose frame
+         * is freed at "await" -- hence async still rejects this below). So the
+         * pointer stays valid across the yield; we only need it to survive the
+         * suspend, which lifting into the state block gives us. The incoming
+         * arg cell holds the pointer, copied into the block slot like a scalar
+         * (parmsize 1); the symbol stays iREFERENCE so body access double-
+         * indirects through the block (see the lifted-reference paths in
+         * sc4.c rvalue/store/address). */
+        if (nparm>=sMAXARGS-1)
+          break;
+        slot=curfunc->genlocals;
+        parmphys[nparm]=sym->addr+(cell)sizeof(cell);  /* incoming slot holds the pointer */
+        parmslot[nparm]=(cell)(slot+gen_reserved(curfunc))*sizeof(cell);
+        parmsize[nparm]=1;                             /* one cell: the pointer */
+        sym->addr=parmslot[nparm];                     /* body indirects via the block */
+        sym->usage|=uLIFTED;                           /* ident stays iREFERENCE */
+        curfunc->genlocals=slot+1;
+        nparm++;
+        continue;
+      } /* if */
       if ((curfunc->usage & uASYNC)!=0)
         error(268);             /* async: an unsized/multi-dim array or "&"reference
                                  * parameter points into the caller's frame, which is
                                  * freed at "await" -- it cannot be copied into the
                                  * coroutine block (no compile-time cell count / it
                                  * aliases the caller), so reject cleanly. */
-      else if (sym->ident==iREFERENCE)
-        error(98);              /* a generator cannot combine "yield" with a reference/cur parameter */
       else
         error(255,"a generator (\"yield\") may not take an array parameter yet");
       continue;
@@ -4013,6 +4044,60 @@ static void generator_emit_prologue(void)
   pc_gen_baseline=declared;
 }
 
+/*  gen_snapshot_save / gen_snapshot_restore - the compiler-only frame snapshot
+ *  that lets a "yield" generator keep live STACK storage across a suspend (a
+ *  nested "foreach" driving another generator, etc.). No host patch: the frame
+ *  [STK..FRM) is copied into the block's snapshot area (B[1 .. 1+stacksize),
+ *  reserved by gen_reserved when uSNAPSHOT is set) on suspend, and copied back
+ *  on resume. The resume lands at the SAME absolute stack depth (a foreach
+ *  driver re-calls the generator from a fixed site), so the restored frame's
+ *  absolute pointers stay valid without relocation. "snapsz" is the live frame
+ *  size at this yield site (declared*cell), a compile-time constant, so "movs"
+ *  takes a constant and the emission is pass-stable. sctrl 4 / lctrl 4,5 are
+ *  the same control registers the existing suspend/resume already use.
+ */
+static void gen_snapshot_save(cell snapsz)
+{
+  pushreg(sPRI);                    /* preserve the yield value (copy clobbers PRI/ALT) */
+  stgwrite("\tload.s.pri ");        /* PRI = B (state-block base) */
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");             /* PRI = B + snapshot area (B[1]) */
+  outval((cell)sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");         /* ALT = snapshot destination */
+  code_idx+=opcodes(1);
+  stgwrite("\tlctrl 5\n");          /* PRI = FRM (source base; FRM is push-stable, STK is not) */
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");             /* PRI = FRM - snapsz (source = live frame bottom) */
+  outval(-snapsz,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  memcopy(snapsz);                  /* movs: [snapshot] <- [frame], snapsz bytes */
+  popreg(sPRI);                     /* restore the yield value */
+}
+
+static void gen_snapshot_restore(cell snapsz)
+{
+  stgwrite("\tlctrl 5\n");          /* PRI = FRM */
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");             /* PRI = FRM - snapsz (target STK) */
+  outval(-snapsz,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tsctrl 4\n");          /* STK = FRM - snapsz (reopen the frame extent) */
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tlctrl 4\n");          /* PRI = STK (destination) */
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");         /* ALT = STK (destination) */
+  code_idx+=opcodes(1);
+  stgwrite("\tload.s.pri ");        /* PRI = B */
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");             /* PRI = B + snapshot area (source) */
+  outval((cell)sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  memcopy(snapsz);                  /* movs: [STK] <- [snapshot], snapsz bytes */
+}
+
 /*  doyield - parse "yield return <expr>;" and emit the suspend.
  *
  *  The value of <expr> is left in PRI by "expression()" (a constant is not
@@ -4045,18 +4130,24 @@ static void doyield(void)
     sc_reparse=TRUE;
   } /* if */
   if (pc_generator && declared>pc_gen_baseline) {
-    /* a live stack cell exists beyond the prologue's single reserved cell -- a
-     * construct inside the body (e.g. a nested "foreach") allocated loop/hidden
-     * cells that are NOT lifted into the state block. The suspend discards the
-     * frame and the resume rebuilds it with only the prologue cell, so that
-     * storage would be garbage on resume (a silent runtime hang). Reject it
-     * rather than miscompile; the compile fails, so no broken binary is emitted.
-     * error() suppresses this (number<100) outside the statWRITE pass, and the
-     * comparison is derived from prologue-set, pass-stable data, so the guard
-     * fires identically in both passes. */
-    error(99);
-    lexclr(TRUE);
-    return;
+    /* live stack storage exists beyond the generator baseline -- a construct in
+     * the body (e.g. a nested "foreach" driving another generator) allocated
+     * loop/hidden cells that are NOT lifted into the state block. A plain
+     * "yield" generator now SNAPSHOTS its frame across the suspend: enable
+     * snapshot mode once and force a reparse so the prologue and block sizing
+     * reserve the snapshot area from the top (gen_reserved); the suspend code
+     * below then copies [STK..FRM) into the block and restores it on resume,
+     * which lands at the same absolute stack depth. An "async" coroutine cannot
+     * do this -- its caller frame is freed at "await" -- so it still rejects. */
+    if ((curfunc->usage & uASYNC)!=0) {
+      error(99);
+      lexclr(TRUE);
+      return;
+    } /* if */
+    if ((curfunc->usage & uSNAPSHOT)==0) {
+      curfunc->usage|=uSNAPSHOT;
+      sc_reparse=TRUE;
+    } /* if */
   } /* if */
   if (!needtoken(tRETURN)) {
     lexclr(TRUE);
@@ -4089,6 +4180,8 @@ static void doyield(void)
 
   helper=generator_helper();
   if (helper!=NULL) {
+    if ((curfunc->usage & uSNAPSHOT)!=0)
+      gen_snapshot_save(declared*(cell)sizeof(cell));   /* save the live frame before we suspend */
     pushreg(sPRI);                  /* val (second argument: pushed first) */
     stgwrite("\tload.s.pri ");      /* PRI = B (hidden first argument) */
     outval(3*sizeof(cell),TRUE);
@@ -4097,6 +4190,8 @@ static void doyield(void)
     pushval(2*sizeof(cell));        /* argument count, in bytes */
     markusage(helper,uREAD);
     ffcall(helper,NULL,2);
+    if ((curfunc->usage & uSNAPSHOT)!=0)
+      gen_snapshot_restore(declared*(cell)sizeof(cell)); /* RESUME lands here: rebuild the frame */
   } /* if */
 
   markexpr(sEXPR,NULL,0);           /* end of the yield expression/statement */
@@ -9868,6 +9963,8 @@ static int doforeach(void)
   symbol *gensym,*cand;         /* generator (iterfunc) support */
   cell curaddr,argaddr[sMAXARGS],iterstop,stateaddr;
   int nuser,ai,argident,statebyref;
+  symbol *argsym;               /* symbol of the current user arg (for by-ref passing) */
+  int ngenparm;                 /* declared parameter count of the generator */
   cell genaddr;                 /* coroutine generator support */
   int blkcells;
 
@@ -10020,15 +10117,32 @@ static int doforeach(void)
      * after B; the generator prologue copies them into their block slots on the
      * FRESH call so a parameter is mutable and survives across a "yield". */
     nuser=0;
+    ngenparm=0;
+    while (gensym->dim.arglist[ngenparm].ident!=0)
+      ngenparm++;
     if (!matchtoken(')')) {
       do {
         if (nuser>=sMAXARGS-1) {
           error(45);            /* too many function arguments */
           break;
         } /* if */
-        argident=expression(&val,NULL,NULL,FALSE);   /* leaves the value in PRI */
+        argsym=NULL;
+        argident=expression(&val,NULL,&argsym,FALSE);   /* leaves the value in PRI */
         if (argident==iCONSTEXPR)
           ldconst(val,sPRI);    /* a constant is not auto-loaded -- force it into PRI */
+        /* by-reference parameter: pass the ADDRESS of the argument (an lvalue),
+         * not its value, so writes in the body reach the caller's variable. The
+         * referent lives in THIS driver frame, which stays alive for the whole
+         * loop, so the pointer is valid across every yield (the prologue lifts
+         * the pointer cell into the state block). Only a plain lvalue can be
+         * taken by reference. This overrides the value that expression() just
+         * loaded into PRI. */
+        if (nuser<ngenparm && gensym->dim.arglist[nuser].ident==iREFERENCE) {
+          if ((argident==iVARIABLE || argident==iREFERENCE) && argsym!=NULL)
+            address(argsym,sPRI);   /* PRI = &argument */
+          else
+            error(35,nuser+1);      /* argument type mismatch: reference needs an lvalue */
+        } /* if */
         /* iARRAY/iREFARRAY (and a Callback: from "using inline"): expression()
          * left the array/record ADDRESS in PRI. Cache and push it like a scalar
          * cell, so the generator receives it as a by-reference array / Callback
@@ -10050,7 +10164,7 @@ static int doforeach(void)
     /* hidden cell holding the state-block base, plus the block itself on the
      * AMX heap. "modheap" leaves the OLD heap top (== the block base) in ALT,
      * so the fill and the store of B need no address arithmetic. */
-    blkcells=1+gensym->genlocals;   /* B[0] continuation + L lifted params & locals */
+    blkcells=gen_reserved(gensym)+gensym->genlocals;   /* continuation (+ snapshot area if uSNAPSHOT) + L lifted params & locals */
     declared+=1;
     genaddr=-declared*(cell)sizeof(cell);
     modstk(-(int)sizeof(cell));

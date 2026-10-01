@@ -456,6 +456,20 @@ SC_FUNC void rvalue(value *lval)
     assert(sym->vclass==sLOCAL);/* global references don't exist in Pawn */
     if ((sym->usage & uCAPTURED)!=0)
       error(98);                /* a by-reference parameter cannot be captured by an inline (its cell is in the enclosing frame; pass by value) */
+    if ((sym->usage & uLIFTED)!=0) {
+      /* a LIFTED reference parameter of a coroutine generator: the pointer cell
+       * lives in the state block at B+addr, not on the stack. Read the pointer
+       * from the block, then dereference it. The referent lives in the driving
+       * "foreach" frame, which persists across the yield, so the pointer stays
+       * valid. (=  lref, but the pointer comes from the block: load.i twice.) */
+      lifted_slotaddr_pri(sym);   /* PRI = B + addr (slot holding the pointer) */
+      stgwrite("\tload.i\n");     /* PRI = the pointer (referent address) */
+      code_idx+=opcodes(1);
+      stgwrite("\tload.i\n");     /* PRI = the referenced value */
+      code_idx+=opcodes(1);
+      markusage(sym,uREAD);
+      return;
+    } /* if */
     if (sym->vclass==sLOCAL)
       stgwrite("\tlref.s.pri ");
     else
@@ -503,6 +517,24 @@ SC_FUNC void address(symbol *sym,regid reg)
   assert(reg==sPRI || reg==sALT);
   if ((sym->usage & uCAPTURED)!=0 && sym->ident==iREFERENCE)
     error(98);                    /* a by-reference parameter cannot be captured by an inline (pass by value) */
+  if (sym->ident==iREFERENCE && (sym->usage & uLIFTED)!=0) {
+    /* the address OF a lifted reference is the pointer it holds, i.e. [B+addr]
+     * (the referent's address), NOT B+addr (the slot). Read the pointer from
+     * the block. Handled before the generic lifted branch, which would wrongly
+     * yield the slot address. */
+    if (reg==sALT)
+      pushreg(sPRI);
+    lifted_slotaddr_pri(sym);     /* PRI = B + addr (slot holding the pointer) */
+    stgwrite("\tload.i\n");       /* PRI = the pointer (referent address) */
+    code_idx+=opcodes(1);
+    if (reg==sALT) {
+      stgwrite("\tmove.alt\n");    /* ALT = the pointer */
+      code_idx+=opcodes(1);
+      popreg(sPRI);               /* restore the caller's PRI */
+    } /* if */
+    markusage(sym,uREAD);
+    return;
+  } /* if */
   if (lifted_local(sym)) {
     /* the lifted local's address is B + addr, an absolute data address. For
      * sPRI compute it directly (ALT untouched); for sALT route it through PRI
@@ -577,6 +609,22 @@ SC_FUNC void store(value *lval)
     assert(sym!=NULL);
     if ((sym->usage & uCAPTURED)!=0)
       error(98);                /* a by-reference parameter cannot be captured by an inline (pass by value) */
+    if ((sym->usage & uLIFTED)!=0) {
+      /* store through a LIFTED reference: the pointer cell is at B+addr in the
+       * state block. Read the pointer, then store the value (kept in PRI) at
+       * it. ALT is preserved (drop-in for "sref.s.pri"). */
+      stgwrite("\tpush.alt\n");    /* save ALT */
+      stgwrite("\tpush.pri\n");    /* save the value */
+      code_idx+=opcodes(2);
+      lifted_slotaddr_pri(sym);    /* PRI = B + addr (slot holding the pointer) */
+      stgwrite("\tload.i\n");      /* PRI = the pointer (referent address) */
+      stgwrite("\tmove.alt\n");    /* ALT = referent address */
+      stgwrite("\tpop.pri\n");     /* PRI = the value again */
+      stgwrite("\tstor.i\n");      /* [referent] = PRI */
+      stgwrite("\tpop.alt\n");     /* restore ALT */
+      code_idx+=opcodes(5);
+      return;
+    } /* if */
     if (sym->vclass==sLOCAL)
       stgwrite("\tsref.s.pri ");
     else
