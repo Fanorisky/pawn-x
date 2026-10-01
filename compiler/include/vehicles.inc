@@ -17,7 +17,6 @@
  *  LIMITATION: only vehicles created through Vehicle_Create are tracked —
  *  vehicles made by a raw CreateVehicle call or by another script are not in the
  *  set. (True auto-tracking would need native-call interception; out of scope.)
- *  Needs the `iterset` companion plugin for the set* natives.
  * </library>
  */
 

@@ -58,6 +58,7 @@ SC_VDEFINE int staging=FALSE;               /* true if staging output */
 SC_VDEFINE cell declared=0;                 /* number of local cells declared */
 SC_VDEFINE cell pc_exprtemp=0;              /* live operand-stack temporaries in the current statement */
 SC_VDEFINE int pc_await_composed=0;              /* set once a COMPOSED "await asyncFn()" has suspended in the current expression; doawait rejects a following LEAF await that must carry a live temp across its suspend (compose-then-leaf does not sequence). Reset per statement / for-clause / test-condition. */
+SC_VDEFINE int pc_async_suspended=0;             /* TRUE once the current async function has suspended (see sc.h) */
 SC_VDEFINE cell pc_genlocalsbase=0;         /* frame offset of a generator's "localsbase" cell */
 SC_VDEFINE cell pc_inlinelink=0;            /* exp 015: frame offset of an inline's static-link cell (0 = none) */
 SC_VDEFINE symbol *inline_outer_loc=NULL;   /* exp 015: enclosing locals (chain head) visible for capture while compiling an inline body */

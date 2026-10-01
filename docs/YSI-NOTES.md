@@ -21,9 +21,12 @@ purpose, and this documents them so migration is predictable.
 
 ## Verified on a live host
 
-The fixes and the hook semantics were re-run against a real open.mp 1.5.8 server
-(`iterset.so` for the value-set natives), not just the in-repo harness, because
-`pawnruns` lacks `format`/`strcat`/`set*` and uses a different set backend. All
+The fixes and the hook semantics were re-run against a real open.mp 1.5.8 server,
+not just the in-repo harness, because `pawnruns` lacks `format`/`strcat`. The
+set operations are pure-Pawn stocks (a C-native plugin was tried and dropped: a
+native call crosses the VM boundary and that cost outweighs the work on the
+small sets this is used on, so the stocks are as fast or faster), so no plugin
+is involved. All
 scenarios behaved correctly: the removal matrix (remove the current, every, or a
 future element), `Reverse`, multi-dim rows, `setalloc`/`setfree`, nested
 `foreach`, `break`, and `sethas` mid-loop. On the hook side (the area Y-Less

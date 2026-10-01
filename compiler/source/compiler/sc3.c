@@ -2908,6 +2908,15 @@ static long nest_stkusage=0L;
   int redirected=FALSE; /* TRUE when this call site was redirected to a call-hook
                     * wrapper (uCALLHOOK target); the original native is then not
                     * marked uREAD here -- see the redirect block below */
+  symbol *callee_wrap=NULL; /* call-hook wrapper for the callee, or NULL */
+  cell btemp=0;         /* frame offset of the hidden cell holding B for an
+                    * "async" callee's fire-and-forget start */
+  int lbl_asyncfull=-1; /* arena-full branch target of that start */
+  int async_reserved=FALSE; /* TRUE when that hidden B cell is part of this frame
+                    * (reserved up front, before the arguments) */
+  int async_start=FALSE; /* TRUE when the callee is an "async" function called
+                    * WITHOUT "await": the call is then a coroutine START rather
+                    * than an ordinary call (see the call emission below) */
   value lval = {0};
   arginfo *arg;
   int call_isvariadic=FALSE;    /* this callee has a "..." variadic parameter */
@@ -2967,6 +2976,29 @@ static long nest_stkusage=0L;
      * otherwise warnings 249 and 250 may be inaccurate */
     pc_loopcond=0;
     pc_numloopvars=0;
+  } /* if */
+  /* Resolve the call-hook redirect, and decide whether this call STARTS a
+   * coroutine, BEFORE any argument is pushed. A call to an "async" function
+   * without "await" is a fire-and-forget start, not an ordinary call: an async
+   * callee's prologue reads arg0 as its state block B, so a bare "call" would hand
+   * it the caller's first argument and it would then dereference that as B (a jump
+   * to garbage). The start needs a hidden cell to hold B across the arena
+   * allocation and the argument push, and that cell must be reserved HERE, before
+   * the arguments: a cell reserved after them would sit between B (which must be
+   * arg0) and the user arguments, shifting every one of them by a cell. */
+  if (!chook_inject_idx) {
+    callee_wrap=callhook_target_wrapper(sym);
+    if (callee_wrap!=NULL) {
+      redirected=TRUE;
+      markusage(callee_wrap,uREAD);
+    } /* if */
+  } /* if */
+  async_reserved= callee_wrap==NULL && !chook_inject_idx
+                  && (sym->usage & uASYNC)!=0;
+  if (async_reserved) {
+    declared+=1;
+    btemp=-declared*(cell)sizeof(cell);
+    modstk(-(int)sizeof(cell));
   } /* if */
   /* check whether this is a function that returns an array */
   symret=sym->child;
@@ -3548,31 +3580,30 @@ static long nest_stkusage=0L;
     nargs++;
     nest_stkusage++;
   } /* if */
+  /* The hidden B cell was reserved up front (before the arguments, so it sits
+   * BELOW them in the frame). Whether the start actually happens is decided here,
+   * once the argument loop has revealed a "___" forward or a bare "continue()". */
+  async_start= async_reserved && !fwdpending && !chook_full;
   if (fwdpending) {
     /* the byte count covers the statically pushed arguments plus the
      * forwarded cells; the latter part is only known at run time
      */
     fwdbytecount(nargs,(int)fwdskip);
-  } else {
+  } else if (!async_start) {
     pushval((cell)nargs*sizeof(cell));
   } /* if */
   nest_stkusage++;
-  /* call-site hook redirect: a call to a hooked target goes to its wrapper. The
-   * dispatcher's own tail-call to the original is guarded by pc_emit_orig (inside
-   * callhook_target_wrapper), and a continue()-lowered call already targets the
-   * dispatcher, so neither is redirected. */
-  {
-    symbol *callee=sym;
-    if (!chook_inject_idx) {
-      symbol *wrap=callhook_target_wrapper(sym);
-      if (wrap!=NULL) {
-        callee=wrap;
-        redirected=TRUE;
-        markusage(wrap,uREAD);
-      } /* if */
-    } /* if */
-    ffcall(callee,NULL,nargs);
-  }
+  if (async_start) {
+    /* Fire-and-forget start of an "async" callee. The user args are already on
+     * the stack; async_emit_start_call() pushes B on top of them (so B lands as
+     * arg0, shifting the user args up one cell exactly as the prologue expects),
+     * pushes the byte count, and calls. It leaves the coroutine's token in PRI as
+     * this expression's value. */
+    lbl_asyncfull=getlabel();
+    async_emit_start_call(sym,btemp,nargs,lbl_asyncfull);
+  } else {
+    ffcall(callee_wrap!=NULL ? callee_wrap : sym,NULL,nargs);
+  } /* if */
   if (chook_argfix==1) {
     /* numargs() inside a call-hook body: the sysreq returned arity+1 (the hidden
      * idx counts as an argument); subtract 1 so the body sees its real arity. */
@@ -3626,6 +3657,13 @@ static long nest_stkusage=0L;
     if (nest_stkusage<0)
       nest_stkusage=0;
   }
+
+  /* release the hidden B cell reserved up front for an "async" callee's start.
+   * The call itself (and its cleanup) is done, so the frame shrinks back. */
+  if (async_reserved) {
+    modstk((int)sizeof(cell));
+    declared-=1;
+  } /* if */
 
   /* scrap any arrays left on the heap, with the exception of the array that
    * this function has as a result (in other words, scrap all arrays on the

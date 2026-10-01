@@ -14,8 +14,7 @@
  *    foreach (new id : Actor) { ... }
  *    Actor_Destroy(a);
  *
- *  LIMITATION: only actors created through Actor_Create are tracked. Needs the
- *  `iterset` companion plugin for the set* natives.
+ *  LIMITATION: only actors created through Actor_Create are tracked.
  * </library>
  */
 

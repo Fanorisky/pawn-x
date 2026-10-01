@@ -11,11 +11,11 @@
  *
  *    foreach (new i : Player) { ... }   // every connected player, ascending id
  *
- *  Needs the `iterset` companion plugin (for the set* natives) and open.mp's
- *  callback dispatch. Built on the native `foreach`/`set*`/`hook` — no macros,
- *  no bytecode scan. Vehicle/Actor iterators are not shipped here because their
- *  lifecycle is native-driven (CreateVehicle/DestroyVehicle), which pawn-x does
- *  not hook; use tracked wrappers for those.
+ *  Needs open.mp's callback dispatch. Built on the native `foreach`/`set*`/
+ *  `hook`, no macros, no bytecode scan; `set*` are pure-Pawn stocks, so no
+ *  plugin is required. Vehicle/Actor iterators are not shipped here because
+ *  their lifecycle is native-driven (CreateVehicle/DestroyVehicle), which
+ *  pawn-x does not hook; use tracked wrappers for those.
  * </library>
  */
 

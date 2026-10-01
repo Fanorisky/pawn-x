@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+name=hello tag=42
+
+after
+
+async_arrayparam_plaincall.amx returns 0
+"""
+}

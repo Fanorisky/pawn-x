@@ -27,30 +27,26 @@
  *  `foreach` is a compiler keyword; `set*` (setinit/setadd/setremove/sethas/
  *  setlen/setfree/setrandom/setget/setalloc) are natives.
  *
+ *  A set is one-dimensional by construction, so a MULTI-DIMENSIONAL operand is
+ *  not one: `foreach (new i : twoDArray)` walks its first dimension by index
+ *  (0 .. sizeof twoDArray - 1), the same thing YSI's `foreach` does, which is
+ *  how a 2D table of records (e.g. a per-vehicle data array) is walked. To walk
+ *  one ROW of a 2D array as a set, subscript it: `foreach (new v : sets[k])`.
+ *
  *  Note: pawn-x reserves `foreach` as a keyword, so it is a standalone
  *  REPLACEMENT for YSI's `foreach`, not a co-resident of it -- do not include
  *  YSI's y_iterate/y_foreach in the same script.
  * </library>
  */
 
-// The set* operations. By DEFAULT they are pure-Pawn stocks, so `foreach` and
-// the set need NO plugin and run on any AMX host. Define FOREACH_NATIVE_SET
-// before including to use the faster C natives instead (those need the set
-// runtime, e.g. iterset.so on open.mp). Layout: data[0] = count, data[1..count]
-// = sorted, distinct, non-negative values.
-#if defined FOREACH_NATIVE_SET
-native setinit(array[]);
-native setadd(array[], value);
-native setremove(array[], value);
-native sethas(const array[], value);
-native setlen(const array[]);
-native setfree(const array[]);
-native setrandom(const array[]);
-native setget(const array[], index);
-native setalloc(array[]);
-native setnext(const array[], value);
-native setprev(const array[], value);
-#else
+// The set* operations are pure-Pawn stocks, so `foreach` and the set need no
+// plugin and run on any AMX host. A plugin that implements these as C natives
+// was tried and dropped: a native call crosses the VM boundary (a `sysreq`),
+// and that fixed cost outweighs the work for the small sets this is used on, so
+// the stocks are as fast or faster (measured a wash on reads, see
+// experiments/002-foreach/bench). The `foreach` walk itself never calls these
+// at all; it is inline AMX opcodes. Layout: data[0] = count, data[1..count] =
+// sorted, distinct, non-negative values.
 // lower_bound: smallest slot in [1..count] whose value is >= v, else count+1.
 static stock XSet_LB(const a[], v)
 {
@@ -141,7 +137,6 @@ stock setprev(const array[], value)
 	new pos = XSet_LB(array, value) - 1;   // slot before the first >= value
 	return (pos >= 1) ? array[pos] : cellmin;
 }
-#endif
 
 
 // Capacity-aware queries. The set's capacity is its array size minus the count

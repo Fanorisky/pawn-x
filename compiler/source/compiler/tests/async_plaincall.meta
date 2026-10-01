@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+foo 12345
+
+after-call
+
+async_plaincall.amx returns 0
+"""
+}

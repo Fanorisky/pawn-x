@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+two n=4 sum=22
+
+walks n=4 sum=33
+
+yield_scope_reuse.amx returns 0
+"""
+}

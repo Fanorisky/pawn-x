@@ -240,11 +240,7 @@ See tests `task_basic` / `task_native` / `timers_lib`.
 cmake -S compiler/source/compiler -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-m32"
 cmake --build build -j$(nproc)
 
-# 2. iterset plugin (set* natives on the server)
-gcc -m32 -shared -fPIC -DLINUX -Icompiler/source/amx -Icompiler/source/linux \
-  deps/iterset/iterset.c -o iterset.so
-
-# 3. dynhook plugin (runtime hooks): needs subhook (upstream Zeex/subhook is
+# 2. dynhook plugin (runtime hooks): needs subhook (upstream Zeex/subhook is
 #    gone; clone the Dasharo/subhook or tianocore/edk2-subhook mirror to deps/subhook)
 gcc -m32 -fPIC -DSUBHOOK_STATIC -c deps/subhook/subhook.c -o /tmp/subhook.o
 g++ -m32 -shared -fPIC -DLINUX -DSUBHOOK_STATIC -Icompiler/source/amx \
@@ -252,7 +248,8 @@ g++ -m32 -shared -fPIC -DLINUX -DSUBHOOK_STATIC -Icompiler/source/amx \
   experiments/006-companion-plugin/dynhook.cpp /tmp/subhook.o -o dynhook.so
 ```
 
-Compile a script: `build/pawncc gm.pwn -icompiler/include -i<stdlib>`.
+The `set*` operations are pure-Pawn stocks in `<foreach>`, so iteration needs no
+plugin. Compile a script: `build/pawncc gm.pwn -icompiler/include -i<stdlib>`.
 Run the test suite: `tools/run-tests.sh -r build/pawnruns build`.
 Deploy the `.so` plugins to the server's `plugins/` and list them under
 `pawn.legacy_plugins` in `config.json` (open.mp) / `plugins` (SA-MP).

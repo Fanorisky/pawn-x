@@ -408,6 +408,12 @@ SC_FUNC void alignframe(int numbytes)
  *  below routes lifted locals through them instead of the "load.s"/"stor.s"/
  *  "inc.s"/"dec.s"/"addr" stack-relative opcodes. No new opcodes are used.
  */
+/*  forward decl (defined below, next to address()): TRUE when "sym" is a local
+ *  array/reference param of an async function that is un-lifted (kept in the
+ *  caller's arg cells) AND the function has already suspended, so the param is
+ *  no longer readable -- the caller emits error 268. */
+static int async_param_used_across_suspend(const symbol *sym);
+
 static int lifted_local(const symbol *sym)
 {
   /* uLIFTED: a generator/coroutine local living in its heap/arena state block,
@@ -454,6 +460,8 @@ SC_FUNC void rvalue(value *lval)
     /* indirect fetch, but address not yet in PRI */
     assert(sym!=NULL);
     assert(sym->vclass==sLOCAL);/* global references don't exist in Pawn */
+    if (async_param_used_across_suspend(sym))
+      error(268);               /* an un-lifted reference param used after an "await" */
     if ((sym->usage & uCAPTURED)!=0)
       error(98);                /* a by-reference parameter cannot be captured by an inline (its cell is in the enclosing frame; pass by value) */
     if ((sym->usage & uLIFTED)!=0) {
@@ -511,10 +519,28 @@ SC_FUNC void dereference(void)
 /* Get the address of a symbol into the primary or alternate register (used
  * for arrays, and for passing arguments by reference).
  */
+/*  async_param_used_across_suspend - an async function may DECLARE an unsized
+ *  array / multi-dimensional array / "&"reference parameter (it is not lifted,
+ *  so it lives in the caller-provided arg cells). Those cells are valid only
+ *  until the first suspend (the frame is rebuilt on resume without them), so
+ *  USING the parameter after a suspend must be rejected -- error 268. Before the
+ *  suspend it is fine, which is why the prologue no longer rejects it outright.
+ *  Only array/reference locals can be un-lifted in an async body (scalar and
+ *  fixed-size-1-D-array locals are lifted), so this identifies the param. */
+static int async_param_used_across_suspend(const symbol *sym)
+{
+  return curfunc!=NULL && (curfunc->usage & uASYNC)!=0 && pc_async_suspended
+         && sym!=NULL && sym->vclass==sLOCAL
+         && (sym->ident==iREFARRAY || sym->ident==iREFERENCE)
+         && (sym->usage & uLIFTED)==0;
+}
+
 SC_FUNC void address(symbol *sym,regid reg)
 {
   assert(sym!=NULL);
   assert(reg==sPRI || reg==sALT);
+  if (async_param_used_across_suspend(sym))
+    error(268);                   /* an un-lifted array/reference param used after an "await" */
   if ((sym->usage & uCAPTURED)!=0 && sym->ident==iREFERENCE)
     error(98);                    /* a by-reference parameter cannot be captured by an inline (pass by value) */
   if (sym->ident==iREFERENCE && (sym->usage & uLIFTED)!=0) {
@@ -607,6 +633,8 @@ SC_FUNC void store(value *lval)
     code_idx+=opcodes(1)+opargs(1);
   } else if (lval->ident==iREFERENCE) {
     assert(sym!=NULL);
+    if (async_param_used_across_suspend(sym))
+      error(268);               /* an un-lifted reference param used after an "await" */
     if ((sym->usage & uCAPTURED)!=0)
       error(98);                /* a by-reference parameter cannot be captured by an inline (pass by value) */
     if ((sym->usage & uLIFTED)!=0) {

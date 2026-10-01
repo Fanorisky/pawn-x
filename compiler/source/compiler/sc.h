@@ -903,6 +903,12 @@ SC_FUNC int expression_unary(cell *val,int *tag,symbol **symptr);
 SC_FUNC int doawait(value *lval);       /* "await <expr>" (exp 012 async spike) */
 SC_FUNC int doasyncstart(value *lval);  /* "__async_start(Func,args...)" -> B (exp 012) */
 SC_FUNC int doasyncresume(value *lval); /* "__async_resume(B,value)" -> completed? (exp 012) */
+SC_FUNC void async_emit_start_call(symbol *fsym,cell btemp,int nargs,int lbl_full);
+                                        /* start "fsym" (an "async" function) at a call
+                                         * site whose user args are already pushed; B
+                                         * becomes arg0. Shared by callfunction() and
+                                         * the "hook" dispatcher so a call to an async
+                                         * callee is always a coroutine START. */
 SC_FUNC int doasyncself(value *lval);   /* "__async_self()" -> current coroutine's B (exp 012) */
 SC_FUNC int parse_foreach_operand(value *lval,cell *heapsize);
 SC_FUNC int sc_getstateid(constvalue **automaton,constvalue **state);
@@ -1125,6 +1131,7 @@ SC_VDECL int staging;         /* true if staging output */
 SC_VDECL cell declared;       /* number of local cells declared */
 SC_VDECL cell pc_exprtemp;    /* live operand-stack temporaries in the current statement (pushreg/popreg balance); read by doawait to reject a mid-expression suspend */
 SC_VDECL int pc_await_composed;     /* set once a composed "await asyncFn()" has suspended in the current expression; doawait rejects a following leaf await carrying a live temp (compose-then-leaf) */
+SC_VDECL int pc_async_suspended;    /* TRUE once the current async function has hit a suspend; an un-lifted array/reference PARAMETER (kept in the caller's arg cells) is invalid from then on, so sc4.c rejects its use (error 268) */
 SC_VDECL cell pc_genlocalsbase;/* frame offset of a coroutine generator's hidden
                                * "localsbase" cell (base of its state block);
                                * used to emit lifted-local access (see sc4.c) */

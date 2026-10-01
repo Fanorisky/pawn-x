@@ -2055,6 +2055,14 @@ static void parse(void)
         if (getclassspec(tok,&fpublic,&fstatic,&fstock,&fconst))
           declfuncvar(fpublic,fstatic,fstock,fconst);
         break;
+      case tHOOK:
+        /* "async hook Name(args) body": a hook whose BODY may suspend (await).
+         * pc_async is already TRUE, so dohook()'s newfunc() marks the hidden
+         * body as an async coroutine; the synthesised dispatcher calls it, which
+         * starts the coroutine (fire-and-forget) -- the same call convention as
+         * an "async" public. */
+        dohook();
+        break;
       default:
         lexpush();              /* no class specifier -- hand the name to newfunc */
         if (!newfunc(NULL,-1,FALSE,FALSE,FALSE)) {
@@ -3186,6 +3194,10 @@ static void hook_emit_dispatchers(void)
   symbol *disp,*savedfunc;
   int i,a,lbl_ret0,lbl_ret1;
   cell argbytes,chainaddr;
+  cell btemp;                   /* hidden cell holding B for an "async" hook body's
+                                 * fire-and-forget start (only when has_async) */
+  int has_async;                /* this chain has at least one "async" hook body, so
+                                 * the dispatcher needs that extra frame cell */
   cell origaddr;                /* addr of a user-defined `public` body for the callback (issue #6) */
   int has_orig;
   cell defval;                  /* chain seed + combine mode from `hook default` (issue #5/#12) */
@@ -3239,8 +3251,21 @@ static void hook_emit_dispatchers(void)
      * is skipped leaves it untouched, and the state test is free to clobber PRI. */
     chainaddr=-(cell)sizeof(cell);
     modstk(-(int)sizeof(cell));
-    if (disp->x.stacksize<grp->argcount+4)
-      disp->x.stacksize=grp->argcount+4;
+    btemp=chainaddr;
+    /* an "async" body is STARTED rather than called, which needs a second hidden
+     * cell to hold its state block across the arena allocation. Only chains that
+     * actually contain an async body pay for it (the test is pass-stable, so the
+     * frame is identical in both passes). */
+    has_async=0;
+    for (i=0; i<grp->count; i++)
+      if ((grp->slots[i].fn->usage & uASYNC)!=0)
+        has_async=1;
+    if (has_async) {
+      btemp=-(cell)sizeof(cell)*2;
+      modstk(-(int)sizeof(cell));
+    } /* if */
+    if (disp->x.stacksize<grp->argcount+4+has_async)
+      disp->x.stacksize=grp->argcount+4+has_async;
     /* return-value combining (Y-Less issue #5/#12): the chain seed and combine
      * operator come from `hook default`. default 0 (implicit) ORs the returns,
      * so any hook that claims the callback (returns 1) wins; default 1 ANDs them
@@ -3274,8 +3299,23 @@ static void hook_emit_dispatchers(void)
         outval((a+3)*sizeof(cell),TRUE);
         code_idx+=opcodes(1)+opargs(1);
       } /* for */
-      pushval(argbytes);        /* argument-count marker (in bytes) */
       markusage(hook,uREAD);    /* the dispatcher refers to the hidden hook */
+      if ((hook->usage & uASYNC)!=0) {
+        /* "async hook": the body may suspend, so the dispatcher can only START it
+         * and move on -- it cannot wait for a return value that does not exist
+         * yet. Call the coroutine-start sequence instead of a bare call: an async
+         * body's prologue reads arg0 as its state block B, so a plain "call" would
+         * hand it the dispatcher's first argument and it would jump to garbage.
+         * The body therefore contributes NOTHING to the chain value (its eventual
+         * "return" arrives through the coroutine machinery, not in PRI), so the
+         * HOOK_STOP/HOOK_CONTINUE protocol does not apply to async bodies. */
+        int lbl_afull=getlabel();
+        async_emit_start_call(hook,btemp,grp->argcount,lbl_afull);
+        if (lbl_skip>=0)
+          setlabel(lbl_skip);
+        continue;
+      } /* if */
+      pushval(argbytes);        /* argument-count marker (in bytes) */
       ffcall(hook,NULL,grp->argcount);  /* call; result in PRI */
       /* preserve the result in ALT (eq.c.alt does not modify ALT) */
       stgwrite("\tmove.alt\n");
@@ -3339,17 +3379,18 @@ static void hook_emit_dispatchers(void)
     stgwrite("\tload.s.pri ");
     outval(chainaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
-    modstk((int)sizeof(cell));  /* release the hidden chain-value local before retn */
+    modstk((int)sizeof(cell)*(has_async ? 2 : 1));  /* release the hidden chain-value
+                                 * local (and the async B cell) before retn */
     ffret(TRUE);
     /* HOOK_STOP target: return 0 */
     setlabel(lbl_ret0);
     ldconst(0,sPRI);
-    modstk((int)sizeof(cell));
+    modstk((int)sizeof(cell)*(has_async ? 2 : 1));
     ffret(TRUE);
     /* HOOK_STOP_1 target: return 1 */
     setlabel(lbl_ret1);
     ldconst(1,sPRI);
-    modstk((int)sizeof(cell));
+    modstk((int)sizeof(cell)*(has_async ? 2 : 1));
     ffret(TRUE);
 
     endfunc();
@@ -4209,14 +4250,26 @@ static void generator_emit_prologue(void)
         nparm++;
         continue;
       } /* if */
-      if ((curfunc->usage & uASYNC)!=0)
-        error(268);             /* async: an unsized/multi-dim array or "&"reference
-                                 * parameter points into the caller's frame, which is
-                                 * freed at "await" -- it cannot be copied into the
-                                 * coroutine block (no compile-time cell count / it
-                                 * aliases the caller), so reject cleanly. */
-      else
+      if ((curfunc->usage & uASYNC)==0)
         error(255,"a generator (\"yield\") may not take an array parameter yet");
+      /* async: an unsized array, a multi-dimensional array, or a "&"reference
+       * parameter is ALLOWED to be declared. It cannot be lifted (no compile-time
+       * cell count / it aliases the caller), so it stays in the caller-provided
+       * arg cells: readable BEFORE the first suspend, but invalid AFTER it (the
+       * frame is rebuilt on resume without those cells). Its USE after a suspend
+       * is therefore rejected where it is written -- rvalue/store/address in
+       * sc4.c raise error 268 when pc_async_suspended is set. A body that only
+       * touches the parameter before its await (the common case: parse args, then
+       * await) is fine, which is why this is not a blanket rejection.
+       *
+       * The incoming cell still shifts by one, exactly like a lifted scalar: the
+       * caller pushes the coroutine's state block as arg0, so the user's first
+       * argument lands one cell higher than an ordinary call would put it. The
+       * symbol is left at its declared frame offset (declargs() computed it for a
+       * call with no hidden parameter), so shift it here -- without a shift the
+       * body reads the state block in place of the parameter and, for an array,
+       * formats an empty name out of the zero-filled block. */
+      sym->addr+=(cell)sizeof(cell);
       continue;
     } /* if */
     if (nparm>=sMAXARGS-1)
@@ -4473,6 +4526,7 @@ static void doyield(void)
     ffcall(helper,NULL,2);
     if ((curfunc->usage & uSNAPSHOT)!=0)
       gen_snapshot_restore(declared*(cell)sizeof(cell)); /* RESUME lands here: rebuild the frame */
+    pc_async_suspended=TRUE;        /* past the suspend: un-lifted array/ref params are invalid (sc4.c) */
   } /* if */
 
   markexpr(sEXPR,NULL,0);           /* end of the yield expression/statement */
@@ -4517,6 +4571,7 @@ static void async_emit_suspend(symbol *helper)
   code_idx+=opcodes(1)+opargs(1);
   stgwrite("\tload.i\n");           /* PRI = B[inbox] = awaited value */
   code_idx+=opcodes(1);
+  pc_async_suspended=TRUE;          /* from here the caller's arg cells are gone (sc4.c) */
 }
 
 /*  async_emit_arena_alloc - emit the arena-backed allocation of a coroutine state
@@ -4585,6 +4640,74 @@ static int async_emit_arena_alloc(symbol *fsym,cell btemp,int blkcells,int lbl_f
   stgwrite("\tstor.i\n");           /* B[entry] = code address */
   code_idx+=opcodes(1);
   return 1;
+}
+
+/*  async_emit_start_call - emit the TOP-LEVEL START of coroutine "fsym" at a call
+ *  site whose "nargs" user-argument cells the caller has ALREADY PUSHED in the
+ *  ordinary order (arg0 topmost), and leave the coroutine's token in PRI.
+ *
+ *  This is the shared tail of doasyncstart, and it is what makes a plain call to
+ *  an "async" function mean "start it and do not wait" -- the call convention an
+ *  async callee REQUIRES, because its prologue reads arg0 as its state block B
+ *  (see generator_emit_prologue).  Emitting a bare "call" instead (what every
+ *  ordinary call site used to do) hands the callee the caller's first argument as
+ *  B, so the prologue dereferences garbage and "sctrl 6" jumps to it.
+ *
+ *  B is pushed LAST so that it lands as arg0 and the user's arguments shift up one
+ *  cell, exactly the layout the prologue expects.  "btemp" is a hidden frame cell
+ *  the caller must have reserved (see callfunction / hook_emit_dispatchers); the
+ *  caller supplies "lbl_full", the arena-full label to branch to.
+ *
+ *  An arena-full/too-big block (Async_Alloc returned -1) must start NOTHING: the
+ *  call is skipped, the user args the callee would have popped are released here,
+ *  and PRI is left holding -1 so the expression still has a value. */
+SC_FUNC void async_emit_start_call(symbol *fsym,cell btemp,int nargs,int lbl_full)
+{
+  int blkcells=gen_reserved(fsym)+fsym->genlocals;
+  if (!async_emit_arena_alloc(fsym,btemp,blkcells,lbl_full))
+    return;                     /* caller reports the missing-runtime error */
+  /* B[ASYNC_AWAITER_SLOT] = -1: started externally (fire-and-forget), so this
+   * coroutine has no awaiter. -1, not the zero-fill default, because a real
+   * awaiter block can sit at data address 0. */
+  stgwrite("\tload.s.pri ");
+  outval(btemp,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");
+  outval((cell)ASYNC_AWAITER_SLOT*sizeof(cell),TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");
+  code_idx+=opcodes(1);
+  ldconst(-1,sPRI);
+  stgwrite("\tstor.i\n");
+  code_idx+=opcodes(1);
+  /* push B as arg0 (last, on top of the user args the caller pushed) */
+  stgwrite("\tload.s.pri ");
+  outval(btemp,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  pushreg(sPRI);
+  pushval((cell)(nargs+1)*sizeof(cell));
+  ffcall(fsym,NULL,nargs+1);    /* runs to the first "await", returns the token */
+  /* arena full: no call happened, so release the args it would have popped. A
+   * raw "stack" (not modstk) keeps the frame bookkeeping untouched: the caller's
+   * "declared"/stacksize accounting still describes the frame, and the callee
+   * simply never ran. The normal path JUMPS OVER this cleanup -- the callee's
+   * "retn" already popped the arguments, so falling into it would over-pop. */
+  {
+    int lbl_done=getlabel();
+    stgwrite("\tjump ");
+    outval(lbl_done,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    setlabel(lbl_full);
+    if (nargs>0) {
+      stgwrite("\tstack ");
+      outval((cell)nargs*sizeof(cell),TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } /* if */
+    setlabel(lbl_done);
+  }
+  stgwrite("\tload.s.pri ");    /* PRI = B (or -1 if the arena was full) */
+  outval(btemp,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
 }
 
 /*  async_emit_free_self - when the CURRENT "async" coroutine completes, return its
@@ -7869,6 +7992,7 @@ static int newfunc(char *firstname,int firsttag,int fpublic,int fstatic,int stoc
   declared=0;           /* number of local cells */
   rettype=(sym->usage & uRETVALUE);      /* set "return type" variable */
   curfunc=sym;
+  pc_async_suspended=FALSE;   /* a fresh function has not suspended yet (sc4.c) */
   define_args();        /* add the symbolic info for the function arguments */
   /* decide whether this is a coroutine generator ("yield") and, if so, emit
    * its prologue. The decision is pass-stable (see generator_isgen()); in the
@@ -10144,15 +10268,18 @@ static int dofor(void)
 
   assert(pc_nestlevel>save_nestlevel);
   if (declared>save_decl) {
-    /* Clean up the space and the symbol table for the local
-     * variable in "expr1".
-     */
+    /* Clean up the space for the local variable in "expr1". */
     destructsymbols(&loctab,pc_nestlevel);
     modstk((int)(declared-save_decl)*sizeof(cell));
-    testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);   /* look for unused block locals */
     declared=save_decl;
-    delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
   } /* if */
+  /* The symbol-table cleanup must ALSO run when the scope declared only LIFTED
+   * locals: a lifted local (generator/async) does not touch "declared" (its slot
+   * is in the state block), so gating this on "declared>save_decl" left its
+   * symbol in "loctab" and a following sibling scope declaring the same name
+   * errored 21 ("symbol already defined"). Keyed on the nesting level instead. */
+  testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);   /* look for unused block locals */
+  delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
   pc_nestlevel=save_nestlevel;    /* reset 'compound statement' nesting level */
 
   index=endlessloop ? tENDLESS : tFOR;
@@ -10254,6 +10381,10 @@ static int doforeach(void)
   cell iaddr,kaddr,cntaddr,baseaddr,operand_heap,paddr,fastaddr;
   int dim[sDIMEN_MAX],idxtag[sDIMEN_MAX];
   symbol *gensym,*cand;         /* generator (iterfunc) support */
+  value operval;                /* the parsed "foreach" operand (for its symbol) */
+  int istwodim;                 /* the operand is a multi-dimensional array: iterate
+                                 * its first dimension by index, not as a set */
+  cell dim0;                    /* that first dimension's extent */
   cell curaddr,argaddr[sMAXARGS],iterstop,stateaddr;
   int nuser,ai,argident,statebyref;
   symbol *argsym;               /* symbol of the current user arg (for by-ref passing) */
@@ -10265,6 +10396,9 @@ static int doforeach(void)
   save_nestlevel=pc_nestlevel;
   save_endlessloop=endlessloop;
   endlessloop=0;
+  istwodim=FALSE;
+  dim0=0;
+  operval.sym=NULL;
 
   addwhile(wq);
   needtoken('(');
@@ -10523,10 +10657,13 @@ static int doforeach(void)
     if (declared>save_decl) {
       destructsymbols(&loctab,pc_nestlevel);
       modstk((int)(declared-save_decl)*sizeof(cell));
-      testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);   /* look for unused block locals */
       declared=save_decl;
-      delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
     } /* if */
+    /* ALSO free LIFTED locals: they do not touch "declared", so gating the
+     * symbol cleanup on it left a lifted local in "loctab" and a sibling scope
+     * reusing the name errored 21. Keyed on the nesting level instead. */
+    testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);
+    delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
     /* release the state block. It is the last heap allocation made, so this is
      * a strict LIFO release, even when this loop is nested in another one. */
     modheap(-(int)blkcells*(int)sizeof(cell));
@@ -10675,20 +10812,39 @@ static int doforeach(void)
     if (declared>save_decl) {
       destructsymbols(&loctab,pc_nestlevel);
       modstk((int)(declared-save_decl)*sizeof(cell));
-      testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);   /* look for unused block locals */
       declared=save_decl;
-      delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
     } /* if */
+    /* ALSO free LIFTED locals: they do not touch "declared", so gating the
+     * symbol cleanup on it left a lifted local in "loctab" and a sibling scope
+     * reusing the name errored 21. Keyed on the nesting level instead. */
+    testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);
+    delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
     pc_nestlevel=save_nestlevel;
     endlessloop=save_endlessloop;
     return tFOREACH;
   } /* if generator */
 
-  oident=parse_foreach_operand(NULL,&operand_heap);
+  oident=parse_foreach_operand(&operval,&operand_heap);
   if (oident==iARRAY || oident==iREFARRAY) {
     validarray=TRUE;            /* the row's base address is now in PRI */
   } else {
     error(255,"\"foreach\" iterates over an array or iterator, not a value");
+  } /* if */
+  /* A pawn-x SET is one-dimensional by construction (its layout is array[0]=count,
+   * values in array[1..count]; see <foreach>). A multi-dimensional array therefore
+   * cannot be a set: iterating one as a set reads row 0 as a count and then walks
+   * whatever the following cells happen to hold, which is silently wrong code.
+   * Iterate the FIRST DIMENSION by index instead, matching YSI's
+   * "foreach (new i : twoDArray)" -- the idiom for walking a 2D table of records,
+   * e.g. a per-vehicle data array. A SUBSCRIPTED operand ("sets[k]", the
+   * set-of-sets idiom) is a one-dimensional row and keeps set semantics. */
+  if (validarray && operval.sym!=NULL && operval.sym->dim.array.level>0) {
+    istwodim=TRUE;
+    dim0=operval.sym->dim.array.length;   /* first dimension, a compile-time extent */
+    if (dim0<=0) {
+      error(255,"\"foreach\" cannot index-iterate a multi-dimensional array of unknown extent");
+      istwodim=FALSE;
+    } /* if */
   } /* if */
   if (reverse)
     needtoken(')');             /* close "Reverse(" */
@@ -10862,7 +11018,15 @@ static int doforeach(void)
    * empty -> skip to exit; first member = setget(base, 0) ascending /
    * setget(base, cnt-1) descending. kaddr holds the current value; the advance
    * block (after the body) moves to the next/previous member by value. */
-  if (validarray) {
+  if (validarray && istwodim) {
+    /* INDEX WALK over the first dimension: kaddr is the running index. Nothing
+     * else to initialise -- the extent is a compile-time constant and the bound
+     * test sits at lbl_cond, so a zero extent simply never runs the body. */
+    ldconst(reverse ? dim0-1 : 0,sPRI);
+    stgwrite("\tstor.s.pri ");
+    outval(kaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+  } else if (validarray) {
     symbol *n_len=findglb("setlen",sGLOBAL);
     symbol *n_get=findglb("setget",sGLOBAL);
     if (n_len==NULL || n_get==NULL) {
@@ -10919,6 +11083,17 @@ static int doforeach(void)
   } /* if */
 
   setlabel(lbl_cond);
+  if (istwodim) {
+    /* index walk: stop once kaddr has walked off the first dimension. "continue"
+     * re-enters here, so the bound is re-tested after every advance. */
+    stgwrite("\tload.s.pri ");
+    outval(kaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    ldconst(reverse ? 0 : dim0,sALT);
+    stgwrite(reverse ? "\tsgeq\n" : "\tsless\n");  /* still in range? */
+    code_idx+=opcodes(1);
+    jmp_eq0(wq[wqEXIT]);
+  } /* if */
   /* value-based walk: kaddr holds the current member value (set by the
    * initialiser and by the advance block below). Bind the loop variable to it.
    * The empty-set case was already skipped to wqEXIT by the initialiser, and
@@ -10936,6 +11111,17 @@ static int doforeach(void)
   statement(NULL,FALSE);        /* the loop body; "i" is live here */
 
   setlabel(wq[wqLOOP]);         /* "continue" lands here: advance to next member */
+  if (istwodim) {
+    /* index walk: step kaddr and re-test the bound at lbl_cond */
+    stgwrite("\tload.s.pri ");
+    outval(kaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    addconst(reverse ? -1 : 1);
+    stgwrite("\tstor.s.pri ");
+    outval(kaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+    jumplabel(lbl_cond);
+  } else
   /* advance BY VALUE (setnext, or setprev for Reverse): the removal-safe step.
    * setnext/setprev of the last-visited value still returns the correct
    * successor even if that value or others were removed by the body. kaddr
@@ -11052,10 +11238,13 @@ static int doforeach(void)
   if (declared>save_decl) {
     destructsymbols(&loctab,pc_nestlevel);
     modstk((int)(declared-save_decl)*sizeof(cell));
-    testsymbols(&loctab,pc_nestlevel,FALSE,TRUE); /* look for unused block locals */
     declared=save_decl;
-    delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
   } /* if */
+  /* ALSO free LIFTED locals: they do not touch "declared", so gating the
+   * symbol cleanup on it left a lifted local in "loctab" and a sibling scope
+   * reusing the name errored 21. Keyed on the nesting level instead. */
+  testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);
+  delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
   /* release any heap the operand left behind. The temporary (e.g. an array
    * returned by a function used as the operand) was kept alive for the whole
    * loop, so it is freed here at loop exit -- where "break" also lands. */

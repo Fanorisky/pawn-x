@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+plain-hook
+
+async-hook-start
+
+user-public
+
+r=1
+
+async_hook_chain.amx returns 0
+"""
+}
