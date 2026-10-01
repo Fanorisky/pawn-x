@@ -5,12 +5,20 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../../cmake)
 
+# Pawn language base: feeds __Pawn / __PawnBuild so existing includes that
+# guard on __Pawn == 0x030A keep working. Do not bump these.
 set(VERSION_MAJOR 3)
 set(VERSION_MINOR 10)
 set(VERSION_BUILD 11)
-set(VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_BUILD})
-set(VERSION_STR ${VERSION})
+set(PAWN_BASE_STR ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_BUILD})
 math(EXPR VERSION_INT "${VERSION_MAJOR} << 8 | ${VERSION_MINOR}")
+
+# PawnX product version: banner, __PawnX, and package filename.
+set(PAWNX_MAJOR 1)
+set(PAWNX_MINOR 0)
+set(PAWNX_PATCH 0)
+set(PAWNX_VERSION ${PAWNX_MAJOR}.${PAWNX_MINOR}.${PAWNX_PATCH})
+set(VERSION_STR ${PAWNX_VERSION})
 
 # check for optional include files
 include(CheckIncludeFile)

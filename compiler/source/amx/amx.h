@@ -291,7 +291,7 @@ typedef struct tagAMX_NATIVE_INFO {
 #endif
 #define sEXPMAX         19      /* maximum name length for file version <= 6 */
 #ifndef sNAMEMAX
-  #define sNAMEMAX      31      /* maximum name length of symbol name */
+  #define sNAMEMAX      63      /* maximum name length of symbol name (open.mp / pawn-lang 3.10 use the longer limit; the .amx name table is variable-length) */
 #endif
 
 typedef struct tagAMX_FUNCSTUB {

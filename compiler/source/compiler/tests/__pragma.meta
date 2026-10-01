@@ -8,7 +8,7 @@ __pragma.pwn(40) : warning 234: function is deprecated (symbol "NakedFunc") - us
 __pragma.pwn(43) : warning 207: unknown #pragma
 __pragma.pwn(44) : warning 207: unknown #pragma
 __pragma.pwn(48) : warning 207: unknown #pragma
-__pragma.pwn(62) : warning 200: symbol "long_name2_zzzzzzzz_zzzzzzzzz_z" is truncated to 31 characters
+__pragma.pwn(62) : warning 200: symbol "long_name2_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" is truncated to 63 characters
 __pragma.pwn(66) : warning 207: unknown #pragma
 __pragma.pwn(67) : warning 207: unknown #pragma
 __pragma.pwn(68) : warning 207: unknown #pragma

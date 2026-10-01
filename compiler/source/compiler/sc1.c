@@ -1583,7 +1583,9 @@ static void setconfig(char *root)
 
 static void setcaption(void)
 {
-  pc_printf("Pawn compiler " VERSION_STR "\t \t \tCopyright (c) 1997-2006, ITB CompuPhase\n\n");
+  pc_printf("PawnX " PAWNX_VERSION "  (Pawn " PAWN_BASE_STR " language base)\n"
+            "Copyright (c) 1997-2006 ITB CompuPhase\n"
+            "PawnX extensions, 2026\n\n");
 }
 
 static void about(void)

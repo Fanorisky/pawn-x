@@ -55,11 +55,11 @@ main()
 	// should ignore them.
 	__pragma("warning push ", "warning disable 200  ");
 	new
-		long_name_zzzzzzzzz_zzzzzzzzz_zzzzzzzzz_ __pragma("unused"),
+		long_name_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz __pragma("unused"),
 		// `__pragma("warning")` takes effect immediately, so the compiler
 		// should warn that the name of the next variable is too long.
-		// warning 200: symbol "long_name2_zzzzzzzz_zzzzzzzzz_z" is truncated to 31 characters
-		__pragma("warning enable 200   ", "unused") long_name2_zzzzzzzz_zzzzzzzzz_zzzzzzzzz_ __pragma("unused");
+		// warning 200: symbol "long_name2_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" is truncated to 63 characters
+		__pragma("warning enable 200   ", "unused") long_name2_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz __pragma("unused");
 	__pragma("warning pop    ");
 
 	// Warn if the parameter of "warning disable" is not a number.
