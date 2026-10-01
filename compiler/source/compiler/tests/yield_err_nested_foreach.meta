@@ -1,6 +1,6 @@
 {
   'test_type': 'output_check',
   'errors': """
-yield_err_nested_foreach.pwn(15) : error 099: a "yield" cannot appear where stack storage is live (e.g. inside a nested "foreach") in v1
+yield_err_nested_foreach.pwn(21) : error 099: a "yield" cannot appear where stack storage is live (e.g. inside a nested "foreach") in v1
 """
 }

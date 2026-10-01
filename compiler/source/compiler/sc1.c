@@ -5771,28 +5771,32 @@ static int declloc(int fstatic)
       stgset(TRUE);
       assert(stgidx==0);
       staging_start=stgidx;
-    } else if (pc_generator && ident==iARRAY
-               && (curfunc->usage & uASYNC)!=0) {
-      /* An array/string local of an "async" coroutine is LIFTED into the state
-       * block, exactly like a scalar local -- it just occupies "size" consecutive
-       * block cells instead of one. Because the block B is a stable arena slot in
-       * the data segment, the array's cells LIVE there permanently: they need NO
-       * save/restore across a suspend (the discarded stack frame never held them).
-       * address() in sc4.c already computes a lifted symbol's base as B+addr, an
-       * absolute data address, so indexing/passing/fill/copy all work unchanged;
-       * only the initializer path (fillarray/copyarray) is taught the lifted base
-       * below. "declared"/the stack are untouched, so the frame stays at the
-       * generator baseline and the "live stack storage across a suspend" guard is
-       * happy.
+    } else if (pc_generator && ident==iARRAY) {
+      /* A fixed-size array/string local of ANY coroutine generator ("yield" or
+       * "async") is LIFTED into the state block, exactly like a scalar local --
+       * it just occupies "size" consecutive block cells instead of one. Because
+       * the block B is a stable arena slot in the data segment, the array's
+       * cells LIVE there permanently: they need NO save/restore across a suspend
+       * (the discarded stack frame never held them), so no stack snapshot is
+       * required. address() in sc4.c computes a lifted symbol's base as B+addr,
+       * an absolute data address, so indexing/passing/fill/copy all work
+       * unchanged; only the initializer path (fillarray/copyarray) is taught the
+       * lifted base below. "declared"/the stack are untouched, so the frame stays
+       * at the generator baseline and the "live stack storage across a suspend"
+       * guard is happy.
        *
-       * MULTI-DIMENSIONAL arrays (Task 2, exp 012) lift too: "size" is the FULL
-       * flattened cell count (indirection vector + data), so reserving "size"
-       * block cells covers the whole array. A multi-dim array's indirection
-       * vector holds byte offsets RELATIVE TO THE ARRAY BASE (see
-       * adjust_indirectiontables()) -- position-independent -- and the vector is
-       * built into the block by the same copyarray() path as the data, so
-       * indexing grid[i][j] (base B+addr from address(), plus a relative offset
-       * read back from the vector via load.i) follows with no further work. */
+       * This was gated to "async" only; extending it to "yield" generators
+       * (2026-09-29) lifts the old error 096 ("a local array cannot span a
+       * yield") -- the block model is identical for the two (only gen_reserved()
+       * differs), so the same lift works. Verified for 1-D, multi-dimensional,
+       * and large arrays.
+       *
+       * MULTI-DIMENSIONAL arrays lift too: "size" is the FULL flattened cell
+       * count (indirection vector + data), so reserving "size" block cells
+       * covers the whole array. The indirection vector holds byte offsets
+       * RELATIVE TO THE ARRAY BASE (adjust_indirectiontables()) -- position
+       * independent -- and is built into the block by the same copyarray() path
+       * as the data, so indexing grid[i][j] follows with no further work. */
       int slot=curfunc->genlocals;
       sym=addvariable(name,(slot+gen_reserved(curfunc))*sizeof(cell),ident,sLOCAL,
                       tag,dim,numdim,idxtag,pc_nestlevel);
@@ -5800,19 +5804,6 @@ static int declloc(int fstatic)
       curfunc->genlocals=slot+(int)size;   /* reserve "size" block cells (flattened) */
       /* fall through to the array initializer path (fillarray/copyarray), which
        * now emits against the lifted base; do NOT allocate on the stack. */
-    } else if (pc_generator && ident==iARRAY) {
-      /* array/string locals are not lifted for a plain "yield"/foreach generator
-       * (only "async" coroutines lift arrays -- see the branch above, which now
-       * covers both 1-D and multi-dimensional arrays). Emitting the on-stack
-       * allocation below would unbalance the frame across a suspend and crash at
-       * run time, so reject it now; the error fails the compile, so no broken
-       * binary is produced. Register the symbol (so later references to it resolve
-       * rather than cascading an "undefined symbol" error) but skip the on-stack
-       * alloc/init path below. */
-      error(96);                /* a local array cannot span a "yield" */
-      addvariable(name,-(declared+1)*sizeof(cell),ident,sLOCAL,
-                  tag,dim,numdim,idxtag,pc_nestlevel);
-      continue;
     } else {
       declared+=(int)size;      /* variables are put on stack, adjust "declared" */
       sym=addvariable(name,-declared*sizeof(cell),ident,sLOCAL,
@@ -9758,6 +9749,64 @@ static int dofor(void)
   return index;
 }
 
+/*  foreach_gen_store / foreach_gen_load - raw access to a coroutine state-block
+ *  slot by BYTE OFFSET (no symbol). The block base B lives in the hidden
+ *  "localsbase" frame cell (pc_genlocalsbase); the slot's absolute data address
+ *  is B+off. These mirror the lifted-local access in sc4.c but take an offset
+ *  directly, so "doforeach" can park its own hidden walk state (the set base and
+ *  the cursor value) in the block. Living in the block, that state survives a
+ *  "yield" in the loop body -- which is exactly what lets a plain-set "foreach"
+ *  appear inside a generator (the err-099 sugar).
+ */
+static void foreach_gen_store(cell off)
+{
+  stgwrite("\tpush.pri\n");            /* save the value to store */
+  code_idx+=opcodes(1);
+  stgwrite("\tload.s.pri ");           /* PRI = B (state-block base) */
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");                /* PRI = B + off (slot address) */
+  outval(off,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tmove.alt\n");            /* ALT = B + off */
+  code_idx+=opcodes(1);
+  stgwrite("\tpop.pri\n");             /* PRI = the value again */
+  code_idx+=opcodes(1);
+  stgwrite("\tstor.i\n");              /* [B + off] = PRI */
+  code_idx+=opcodes(1);
+}
+
+static void foreach_gen_load(cell off)
+{
+  stgwrite("\tload.s.pri ");           /* PRI = B (state-block base) */
+  outval(pc_genlocalsbase,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tadd.c ");                /* PRI = B + off (slot address) */
+  outval(off,TRUE);
+  code_idx+=opcodes(1)+opargs(1);
+  stgwrite("\tload.i\n");              /* PRI = [B + off] */
+  code_idx+=opcodes(1);
+}
+
+/*  foreach_store_loopvar - bind the loop variable to the value in PRI, choosing
+ *  the addressing mode from the symbol: a lifted/captured var stores through the
+ *  state block (survives a yield), a plain local through "stor.s.pri", a global
+ *  through "stor.pri". PRI holds the value on entry.
+ */
+static void foreach_store_loopvar(symbol *loopsym,cell iaddr)
+{
+  if ((loopsym->usage & (uLIFTED|uCAPTURED))!=0) {
+    foreach_gen_store(loopsym->addr);
+  } else {
+    if (loopsym->vclass==sLOCAL)
+      stgwrite("\tstor.s.pri ");
+    else
+      stgwrite("\tstor.pri ");
+    outval(iaddr,TRUE);
+    code_idx+=opcodes(1)+opargs(1);
+  } /* if */
+}
+
 /*  doforeach
  *
  *  Native compact-set iteration statement:
@@ -9832,13 +9881,27 @@ static int doforeach(void)
   if (isnew) {
     if (findloc(varname)!=NULL && findloc(varname)->compound==pc_nestlevel)
       error(21,varname);        /* symbol already defined */
-    declared+=1;                /* the variable is put on the stack */
-    iaddr=-declared*(cell)sizeof(cell);
-    loopsym=addvariable(varname,iaddr,iVARIABLE,sLOCAL,0,dim,0,idxtag,pc_nestlevel);
-    modstk(-(int)sizeof(cell));
-    assert(curfunc!=NULL);
-    if (curfunc->x.stacksize<declared+1)
-      curfunc->x.stacksize=declared+1;
+    if (pc_generator) {
+      /* inside a coroutine generator the loop variable is LIFTED into the state
+       * block, exactly like any other generator scalar local: its value then
+       * survives a "yield" in the loop body, and "declared"/the stack stay at
+       * the generator baseline so the err-099 guard is satisfied. Access is
+       * emitted against "localsbase" (see foreach_store_loopvar / rvalue()). */
+      int slot=curfunc->genlocals;
+      iaddr=(cell)(slot+gen_reserved(curfunc))*sizeof(cell);
+      loopsym=addvariable(varname,iaddr,iVARIABLE,sLOCAL,0,dim,0,idxtag,pc_nestlevel);
+      loopsym->usage|=uLIFTED;
+      curfunc->genlocals=slot+1;
+      assert(curfunc!=NULL);
+    } else {
+      declared+=1;                /* the variable is put on the stack */
+      iaddr=-declared*(cell)sizeof(cell);
+      loopsym=addvariable(varname,iaddr,iVARIABLE,sLOCAL,0,dim,0,idxtag,pc_nestlevel);
+      modstk(-(int)sizeof(cell));
+      assert(curfunc!=NULL);
+      if (curfunc->x.stacksize<declared+1)
+        curfunc->x.stacksize=declared+1;
+    } /* if */
   } else {
     loopsym=findloc(varname);
     if (loopsym==NULL)
@@ -10016,12 +10079,7 @@ static int doforeach(void)
     code_idx+=opcodes(1)+opargs(1);
 
     /* bind the loop variable to the returned value */
-    if (loopsym->vclass==sLOCAL)
-      stgwrite("\tstor.s.pri ");
-    else
-      stgwrite("\tstor.pri ");
-    outval(iaddr,TRUE);
-    code_idx+=opcodes(1)+opargs(1);
+    foreach_store_loopvar(loopsym,iaddr);
 
     statement(NULL,FALSE);      /* the loop body; "i" is live here */
 
@@ -10173,12 +10231,7 @@ static int doforeach(void)
     outval(curaddr,TRUE);
     code_idx+=opcodes(1)+opargs(1);
     /* bind the loop variable to the returned value */
-    if (loopsym->vclass==sLOCAL)
-      stgwrite("\tstor.s.pri ");
-    else
-      stgwrite("\tstor.pri ");
-    outval(iaddr,TRUE);
-    code_idx+=opcodes(1)+opargs(1);
+    foreach_store_loopvar(loopsym,iaddr);
 
     statement(NULL,FALSE);      /* the loop body; "i" is live here */
 
@@ -10209,6 +10262,127 @@ static int doforeach(void)
   if (reverse)
     needtoken(')');             /* close "Reverse(" */
   needtoken(')');               /* close "foreach(" */
+
+  if (pc_generator && validarray) {
+    /* --- GENERATOR + PLAIN-SET PATH: foreach (new i : someSet) inside a
+     * coroutine generator (the err-099 sugar). ---
+     * The stack-based fast-walk below parks its cursor cells (index, count,
+     * position) on the stack, which a "yield" in the loop body would discard
+     * on suspend -- hence the old error 099. Here the whole walk state is
+     * value-based and LIFTED into the generator's state block instead: two
+     * hidden block slots hold the set base address and the current member
+     * value, and the loop variable is already lifted (above). Nothing is put
+     * on the stack ("declared" stays at the generator baseline), so a "yield"
+     * in the body is legal, and the lifted base/cursor survive the suspend.
+     *
+     * The advance is purely value-based -- cur = setnext(base, cur) (setprev
+     * for Reverse) -- so it is removal-safe (setnext of the last-visited value
+     * still returns the correct successor) without the O(1) fast path the
+     * on-stack walk uses. A generator trades that micro-optimisation for the
+     * ability to suspend mid-walk. */
+    symbol *n_get=findglb("setget",sGLOBAL);
+    symbol *n_len=findglb("setlen",sGLOBAL);
+    symbol *n_step=findglb(reverse ? "setprev" : "setnext",sGLOBAL);
+    cell basegenoff,curgenoff;
+    int bslot,cslot;
+    if (n_get==NULL || n_len==NULL || n_step==NULL) {
+      error(255,"the \"foreach\" keyword needs #include <foreach> (it lowers to the set* natives)");
+    } else {
+      /* two hidden lifted slots: the set base and the cursor value */
+      bslot=curfunc->genlocals;
+      basegenoff=(cell)(bslot+gen_reserved(curfunc))*sizeof(cell);
+      curfunc->genlocals=bslot+1;
+      cslot=curfunc->genlocals;
+      curgenoff=(cell)(cslot+gen_reserved(curfunc))*sizeof(cell);
+      curfunc->genlocals=cslot+1;
+
+      /* base = the operand address (still in PRI from parse_foreach_operand) */
+      foreach_gen_store(basegenoff);
+
+      /* cur = setget(base, reverse ? setlen(base)-1 : 0): the first member in
+       * walk order, or -1 when the set is empty (setget clamps out-of-range). */
+      if (reverse) {
+        foreach_gen_load(basegenoff);
+        pushreg(sPRI);
+        pushval(1*(cell)sizeof(cell));
+        ffcall(n_len,NULL,1);            /* PRI = count */
+        markusage(n_len,uREAD);
+        addconst(-1);                    /* index = count-1 (-1 if empty) */
+        pushreg(sPRI);                   /* arg2 = index */
+      } else {
+        ldconst(0,sPRI);
+        pushreg(sPRI);                   /* arg2 = index 0 */
+      } /* if */
+      foreach_gen_load(basegenoff);
+      pushreg(sPRI);                     /* arg1 = set */
+      pushval(2*(cell)sizeof(cell));
+      ffcall(n_get,NULL,2);              /* PRI = first member value, or -1 */
+      markusage(n_get,uREAD);
+      foreach_gen_store(curgenoff);      /* cur = PRI */
+
+      /* "break"/"continue" clean only the body's own locals: this loop adds
+       * NO stack cells, so both unwind to the current "declared". */
+      ptr=readwhile();
+      assert(ptr!=NULL);
+      ptr[wqBRK]=(int)declared;
+      ptr[wqCONT]=(int)declared;
+      ptr[wqLVL]=pc_nestlevel+1;
+
+      lbl_cond=getlabel();
+      setline(TRUE);
+      setlabel(lbl_cond);
+      /* terminate when cur == -1 (empty / walked off a reverse start) or
+       * cur == cellmin (setnext/setprev signalled end). PRI keeps cur across
+       * both tests (const.alt/jeq touch neither PRI). */
+      foreach_gen_load(curgenoff);       /* PRI = cur */
+      stgwrite("\tconst.alt ");
+      outval(-1,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tjeq ");
+      outval(wq[wqEXIT],TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tconst.alt ");
+      outval(generator_iterstop,TRUE);   /* == cellmin */
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tjeq ");
+      outval(wq[wqEXIT],TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      /* bind the loop variable to cur (still in PRI) */
+      foreach_store_loopvar(loopsym,iaddr);
+
+      statement(NULL,FALSE);             /* the loop body; "i" is live, may yield */
+
+      setlabel(wq[wqLOOP]);              /* "continue" lands here: advance by value */
+      foreach_gen_load(curgenoff);       /* PRI = cur */
+      pushreg(sPRI);                     /* arg2 = value */
+      foreach_gen_load(basegenoff);      /* PRI = base */
+      pushreg(sPRI);                     /* arg1 = set */
+      pushval(2*(cell)sizeof(cell));
+      ffcall(n_step,NULL,2);             /* PRI = next/prev value, or cellmin */
+      markusage(n_step,uREAD);
+      foreach_gen_store(curgenoff);      /* cur = PRI */
+      jumplabel(lbl_cond);
+      setlabel(wq[wqEXIT]);
+      delwhile();
+    } /* if natives present */
+
+    /* cleanup: no stack cells were pushed (state is lifted), so "declared" is
+     * unchanged; just remove the loop-variable symbol and free any operand
+     * heap. Guard the modstk defensively in case the body left the stack high
+     * (it should not; body blocks clean their own locals). */
+    if (declared>save_decl) {
+      destructsymbols(&loctab,pc_nestlevel);
+      modstk((int)(declared-save_decl)*sizeof(cell));
+      declared=save_decl;
+    } /* if */
+    testsymbols(&loctab,pc_nestlevel,FALSE,TRUE);   /* look for unused block locals */
+    delete_symbols(&loctab,pc_nestlevel,FALSE,TRUE);
+    if (operand_heap>0)
+      modheap(-(int)operand_heap*(int)sizeof(cell));
+    pc_nestlevel=save_nestlevel;
+    endlessloop=save_endlessloop;
+    return tFOREACH;
+  } /* if generator + plain set */
 
   /* hidden loop-scoped cells: the cached operand address (row base), the
    * running index k and the snapshot count. "modstk" only adjusts STK, so the

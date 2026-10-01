@@ -28,7 +28,7 @@
  *  setlen/setfree/setrandom/setget/setalloc) are natives.
  *
  *  Note: pawn-x reserves `foreach` as a keyword, so it is a standalone
- *  REPLACEMENT for YSI's `foreach`, not a co-resident of it — do not include
+ *  REPLACEMENT for YSI's `foreach`, not a co-resident of it -- do not include
  *  YSI's y_iterate/y_foreach in the same script.
  * </library>
  */
@@ -201,21 +201,35 @@ const ITER_BREAK = cellmin;   // alias of ITER_STOP: `break`-style naming (mirro
  *    }
  *    foreach (new v : Count(3)) { }  // v = 0, 1, 2
  *
- *  Unlike YSI, no `#define Iterator@Name iteryield` opt-in is needed — pawn-x
+ *  Unlike YSI, no `#define Iterator@Name iteryield` opt-in is needed -- pawn-x
  *  detects the `yield` in the body and compiles the function as a coroutine.
  *  A coroutine takes ordinary user parameters (e.g. `Steps(step, target)`); it
  *  resumes from its saved continuation, so there is no `cur` seed parameter.
  *
+ *  Locals across a `yield`: scalar locals AND fixed-size arrays/strings
+ *  (including multi-dimensional) may span a `yield` -- they are lifted into the
+ *  generator state block, so no stack snapshot is needed.
+ *
+ *  `foreach` over a set across a `yield`: a `foreach (new v : someSet)` may
+ *  appear directly inside a coroutine and its body may `yield`. The loop
+ *  variable and the walk state (set base + current-member cursor) are lifted
+ *  into the state block, so they survive the suspend; the advance is
+ *  value-based (`setnext`/`setprev`), so it stays removal-safe and works for
+ *  `Reverse()`. This does NOT extend to iterating ANOTHER generator from inside
+ *  a coroutine (`foreach (v : Gen())` then `yield`): that parks the driver's
+ *  state on the stack and is still rejected (error 099).
+ *
  *  v1 restrictions (each a real diagnostic):
- *   - scalar locals only: a local array or string that spans a `yield`
- *     is rejected (error 096).
  *   - statement position only: `yield return <expr>;` is a statement, it is
  *     not an expression and cannot appear on the right of `=` (error 097).
  *   - a `yield` outside an `iterfunc` is rejected (error 095).
  *   - a coroutine cannot declare a reference (`&x`) parameter (error 098);
  *     plain scalar parameters are fine.
+ *   - a `yield` while iterating another generator (`foreach (v : Gen())`) is
+ *     rejected (error 099); a `yield` inside a plain `for`/`while`, or inside a
+ *     `foreach` over a set, is fine.
  *
  *  Host requirement: coroutine resume relies on `LCTRL 6` / `SCTRL 6` (get/set
- *  the code instruction pointer) — the same host dependency as YSI's yield, so
+ *  the code instruction pointer) -- the same host dependency as YSI's yield, so
  *  any AMX host that runs YSI yield runs this.
  */

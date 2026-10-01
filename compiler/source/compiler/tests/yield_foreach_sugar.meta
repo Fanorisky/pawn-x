@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+scaled=110
+
+mixed=14021
+
+rev=7,1 n=2
+
+yield_foreach_sugar.amx returns 0
+"""
+}

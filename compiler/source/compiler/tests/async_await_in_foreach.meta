@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+total=607
+
+async_await_in_foreach.amx returns 0
+"""
+}

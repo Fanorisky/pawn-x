@@ -2,24 +2,28 @@
 #include <async>
 #include <foreach>
 
-/* An "await" cannot appear where stack storage is live. A "foreach" allocates
- * loop/hidden cells on the stack; those are not lifted into the state block, so
- * a suspend inside the loop would rebuild the frame without them on resume. The
- * compiler must reject it rather than miscompile. */
-new g_set[8];
+/* An "await" cannot appear where stack storage is live. Iterating a PLAIN SET
+ * inside an "async" is fine (its walk state is lifted into the state block --
+ * see async_await_in_foreach), but iterating ANOTHER GENERATOR is not: the
+ * coroutine operand parks its state-block base and per-step argument cells on
+ * the stack, which are not lifted. A suspend inside the loop would rebuild the
+ * frame without them on resume, so the compiler must reject it. */
+
+iterfunc Leaf()
+{
+    yield return 1;
+}
 
 async Bad()
 {
-    foreach (new x : g_set)
+    foreach (new v : Leaf())
     {
-        new got = await x;
+        new got = await v;
         printf("%d\n", got);
     }
 }
 
 main()
 {
-    setinit(g_set);
-    setadd(g_set, 3);
     Async_Start(Bad);
 }

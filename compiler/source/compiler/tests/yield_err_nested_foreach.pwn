@@ -1,25 +1,28 @@
 #include <console>
 #include <foreach>
 
-// A "yield" cannot appear where stack storage is live. The inner "foreach"
-// allocates loop/hidden cells on the stack, pushing the local count above the
-// generator prologue's single reserved cell. Those cells are NOT lifted into
-// the state block, so on resume the frame is rebuilt without them and the inner
-// loop's state is garbage -- an unbounded run of "d 0" (a server hang) with no
+// A "yield" cannot appear where stack storage is live. Iterating a PLAIN SET
+// inside a generator is fine (its walk state is lifted into the state block --
+// see yield_foreach_sugar), but iterating ANOTHER GENERATOR is not: the
+// coroutine operand parks its state-block base and per-step argument cells on
+// the stack, and those are not lifted. On resume the frame is rebuilt without
+// them and the inner driver's state is garbage -- an unbounded hang with no
 // diagnostic. The compiler must reject it (error 099) rather than miscompile.
-new g_set[8];
+
+iterfunc Leaf()
+{
+	yield return 1;
+	yield return 2;
+}
 
 iterfunc Delegate()
 {
-	foreach (new x : g_set)
-		yield return x * 100;
+	foreach (new v : Leaf())
+		yield return v * 100;
 }
 
 main()
 {
-	setinit(g_set);
-	setadd(g_set, 3);
-	setadd(g_set, 7);
-	foreach (new v : Delegate())
-		printf("d %d\n", v);
+	foreach (new x : Delegate())
+		printf("d %d\n", x);
 }

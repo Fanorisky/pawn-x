@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+sum=60
+
+yield_set_walk.amx returns 0
+"""
+}

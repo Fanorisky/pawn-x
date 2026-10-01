@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+emit=60
+
+acc=14
+
+grid=10
+
+yield_array_lift.amx returns 0
+"""
+}
