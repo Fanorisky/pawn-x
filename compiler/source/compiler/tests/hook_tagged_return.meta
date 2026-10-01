@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+A 7
+
+B 7
+
+granted=1
+
+hook_tagged_return.amx returns 0
+"""
+}

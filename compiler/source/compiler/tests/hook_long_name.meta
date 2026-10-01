@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+hookA p=5 row=42
+
+hookB p=5 row=42
+
+tail p=5 row=42
+
+hook_long_name.amx returns 0
+"""
+}

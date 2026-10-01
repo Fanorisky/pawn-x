@@ -2515,6 +2515,7 @@ static void dohook(void)
   cell statevar,stateval;
   symbol *hsym;
   hookgroup *grp;
+  int rettag;
 
   /* default-return declaration: "hook default <Callback> = <const>;" makes the
    * dispatcher return <const> on fall-through (all hooks CONTINUE) instead of the
@@ -2584,6 +2585,14 @@ static void dohook(void)
     needtoken('>');
   } /* if */
 
+  /* optional return tag: "hook Float:OnFoo(...)" / "hook bool:OnBar(...)" -- the
+   * hooked callback may carry a return tag, exactly like an ordinary public.
+   * pc_addtag(NULL) consumes a leading "Tag:" label if present (and only then:
+   * the "native"/"stock"/"function" modifiers are not labels, so a call-site
+   * hook is unaffected and its tag comes from the target). The tag is applied to
+   * the synthesised body below and flows to the dispatcher via hook_register. */
+  rettag=pc_addtag(NULL);
+
   tok=lex(&val,&str);
   /* call-site hook? "hook [<prio>] native|function|stock Name(args) body" hooks
    * an ordinary call target (experiment 010), distinct from the callback hook
@@ -2622,24 +2631,37 @@ static void dohook(void)
   seq= (grp!=NULL) ? grp->count : 0;
   sprintf(hidden,"_hook.%s.%d",callback,seq);
   if (strlen(hidden)>sNAMEMAX) {
-    /* the hidden name "_hook.<callback>.<seq>" must fit the symbol-name limit;
-     * a callback name close to sNAMEMAX (or an astronomical hook count) does
-     * not leave room */
-    error(200,callback,sNAMEMAX);   /* symbol too long */
-    lexclr(TRUE);
-    return;
+    /* the readable hidden name "_hook.<callback>.<seq>" does not fit the
+     * symbol-name limit (a very long callback name, e.g. a streamer callback,
+     * or an astronomical hook count). Fall back to a HASHED hidden name that
+     * always fits -- the same technique inline_hidden_name() uses -- so a long
+     * callback name is hookable rather than a hard failure. The hash is taken
+     * over the callback name; the readable "<seq>" suffix is kept so multiple
+     * hooks on one long-named callback still mint distinct bodies. The
+     * dispatcher references this body by symbol pointer (hook_register), never
+     * by reconstructing the name, so a hashed name needs no change elsewhere,
+     * and the hash is deterministic so both parse passes agree. */
+    unsigned long h=5381UL;
+    const char *q;
+    for (q=callback; *q!='\0'; ++q)
+      h=h*33UL+(unsigned char)*q;
+    sprintf(hidden,"_hook.%08lx.%d",h&0xffffffffUL,seq);
   } /* if */
 
   /* pre-create the hidden symbol and mark it "read" so that, in the write
    * pass, its body is not skipped as dead code before the dispatcher (emitted
-   * later) records the reference to it */
+   * later) records the reference to it. The body returns control sentinels
+   * (HOOK_CONTINUE/HOOK_STOP...), so it stays UNTAGGED even for a tagged
+   * callback; the return tag lives on the DISPATCHER (via hook_register), which
+   * is the public the host actually calls. */
   hsym=fetchfunc(hidden,0);
   if (hsym!=NULL)
     hsym->usage|=uREAD;
 
   /* parse the body exactly like an ordinary function, but under the hidden
    * name -- "hook" carries no class specifier, so the callback name is handed
-   * straight to newfunc() */
+   * straight to newfunc(). The body is untagged (it yields control sentinels);
+   * "rettag" is applied to the dispatcher below. */
   if (!newfunc(hidden,0,FALSE,FALSE,FALSE)) {
     error(10);                  /* illegal function or declaration */
     lexclr(TRUE);
@@ -2654,7 +2676,9 @@ static void dohook(void)
   argcount=0;
   while (hsym->dim.arglist[argcount].ident!=0)
     argcount++;
-  hook_register(callback,hsym,argcount,hsym->tag,prio,hasstate,statevar,stateval);
+  /* the dispatcher (the public the host calls) carries the callback's return
+   * tag "rettag"; the body is untagged. hook_get_default/state/prio unchanged. */
+  hook_register(callback,hsym,argcount,rettag,prio,hasstate,statevar,stateval);
 }
 
 /*  doinline - parse an "inline [const] Name(params) { body }" nested-function
