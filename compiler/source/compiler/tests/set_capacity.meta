@@ -1,0 +1,24 @@
+{
+  'test_type': 'runtime',
+  'output': """
+cap=5
+
+empty=1
+
+space=5
+
+len=3
+
+space=2
+
+full=0
+
+full=1
+
+space=0
+
+empty=0
+
+set_capacity.amx returns 0
+"""
+}

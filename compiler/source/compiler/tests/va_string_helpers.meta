@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+len1=2
+
+len2=7
+
+len3=0
+
+va_string_helpers.amx returns 0
+"""
+}

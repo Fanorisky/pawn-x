@@ -1,0 +1,10 @@
+{
+  'test_type': 'runtime',
+  'output': """
+1
+
+2
+
+iter_nonnull.amx returns 0
+"""
+}

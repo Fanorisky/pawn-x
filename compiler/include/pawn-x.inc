@@ -37,6 +37,9 @@
  *                   needs no include.
  *   - <timers>    : thin `Timer_Repeat`/`Timer_Once`/`Timer_Stop` wrappers over
  *                   the host `SetTimer` natives (deferred/stateful work: <async>).
+ *   - <varargs>   : runtime-index string varargs (`va_strlen`/`va_getstring`/
+ *                   `PrintArg`) for reading a string argument chosen at runtime,
+ *                   where `___(N)` needs a compile-time N.
  *
  *  Varargs forwarding (`___`) is a compiler keyword and needs no include.
  * </library>
@@ -48,3 +51,4 @@
 #include <dynhook>
 #include <hash>
 #include <timers>
+#include <varargs>

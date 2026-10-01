@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+0
+
+1
+
+2
+
+3
+
+iter_n.amx returns 0
+"""
+}

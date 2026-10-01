@@ -45,6 +45,40 @@ native setalloc(array[]);          // allocate + return the smallest free id
 native setnext(const array[], value);  // smallest member > value, or ITER_STOP if none (foreach uses this: removal-safe)
 native setprev(const array[], value);  // largest member < value, or ITER_STOP if none (Reverse uses this)
 
+// Capacity-aware queries. The set's capacity is its array size minus the count
+// slot; `size` is filled by the compiler from `sizeof` at the call site, so you
+// just call `setcap(myset)`. These are the native replacements for YSI's
+// Iter_Size / Iter_Available / Iter_IsFull / Iter_IsEmpty.
+
+/// <summary>How many values the set can hold (array size minus the count slot).</summary>
+stock setcap(const array[], size = sizeof array)
+	return size - 1;
+
+/// <summary>Free slots remaining before the set is full.</summary>
+stock setspace(const array[], size = sizeof array)
+	return (size - 1) - setlen(array);
+
+/// <summary>1 when the set has no free slots left, else 0.</summary>
+stock setisfull(const array[], size = sizeof array)
+	return setlen(array) >= size - 1;
+
+/// <summary>1 when the set holds no values, else 0.</summary>
+stock setisempty(const array[])
+	return setlen(array) == 0;
+
+/// <summary>Smallest member (first in ascending order), or -1 if empty.
+/// The native replacement for YSI's Iter_First / cursor Begin.</summary>
+stock setfirst(const array[])
+	return setget(array, 0);
+
+/// <summary>Largest member (last in ascending order), or -1 if empty.
+/// The native replacement for YSI's Iter_Last.</summary>
+stock setlast(const array[])
+{
+	new n = setlen(array);
+	return n != 0 ? setget(array, n - 1) : -1;
+}
+
 /**
  * Lazy generators (`iterfunc`): a function called once per iteration that
  * returns the next value, or ITER_STOP to end. The first call receives

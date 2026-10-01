@@ -71,6 +71,51 @@ iterfunc stock Powers(cur, base, limit)
 }
 
 /**
+ * N(count): yields 0, 1, ..., count-1. Empty when count <= 0. The convenience
+ * short form of Range(0, count) (mirrors YSI's `N` iterator).
+ */
+iterfunc stock N(cur, count)
+{
+	if (cur == ITER_STOP)
+		return (count > 0) ? 0 : ITER_STOP;
+	if (cur + 1 < count)
+		return cur + 1;
+	return ITER_STOP;
+}
+
+/**
+ * Filter(set, pred): yields the members of `set` (ascending) for which the
+ * predicate returns non-zero. The predicate is an inline closure, so it can
+ * capture and test the enclosing locals:
+ *
+ *   inline IsAdmin(id) { return IsPlayerAdmin(id); }
+ *   foreach (new id : Filter(players, using inline IsAdmin)) { ... }
+ *
+ * pawn-x's native replacement for YSI's Filter / Null / NonNull family: those
+ * are just Filter with a specific predicate.
+ */
+iterfunc stock Filter(cur, const src[], Callback:pred)
+{
+	new v = setnext(src, cur);              // cur == ITER_STOP seed -> first member
+	while (v != ITER_STOP && !pred(v))
+		v = setnext(src, v);
+	return v;
+}
+
+/**
+ * NonNull(set): yields the non-zero members of `set`, ascending. The canned
+ * Filter for the common "skip the 0 slot" case, so no predicate is needed
+ * (YSI's NonNull iterator).
+ */
+iterfunc stock NonNull(cur, const src[])
+{
+	new v = setnext(src, cur);
+	while (v == 0)                          // skip a 0 member; ITER_STOP (cellmin) != 0 ends
+		v = setnext(src, v);
+	return v;
+}
+
+/**
  * Fib(limit): yields the Fibonacci numbers 1, 1, 2, 3, ... while < limit.
  * A stateful generator: the reference `acc` holds the value two positions back
  * (which `cur` alone cannot carry) and persists across iterations.

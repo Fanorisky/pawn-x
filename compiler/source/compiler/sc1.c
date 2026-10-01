@@ -9925,10 +9925,12 @@ static int doforeach(void)
           break;
         } /* if */
         argident=expression(&val,NULL,NULL,FALSE);   /* leaves the value in PRI */
-        if (argident==iARRAY || argident==iREFARRAY)
-          error(35,nuser+2);    /* argument type mismatch: arrays are not supported here */
-        else if (argident==iCONSTEXPR)
+        if (argident==iCONSTEXPR)
           ldconst(val,sPRI);    /* a constant is not auto-loaded -- force it into PRI */
+        /* iARRAY/iREFARRAY (and a Callback: from "using inline"): expression()
+         * left the array/record ADDRESS in PRI. Cache and push it like a scalar
+         * cell, so the generator receives it as a by-reference array / Callback
+         * parameter. This lets an iterfunc consume a set or take a predicate. */
         declared+=1;
         argaddr[nuser]=-declared*(cell)sizeof(cell);
         modstk(-(int)sizeof(cell));
@@ -10089,10 +10091,12 @@ static int doforeach(void)
           break;
         } /* if */
         argident=expression(&val,NULL,NULL,FALSE);   /* leaves the value in PRI */
-        if (argident==iARRAY || argident==iREFARRAY)
-          error(35,nuser+2);    /* argument type mismatch: arrays are not supported here */
-        else if (argident==iCONSTEXPR)
+        if (argident==iCONSTEXPR)
           ldconst(val,sPRI);    /* a constant is not auto-loaded -- force it into PRI */
+        /* iARRAY/iREFARRAY (and a Callback: from "using inline"): expression()
+         * left the array/record ADDRESS in PRI. Cache and push it like a scalar
+         * cell, so the generator receives it as a by-reference array / Callback
+         * parameter. This lets an iterfunc consume a set or take a predicate. */
         declared+=1;
         argaddr[nuser]=-declared*(cell)sizeof(cell);
         modstk(-(int)sizeof(cell));

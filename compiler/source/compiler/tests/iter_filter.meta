@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+1
+
+3
+
+5
+
+iter_filter.amx returns 0
+"""
+}

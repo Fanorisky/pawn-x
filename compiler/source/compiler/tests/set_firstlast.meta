@@ -1,0 +1,14 @@
+{
+  'test_type': 'runtime',
+  'output': """
+e_first=-1
+
+e_last=-1
+
+first=10
+
+last=30
+
+set_firstlast.amx returns 0
+"""
+}
