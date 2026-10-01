@@ -1,0 +1,12 @@
+{
+  'test_type': 'runtime',
+  'output': """
+set Tick ms=250 repeat=1 fmt=i a=7
+h=12345
+kill 12345
+set Tick ms=500 repeat=1 fmt=i a=9
+h2=12345
+kill 12345
+timer_repeat_stop.amx returns 0
+"""
+}

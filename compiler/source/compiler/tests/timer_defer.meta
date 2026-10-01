@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+timer=Greet ms=500 repeat=0 fmt=ii args=7,3
+timer=Greet ms=1000 repeat=0 fmt=ii args=9,1
+timer_defer.amx returns 0
+"""
+}

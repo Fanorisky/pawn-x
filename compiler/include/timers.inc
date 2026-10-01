@@ -23,6 +23,26 @@
  * </library>
  */
 
+/* --- compiler-facing timer runtime interface -------------------------------
+ * The native "task"/"ptask"/"timer"/"defer"/"repeat"/"stop" keywords do NOT
+ * emit a host timer native directly; they lower to calls to THESE three pawn-x
+ * names, so the compiler stays host-agnostic (the same way <async>'s scheduler
+ * adapter lives in async_omp.inc, not in the compiler). This include is the
+ * adapter: it binds them to the SA-MP/open.mp timer natives. A different host,
+ * or a test harness, provides its own binding of the same three names (e.g. a
+ * stub) and the compiler output is unchanged.
+ *
+ * They are thin forwarding stocks (not "native ... = SetTimer" aliases) so the
+ * binding also works where the host natives are themselves stubbed (tests). An
+ * unused one is stripped, so a script that only uses "task" never references
+ * SetTimerEx, etc. */
+stock Timer_Set(const func[], interval, bool:repeat)
+	return SetTimer(func, interval, repeat);
+stock Timer_SetEx(const func[], interval, bool:repeat, const format[], {Float,_}:...)
+	return SetTimerEx(func, interval, repeat, format, ___);
+stock Timer_Kill(timerid)
+	return KillTimer(timerid);
+
 /// <summary>Schedule <c>func</c> to fire every <c>interval</c> ms. Returns the timer handle.</summary>
 stock Timer:Timer_Repeat(const func[], interval)
 	return Timer:SetTimer(func, interval, true);

@@ -2406,6 +2406,14 @@ static int primary(value *lval)
      * value in PRI. */
     return doawait(lval);
   } /* if */
+  if (tok==tREPEAT) {
+    /* "repeat Name[ms](args)": start a REPEATING timer, leaving its handle in
+     * PRI (SetTimerEx returns the id). An expression -- unlike the "defer" and
+     * "stop" statements -- so it can be stored ("id = repeat Tick(pid)"). */
+    emit_timer_schedule(TRUE);
+    lval->ident=iEXPRESSION;
+    return FALSE;               /* rvalue, not an lvalue */
+  } /* if */
   if (tok==t__ASYNCSTART) {
     /* "__async_start(Fn, args...)" (exp 012): allocate a coroutine state block,
      * run it to its first "await", and yield the block B in PRI. Used in

@@ -555,6 +555,10 @@ enum {
   tTAGOF,
   tTASK,
   tTHEN,
+  tTIMER,
+  tDEFER,
+  tREPEAT,
+  tSTOP,
   tUSING,
   tWHILE,
   tYIELD,
@@ -824,6 +828,7 @@ SC_FUNC symbol *fetchfunc(char *name,int tag);
  * wrapper symbol its call sites must be redirected to; otherwise NULL. */
 SC_FUNC symbol *callhook_target_wrapper(const symbol *sym);
 SC_FUNC void inline_hidden_name(char *dst,const char *fname,const char *iname);
+SC_FUNC void emit_timer_schedule(int repeating);   /* shared "defer"/"repeat" lowering (sc1.c) */
 SC_FUNC char *operator_symname(char *symname,char *opername,int tag1,int tag2,int numtags,int resulttag);
 SC_FUNC void check_index_tagmismatch(char *symname,int expectedtag,int actualtag,int allowcoerce,int errline);
 SC_FUNC void check_tagmismatch(int formaltag,int actualtag,int allowcoerce,int errline);

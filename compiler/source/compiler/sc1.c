@@ -81,6 +81,9 @@ static void hook_emit_dispatchers(void);
 static void timers_reset(void);
 static void timers_emit(void);
 static void dotask(int perplayer);
+static void dotimer(void);
+static void dodefer(void);
+static void dostop(void);
 static void callhook_reset(void);
 static void callhook_emit(void);
 static void generator_emit_helper(void);
@@ -2084,6 +2087,13 @@ static void parse(void)
        * <players> set and calls the body per id). */
       dotask(TRUE);
       break;
+    case tTIMER:
+      /* "timer Name[interval](params) body": a one-shot timer FUNCTION. Unlike
+       * task it is NOT auto-registered; it is a plain public "Name" (called by
+       * name via SetTimerEx), invoked by "defer Name[ms](args)". The [interval]
+       * is the DEFAULT used by a bare "defer Name(args)". (YSI y_timers timer.) */
+      dotimer();
+      break;
     case t__STATIC_ASSERT:
     case t__STATIC_CHECK: {
       int use_warning=(tok==t__STATIC_CHECK);
@@ -2282,6 +2292,277 @@ static void timers_reset(void)
  *  ("@yt_Name" for task, "@pt_Name" for ptask); the task is recorded for
  *  timers_emit() to auto-register (ptask gets a synthesised per-player
  *  dispatcher "@ptd_Name"). */
+/* --- "timer"/"defer" one-shot timers (YSI y_timers timer/defer replacement) --
+ * "timer Name[interval](params) body" declares a plain public "Name" (SetTimerEx
+ * resolves it by name) and records "interval" as the default for a bare
+ * "defer Name(args)". "defer Name[ms](args)" schedules ONE call, lowering to
+ * SetTimerEx("Name", ms, false, "<fmt>", args) with <fmt> derived from the
+ * argument tags ('f' for a Float: arg, 's' for a string/array, 'i' otherwise).
+ * No plugin and no runtime scan -- just the host SetTimerEx. */
+typedef struct s_timerdefault {
+  struct s_timerdefault *next;
+  char name[sNAMEMAX+1];
+  cell interval;
+} timerdefault;
+static timerdefault *timerdefault_registry=NULL;   /* persists across passes */
+
+static void timerdefault_set(const char *name,cell interval)
+{
+  timerdefault *d;
+  for (d=timerdefault_registry; d!=NULL; d=d->next)
+    if (strcmp(d->name,name)==0) {
+      d->interval=interval;
+      return;
+    } /* if */
+  d=(timerdefault*)malloc(sizeof(timerdefault));
+  if (d==NULL) {
+    error(103);                     /* insufficient memory */
+    return;
+  } /* if */
+  strcpy(d->name,name);
+  d->interval=interval;
+  d->next=timerdefault_registry;
+  timerdefault_registry=d;
+}
+
+static int timerdefault_get(const char *name,cell *interval)
+{
+  timerdefault *d;
+  for (d=timerdefault_registry; d!=NULL; d=d->next)
+    if (strcmp(d->name,name)==0) {
+      *interval=d->interval;
+      return TRUE;
+    } /* if */
+  return FALSE;
+}
+
+static void dotimer(void)
+{
+  char name[sNAMEMAX+1];
+  cell val,interval;
+  char *str;
+  symbol *hsym;
+
+  if (!needtoken(tSYMBOL)) {
+    lexclr(TRUE);
+    return;
+  } /* if */
+  tokeninfo(&val,&str);
+  assert(strlen(str)<=sNAMEMAX);
+  strcpy(name,str);
+  if (!needtoken('[')) {
+    lexclr(TRUE);
+    return;
+  } /* if */
+  interval=0;
+  constexpr(&interval,NULL,NULL);   /* the DEFAULT interval for a bare "defer Name()" */
+  needtoken(']');
+  timerdefault_set(name,interval);
+  /* declare "Name" as a public and parse "(params) body" under it. A one-shot
+   * timer is not auto-registered (unlike task); defer schedules it on demand. */
+  hsym=fetchfunc(name,0);
+  if (hsym!=NULL)
+    hsym->usage|=uREAD|uPUBLIC|uFORWARD;   /* uFORWARD: its own prototype (no warning 235) */
+  if (!newfunc(name,0,TRUE,FALSE,FALSE)) {
+    error(10);                      /* illegal function or declaration */
+    lexclr(TRUE);
+    litidx=0;
+    return;
+  } /* if */
+  hsym=findglb(name,sGLOBAL);
+  if (hsym!=NULL && hsym->ident==iFUNCTN)
+    hsym->usage|=uPUBLIC|uREAD;
+}
+
+/* emit_timer_schedule - shared core of "defer" (repeating==0) and "repeat"
+ * (repeating==1). Reads "Name [interval] (args)", lowers to
+ * SetTimerEx("Name", interval, repeating, "<fmt>", args) and leaves the timer
+ * handle in PRI. Does NOT consume a terminator: "defer" is a statement (its
+ * wrapper reads ';' and discards PRI), "repeat" is an expression (primary() in
+ * sc3.c keeps PRI as the value). */
+SC_FUNC void emit_timer_schedule(int repeating)
+{
+  char name[sNAMEMAX+1];
+  char fmt[sMAXARGS+1];
+  cell argaddr[sMAXARGS];
+  cell val,interval,litstart,nameaddr,fmtaddr,intervaladdr;
+  char *str;
+  int nargs,k,haveinterval,interval_runtime,ident,tag,ntmp;
+  symbol *rt,*argsym;
+
+  if (!needtoken(tSYMBOL)) {
+    lexclr(TRUE);
+    return;
+  } /* if */
+  tokeninfo(&val,&str);
+  assert(strlen(str)<=sNAMEMAX);
+  strcpy(name,str);
+
+  /* optional explicit "[interval]" -- may be a RUNTIME expression (e.g.
+   * "defer Kick[time](id)"), not just a constant. A constant is folded; a
+   * runtime value is stashed in a temp cell and loaded at the call. Without
+   * "[...]" the default from the "timer" declaration is used (the registry
+   * persists across passes, so a forward-declared timer resolves in the write
+   * pass). */
+  interval=0;
+  haveinterval=FALSE;
+  interval_runtime=FALSE;
+  intervaladdr=0;
+  if (matchtoken('[')) {
+    ident=expression(&val,NULL,NULL,FALSE);   /* interval, in PRI */
+    needtoken(']');
+    haveinterval=TRUE;
+    if (ident==iCONSTEXPR) {
+      interval=val;                 /* fold a constant interval */
+    } else {
+      declared+=1;                  /* stash the runtime interval in a temp cell */
+      intervaladdr=-declared*(cell)sizeof(cell);
+      modstk(-(int)sizeof(cell));
+      assert(curfunc!=NULL);
+      if (curfunc->x.stacksize<declared+1)
+        curfunc->x.stacksize=declared+1;
+      stgwrite("\tstor.s.pri ");
+      outval(intervaladdr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      interval_runtime=TRUE;
+    } /* if */
+  } /* if */
+  if (!haveinterval && !timerdefault_get(name,&interval))
+    error(17,name);                 /* no "timer <name>" and no explicit [interval] */
+
+  needtoken('(');
+  /* evaluate each argument once, left to right, into a temp stack cell; record a
+   * format char per arg. They are re-pushed in reverse for the call below. */
+  nargs=0;
+  if (!matchtoken(')')) {
+    do {
+      if (nargs>=sMAXARGS-4) {       /* leave room for name/interval/false/fmt */
+        error(45);                   /* too many function arguments */
+        break;
+      } /* if */
+      argsym=NULL;
+      ident=expression(&val,&tag,&argsym,FALSE);   /* value (or array addr) in PRI */
+      if (ident==iCONSTEXPR)
+        ldconst(val,sPRI);
+      if (ident==iARRAY || ident==iREFARRAY)
+        fmt[nargs]='s';              /* pass a string/array by address */
+      else if (sc_rationaltag!=0 && tag==sc_rationaltag)
+        fmt[nargs]='f';
+      else
+        fmt[nargs]='i';
+      declared+=1;
+      argaddr[nargs]=-declared*(cell)sizeof(cell);
+      modstk(-(int)sizeof(cell));
+      assert(curfunc!=NULL);
+      if (curfunc->x.stacksize<declared+1)
+        curfunc->x.stacksize=declared+1;
+      stgwrite("\tstor.s.pri ");
+      outval(argaddr[nargs],TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      nargs++;
+    } while (matchtoken(','));
+    needtoken(')');
+  } /* if */
+  fmt[nargs]='\0';
+
+  rt=findglb("Timer_SetEx",sGLOBAL);
+  if (rt==NULL || rt->ident!=iFUNCTN) {
+    error(17,"Timer_SetEx");          /* the "defer"/"repeat" runtime binding: #include <timers> */
+  } else {
+    /* string literals (dumped with this function's literals): "Name" and fmt */
+    litstart=litidx;
+    for (k=0; name[k]!='\0'; k++)
+      litadd((cell)name[k]);
+    litadd(0);
+    nameaddr=(litstart+glb_declared)*(cell)sizeof(cell);
+    litstart=litidx;
+    for (k=0; fmt[k]!='\0'; k++)
+      litadd((cell)fmt[k]);
+    litadd(0);
+    fmtaddr=(litstart+glb_declared)*(cell)sizeof(cell);
+    /* SetTimerEx(name, interval, false, fmt, args...): push right to left, so
+     * arg0 (name) ends on top; then the byte count; then the call. A format
+     * native takes its variadic args BY REFERENCE: a scalar ('i'/'f') is passed
+     * as the ADDRESS of the cell holding it (SetTimerEx dereferences per fmt),
+     * while a string/array ('s') is passed as the array address itself (which
+     * the temp cell already holds). */
+    for (k=nargs-1; k>=0; k--) {
+      if (fmt[k]=='s') {
+        stgwrite("\tload.s.pri ");   /* the string/array address (by value) */
+        outval(argaddr[k],TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+        pushreg(sPRI);
+      } else {
+        stgwrite("\tpush.adr ");      /* &cell: the scalar passed by reference */
+        outval(argaddr[k],TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* if */
+    } /* for */
+    ldconst(fmtaddr,sPRI);           /* format string */
+    pushreg(sPRI);
+    ldconst(repeating ? 1 : 0,sPRI); /* one-shot (defer) or repeating (repeat) */
+    pushreg(sPRI);
+    if (interval_runtime) {          /* interval (ms): runtime value or constant */
+      stgwrite("\tload.s.pri ");
+      outval(intervaladdr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+    } else {
+      ldconst(interval,sPRI);
+    } /* if */
+    pushreg(sPRI);
+    ldconst(nameaddr,sPRI);          /* public-name string */
+    pushreg(sPRI);
+    pushval((cell)(nargs+4)*(cell)sizeof(cell));   /* arg count in bytes */
+    ffcall(rt,NULL,nargs+4);
+    markusage(rt,uREAD);             /* keep the target live (a stock wrapper would
+                                      * otherwise be stripped and the call misdirected;
+                                      * a native gets its sysreq id assigned here) */
+    if ((rt->usage & uNATIVE)!=0 && rt->x.lib!=NULL)
+      rt->x.lib->value+=1;           /* list the native's library */
+  } /* if */
+
+  /* reclaim the temp cells (the runtime interval, if any, plus the args). The
+   * SetTimerEx return value (the timer handle) is left in PRI for "repeat". */
+  ntmp=nargs+(interval_runtime ? 1 : 0);
+  if (ntmp>0) {
+    modstk((int)ntmp*(int)sizeof(cell));
+    declared-=ntmp;
+  } /* if */
+}
+
+/* "defer Name[ms](args);" statement: schedule a one-shot call and discard the
+ * handle. */
+static void dodefer(void)
+{
+  emit_timer_schedule(FALSE);
+  needtoken(tTERM);
+}
+
+/* "stop <handle>;" statement: KillTimer(handle). The handle is any expression
+ * (typically the value a "repeat" returned, stored in a variable/field). */
+static void dostop(void)
+{
+  symbol *rt;
+  cell val;
+  int ident,tag;
+
+  ident=expression(&val,&tag,NULL,FALSE);   /* the timer handle, in PRI */
+  if (ident==iCONSTEXPR)
+    ldconst(val,sPRI);
+  rt=findglb("Timer_Kill",sGLOBAL);
+  if (rt==NULL || rt->ident!=iFUNCTN) {
+    error(17,"Timer_Kill");           /* the "stop" runtime binding: #include <timers> */
+  } else {
+    pushreg(sPRI);
+    pushval(1*(cell)sizeof(cell));
+    ffcall(rt,NULL,1);
+    markusage(rt,uREAD);
+    if ((rt->usage & uNATIVE)!=0 && rt->x.lib!=NULL)
+      rt->x.lib->value+=1;
+  } /* if */
+  needtoken(tTERM);
+}
+
 static void dotask(int perplayer)
 {
   char name[sNAMEMAX+1];
@@ -2379,9 +2660,9 @@ static void timers_emit(void)
   if (timer_registry==NULL)
     return;
 
-  rt=findglb("SetTimer",sGLOBAL);
+  rt=findglb("Timer_Set",sGLOBAL);
   if (rt==NULL || rt->ident!=iFUNCTN) {
-    error(17,"SetTimer");         /* undefined symbol: include the SA-MP/open.mp SDK */
+    error(17,"Timer_Set");        /* the "task"/"ptask" runtime binding: #include <timers> */
     return;
   } /* if */
   /* NB: do NOT mark SetTimer uREAD yet -- see the uREAD-after-ffcall note below. */
@@ -9291,6 +9572,18 @@ static void statement(int *lastindent,int allow_decl)
     break;
   case tIF:
     lastst=doif();
+    break;
+  case tDEFER:
+    /* "defer Name[ms](args);": schedule a one-shot "timer Name" call. Lowers to
+     * SetTimerEx (see dodefer). A statement, so it lives in the function body.
+     * ("repeat" is an EXPRESSION, handled in primary() -- it returns a handle.) */
+    dodefer();
+    lastst=tEXPR;
+    break;
+  case tSTOP:
+    /* "stop <handle>;": KillTimer(handle). */
+    dostop();
+    lastst=tEXPR;
     break;
   case tWHILE:
     lastst=dowhile();

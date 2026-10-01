@@ -1,9 +1,10 @@
 #include <console>
 
-// pawnruns has no SA-MP SetTimer; this stub records the calls. The explicit
-// warmup call keeps the stub emitted and shows the plain call convention; the
-// second line proves the compiler's synthesised `task` auto-registration.
-stock SetTimer(const func[], interval, bool:repeat)
+// "task" lowers to the pawn-x runtime name Timer_Set (bound to the host's
+// SetTimer by <timers>). pawnruns has no host timer; this stub binds Timer_Set
+// and records the calls. The warmup call keeps the stub live and shows the
+// convention; the second line proves the synthesised `task` auto-registration.
+stock Timer_Set(const func[], interval, bool:repeat)
 {
     printf("ST %s %d %d\n", func, interval, repeat);
     return 7;
@@ -16,7 +17,7 @@ task Ticker[1000]() { ++gCount; }
 
 main()
 {
-    SetTimer("warmup", 1, false);   // keeps the stub live; shows the convention
+    Timer_Set("warmup", 1, false);  // keeps the stub live; shows the convention
     OnGameModeInit();               // fires the synthesised @yt_init registration
     printf("count=%d\n", gCount);
 }

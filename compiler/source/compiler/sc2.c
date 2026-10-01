@@ -2388,24 +2388,73 @@ SC_FUNC int lex(cell *lexvalue,char **lexsym)
      *
      * Two tiers, because the lexer emits tLABEL not only for a tag prefix
      * ("bool:hook") but also for a statement label ("retry:") and a bare tag
-     * override on an expression ("Float:await ..."). "hook", "async" and "iterfunc"
-     * are DECLARATION-only keywords -- they can never be a statement or an
-     * expression operand -- so after tLABEL they can only be a name, and are safe to
-     * downgrade. "await", "yield" and "foreach" CAN follow a label or a tag override
-     * as genuine keywords ("retry: await ...", "loop: foreach ...", "Float:await"),
-     * so they are downgraded only after the unambiguous declaration specifiers, not
-     * after tLABEL. */
+     * override on an expression ("Float:await ..."). "hook", "async" and
+     * "iterfunc" are DECLARATION-only keywords -- they can never be a statement
+     * or an expression operand -- so after tLABEL they can only be a name, and
+     * are safe to downgrade. "await", "yield" and "foreach" CAN follow a label or
+     * a tag override as genuine keywords ("retry: await ...", "loop: foreach ...",
+     * "Float:await"), so they are downgraded only after the unambiguous
+     * declaration specifiers, not after tLABEL. ("task"/"ptask" use a dedicated
+     * lookahead below instead of these tiers.) */
     if (((i==tHOOK || i==tASYNC || i==tITERFUNC || i==tINLINE || i==tUSING)
             && (prevtok==tLABEL || prevtok==tNEW || prevtok==tSTATIC || prevtok==tSTOCK
                 || prevtok==tPUBLIC || prevtok==tFORWARD || prevtok==tNATIVE
                 || prevtok==tCONST || prevtok==tOPERATOR || prevtok=='.'))
-        || ((i==tAWAIT || i==tYIELD || i==tFOREACH || i==tTASK || i==tPTASK)
+        || ((i==tAWAIT || i==tYIELD || i==tFOREACH)
             && (prevtok==tNEW || prevtok==tSTATIC || prevtok==tSTOCK || prevtok==tPUBLIC
                 || prevtok==tFORWARD || prevtok==tNATIVE || prevtok==tCONST
                 || prevtok==tOPERATOR || prevtok=='.'))) {
       i+=1;
       tokptr+=1;
       continue;
+    } /* if */
+    /* "task"/"ptask"/"timer" are keywords ONLY in the shape "kw Name[..." (an
+     * identifier then '['), and "defer" in "defer Name[..." or "defer Name(...".
+     * Everywhere else (a variable/parameter named "timer" or "defer", or one
+     * passed in an expression such as PawnPlus core's "task_wait(task)" /
+     * "Task:task", or the extremely common "new timer = SetTimer(...)") they are
+     * ordinary identifiers. Peek past the keyword: skip blanks, require an
+     * identifier, skip it and blanks, then require '[' (all four) or, for
+     * "defer"/"repeat", '('. This lookahead makes them parse as names in
+     * statement, expression AND parameter position. */
+    if (i==tTASK || i==tPTASK || i==tTIMER || i==tDEFER || i==tREPEAT) {
+      int kwlen=(int)strlen(*tokptr);
+      if (strncmp((const char *)lptr,*tokptr,kwlen)==0 && !alphanum(lptr[kwlen])) {
+        const unsigned char *p=(const unsigned char *)(lptr+kwlen);
+        int isdecl=FALSE;
+        while (*p==' ' || *p=='\t')
+          p++;
+        if (alpha(*p)) {                 /* the timer name */
+          while (alphanum(*p))
+            p++;
+          while (*p==' ' || *p=='\t')
+            p++;
+          if (*p=='[' || ((i==tDEFER || i==tREPEAT) && *p=='('))  /* "Name[" (or defer/repeat "Name(") */
+            isdecl=TRUE;
+        } /* if */
+        if (!isdecl) {
+          i+=1;
+          tokptr+=1;
+          continue;
+        } /* if */
+      } /* if */
+    } /* if */
+    /* "stop" is the kill-timer keyword ONLY when a handle expression follows
+     * (an identifier, e.g. "stop PlayerGym[id][...]" or "stop GetT(x)"). A
+     * variable named "stop" ("stop = 0", "stop;", "x + stop") stays an
+     * identifier. */
+    if (i==tSTOP) {
+      int kwlen=(int)strlen(*tokptr);
+      if (strncmp((const char *)lptr,*tokptr,kwlen)==0 && !alphanum(lptr[kwlen])) {
+        const unsigned char *p=(const unsigned char *)(lptr+kwlen);
+        while (*p==' ' || *p=='\t')
+          p++;
+        if (!alpha(*p)) {                /* not "stop <identifier>" -> a name */
+          i+=1;
+          tokptr+=1;
+          continue;
+        } /* if */
+      } /* if */
     } /* if */
     /* the string-hash intrinsics (hash/ihash/fnv1/fnv1a) are soft keywords:
      * each is the intrinsic ONLY in call position (directly followed by '(').
