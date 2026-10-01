@@ -78,7 +78,7 @@ stock sethas(const array[], value)
 }
 stock setget(const array[], index)
 	return (0 <= index < array[0]) ? array[1 + index] : -1;
-stock setadd(array[], value)
+stock setadd(array[], value, size = sizeof array)
 {
 	if (value < 0)
 		return 0;                       // non-negative values only
@@ -86,6 +86,8 @@ stock setadd(array[], value)
 	new pos = XSet_LB(array, value);
 	if (pos <= count && array[pos] == value)
 		return 0;                       // already present
+	if (count + 1 >= size)
+		return 0;                       // full: refuse rather than run off the end
 	for (new i = count; i >= pos; --i)  // shift the tail up one slot
 		array[i + 1] = array[i];
 	array[pos] = value;
@@ -115,10 +117,10 @@ stock setfree(const array[])
 	}
 	return expected;
 }
-stock setalloc(array[])
+stock setalloc(array[], size = sizeof array)
 {
 	new id = setfree(array);
-	setadd(array, id);
+	setadd(array, id, size);
 	return id;
 }
 stock setrandom(const array[])
