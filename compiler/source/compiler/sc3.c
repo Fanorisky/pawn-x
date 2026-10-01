@@ -1664,9 +1664,9 @@ static int hier2(value *lval)
         } /* while */
       } /* if */
     } else {
-      if (curfunc==NULL || strlen(curfunc->name)+strlen(st)+10>sNAMEMAX)
+      if (curfunc==NULL)
         return error(17,st);                              /* undefined symbol */
-      sprintf(hidden,"_inline.%s.%s",curfunc->name,st);
+      inline_hidden_name(hidden,curfunc->name,st);
       isym=findglb(hidden,sGLOBAL);
       if (isym==NULL || isym->ident!=iFUNCTN)
         return error(17,st);    /* no "inline" of that name in this function */

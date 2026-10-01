@@ -2665,6 +2665,24 @@ static void dohook(void)
  *  Milestone 0: no closure capture yet -- the body sees only its own parameters and
  *  globals (the enclosing locals are detached during compilation). Capture via a
  *  static link is the next milestone. */
+/*  inline_hidden_name - the mangled top-level name of an "inline" named `iname`
+ *  defined inside function `fname`. It hashes (fname, iname) rather than
+ *  embedding the literal parent name, so the result always fits in sNAMEMAX even
+ *  when the enclosing function has a long mangled name (e.g. a hook body). Both
+ *  the definition (doinline) and the use ("using inline") build the identical
+ *  name from the same pair, so they resolve to the same symbol. */
+SC_FUNC void inline_hidden_name(char *dst,const char *fname,const char *iname)
+{
+  unsigned long h=5381UL;
+  const char *p;
+  for (p=fname; *p!='\0'; ++p)
+    h=h*33UL+(unsigned char)*p;
+  h=h*33UL+(unsigned long)'@';
+  for (p=iname; *p!='\0'; ++p)
+    h=h*33UL+(unsigned char)*p;
+  sprintf(dst,"_in.%08lx",h&0xffffffffUL);
+}
+
 static void doinline(void)
 {
   char name[sNAMEMAX+1];
@@ -2690,12 +2708,7 @@ static void doinline(void)
     return;
   } /* if */
   strcpy(name,str);
-  if (strlen(curfunc->name)+strlen(name)+10>sNAMEMAX) {
-    error(200,name,sNAMEMAX);   /* combined hidden name too long */
-    lexclr(TRUE);
-    return;
-  } /* if */
-  sprintf(hidden,"_inline.%s.%s",curfunc->name,name);
+  inline_hidden_name(hidden,curfunc->name,name);
 
   /* Flush the enclosing function's PENDING string literals to the data segment
    * before compiling the inline. newfunc() resets the shared literal queue
@@ -9775,7 +9788,7 @@ static int doforeach(void)
   char *str;
   char varname[sNAMEMAX+1];
   symbol *loopsym;
-  cell iaddr,kaddr,cntaddr,baseaddr,operand_heap;
+  cell iaddr,kaddr,cntaddr,baseaddr,operand_heap,paddr,fastaddr;
   int dim[sDIMEN_MAX],idxtag[sDIMEN_MAX];
   symbol *gensym,*cand;         /* generator (iterfunc) support */
   cell curaddr,argaddr[sMAXARGS],iterstop,stateaddr;
@@ -10207,6 +10220,12 @@ static int doforeach(void)
   declared+=1;
   cntaddr=-declared*(cell)sizeof(cell);
   modstk(-(int)sizeof(cell));
+  declared+=1;                          /* p: 1-based position of the current value (fast-walk) */
+  paddr=-declared*(cell)sizeof(cell);
+  modstk(-(int)sizeof(cell));
+  declared+=1;                          /* usefast: 1 while the inline O(1) walk is still valid */
+  fastaddr=-declared*(cell)sizeof(cell);
+  modstk(-(int)sizeof(cell));
   assert(curfunc!=NULL);
   if (curfunc->x.stacksize<declared+1)
     curfunc->x.stacksize=declared+1;
@@ -10267,6 +10286,25 @@ static int doforeach(void)
       stgwrite("\tstor.s.pri ");       /* curval = PRI */
       outval(kaddr,TRUE);
       code_idx+=opcodes(1)+opargs(1);
+      /* init the inline fast-walk state: p = 1 (forward) or count (reverse),
+       * and usefast = 1. While usefast holds, the advance is an O(1) inline
+       * step (no set* call); a mid-loop shift downgrades it to setnext/setprev. */
+      if (reverse) {
+        stgwrite("\tload.s.pri ");
+        outval(baseaddr,TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+        stgwrite("\tload.i\n");         /* PRI = array[0] = count */
+        code_idx+=opcodes(1);
+      } else {
+        ldconst(1,sPRI);
+      } /* if */
+      stgwrite("\tstor.s.pri ");
+      outval(paddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      ldconst(1,sPRI);
+      stgwrite("\tstor.s.pri ");
+      outval(fastaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
     } /* if */
   } else {
     /* degenerate (operand not an array; already errored): skip the loop */
@@ -10297,27 +10335,107 @@ static int doforeach(void)
    * holds the current value and is overwritten with the result. */
   {
     symbol *n_step=findglb(reverse ? "setprev" : "setnext",sGLOBAL);
-    if (n_step!=NULL) {
-      stgwrite("\tload.s.pri ");       /* PRI = curval */
-      outval(kaddr,TRUE);
+    if (n_step==NULL) {
+      error(255,"the \"foreach\" keyword needs #include <foreach> (it lowers to the set* natives)");
+    } else {
+      int lbl_slow=getlabel();
+      int lbl_down=getlabel();
+      /* inline O(1) fast path (no set* call), valid while usefast != 0: if
+       * array[p] still holds the current value v then nothing at or before p
+       * was removed, so the next member is array[p +/- 1]. A mid-loop shift
+       * (array[p] != v: v or an earlier value removed) downgrades to
+       * setnext/setprev for the rest of the loop (still correct). */
+      stgwrite("\tload.s.pri ");
+      outval(fastaddr,TRUE);
       code_idx+=opcodes(1)+opargs(1);
-      pushreg(sPRI);                   /* arg2 = curval */
-      stgwrite("\tload.s.pri ");       /* PRI = base address */
+      stgwrite("\tjzer ");
+      outval(lbl_slow,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tload.s.alt ");        /* ALT = base */
       outval(baseaddr,TRUE);
       code_idx+=opcodes(1)+opargs(1);
-      pushreg(sPRI);                   /* arg1 = set */
-      pushval(2*(cell)sizeof(cell));
-      ffcall(n_step,NULL,2);           /* PRI = next/prev value, or cellmin */
-      markusage(n_step,uREAD);
-      stgwrite("\tstor.s.pri ");       /* curval = PRI (stor preserves PRI) */
+      stgwrite("\tload.s.pri ");        /* PRI = p */
+      outval(paddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tlidx\n");             /* PRI = array[p] */
+      code_idx+=opcodes(1);
+      stgwrite("\tload.s.alt ");        /* ALT = v */
       outval(kaddr,TRUE);
       code_idx+=opcodes(1)+opargs(1);
-      ldconst((cell)((ucell)1 << (PAWN_CELL_SIZE-1)),sALT);  /* ALT = cellmin sentinel */
-      stgwrite("\tjneq ");             /* loop again while curval != cellmin */
+      stgwrite("\tjneq ");              /* array[p] != v -> downgrade */
+      outval(lbl_down,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tload.s.pri ");        /* p += reverse ? -1 : +1 */
+      outval(paddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tadd.c ");
+      outval(reverse ? -1 : 1,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tstor.s.pri ");
+      outval(paddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      if (reverse) {
+        ldconst(1,sALT);               /* ALT = 1 */
+        stgwrite("\tload.s.pri ");
+        outval(paddr,TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+        stgwrite("\tjsless ");          /* p < 1 -> exit */
+        outval(wq[wqEXIT],TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } else {
+        stgwrite("\tload.s.pri ");      /* PRI = array[0] = count */
+        outval(baseaddr,TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+        stgwrite("\tload.i\n");
+        code_idx+=opcodes(1);
+        stgwrite("\tmove.alt\n");        /* ALT = count */
+        code_idx+=opcodes(1);
+        stgwrite("\tload.s.pri ");       /* PRI = p */
+        outval(paddr,TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+        stgwrite("\tjsgrtr ");           /* p > count -> exit */
+        outval(wq[wqEXIT],TRUE);
+        code_idx+=opcodes(1)+opargs(1);
+      } /* if */
+      stgwrite("\tload.s.alt ");         /* v = array[p] */
+      outval(baseaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tload.s.pri ");
+      outval(paddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tlidx\n");
+      code_idx+=opcodes(1);
+      stgwrite("\tstor.s.pri ");
+      outval(kaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      stgwrite("\tjump ");
       outval(lbl_cond,TRUE);
       code_idx+=opcodes(1)+opargs(1);
-    } else {
-      error(255,"the \"foreach\" keyword needs #include <foreach> (it lowers to the set* natives)");  /* setnext/setprev absent: stale or missing include */
+      setlabel(lbl_down);                /* shift seen: stop using the fast path */
+      stgwrite("\tzero.pri\n");
+      code_idx+=opcodes(1);
+      stgwrite("\tstor.s.pri ");
+      outval(fastaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      setlabel(lbl_slow);                /* slow path: setnext/setprev(base, v) */
+      stgwrite("\tload.s.pri ");
+      outval(kaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      pushreg(sPRI);
+      stgwrite("\tload.s.pri ");
+      outval(baseaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      pushreg(sPRI);
+      pushval(2*(cell)sizeof(cell));
+      ffcall(n_step,NULL,2);             /* PRI = next/prev value, or cellmin */
+      markusage(n_step,uREAD);
+      stgwrite("\tstor.s.pri ");
+      outval(kaddr,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
+      ldconst((cell)((ucell)1 << (PAWN_CELL_SIZE-1)),sALT);  /* ALT = cellmin */
+      stgwrite("\tjneq ");               /* loop again while curval != cellmin */
+      outval(lbl_cond,TRUE);
+      code_idx+=opcodes(1)+opargs(1);
     } /* if */
   }
   setlabel(wq[wqEXIT]);

@@ -1,0 +1,8 @@
+{
+  'test_type': 'runtime',
+  'output': """
+hooksum=10
+
+inline_in_hook.amx returns 0
+"""
+}
