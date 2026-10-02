@@ -35,10 +35,13 @@ more important, so it goes first. Upgrade: invert the numbers when porting
 `hook Foo@N` to `hook:N Foo`.
 
 **Construct keywords are reserved, so pawn-x and YSI cannot run together.**
-`foreach`, `hook`, `task`, `ptask`, `async`, `await`, `yield`, `inline`, and
-`iterfunc` are real compiler keywords, not optional `__`-prefixed macros. The
-clean syntax is the whole point of moving this into the compiler. The newer
-hash intrinsics (`hash`/`ihash`/`fnv1`/`fnv1a`) are soft in call position
+`foreach`, `hook`, `task`, `ptask`, `inline`, and `iterfunc` are real compiler
+keywords, not optional `__`-prefixed macros. The clean syntax is the whole point of
+moving this into the compiler. The async keywords `async`, `await`, and `yield` are
+opt-in: they are off by default (ordinary identifiers) and turn on only when their
+include emits a pragma, `#include <async>` for `async`/`await`
+(`#pragma pawnx_async`) and `#include <foreach>` for `yield` (`#pragma pawnx_yield`).
+The newer hash intrinsics (`hash`/`ihash`/`fnv1`/`fnv1a`) are soft in call position
 (usable as identifiers except directly before `(`). Upgrade: rename a variable
 or function that collides, and remove the YSI includes (the pawn-x includes
 detect YSI and stop with a clear error).
@@ -132,7 +135,12 @@ YSI. So there is no working YSI runtime to migrate *from*. pawn-x is the first t
 actually implement `async`/`await`. The table below maps YSI's *intended* syntax
 (from its docs/sketch) to what pawn-x provides.
 
-Add the include (it is not part of the umbrella `<pawn-x>`):
+Add the include (it is not part of the umbrella `<pawn-x>`). This include is also
+the opt-in: `async`/`await` are off by default and are ordinary identifiers until
+`<async>` emits `#pragma pawnx_async`, so a script that never includes it can name a
+variable `async` or `await` (and can use PawnPlus's own `async`/`await` syntax
+instead). The generator `yield` keyword is opt-in the same way, enabled by
+`#include <foreach>` (`#pragma pawnx_yield`).
 
 ```pawn
 #include <async>

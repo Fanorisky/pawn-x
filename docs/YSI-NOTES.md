@@ -53,13 +53,18 @@ before `hook:0`); YSI's `@N` suffix runs the opposite way. **Upgrade:** invert
 the numbers when porting `hook Foo@N` → `hook:N Foo`.
 
 **Reserved keywords (#5/#8).** pawn-x reserves its construct keywords
-(`foreach`, `hook`, `task`, `ptask`, `async`, `await`, `yield`, `inline`,
-`iterfunc`) rather than using `__`-prefixed names, the clean syntax is the
-point of doing this in the compiler. The newer string-hash intrinsics
-(`hash`/`ihash`/`fnv1`/`fnv1a`) are **call-position soft** (identifiers except
-directly before `(`), which is the friendlier model; the older keywords are
-downgraded only in declaration positions. **Upgrade:** rename a variable/function
-that collides with a reserved keyword (as when adopting any YSI keyword). This is
+(`foreach`, `hook`, `task`, `ptask`, `inline`, `iterfunc`) rather than using
+`__`-prefixed names, the clean syntax is the point of doing this in the compiler.
+The async keywords (`async`, `await`, `yield`) are **opt-in**: off by default
+(ordinary identifiers) and armed only when their include emits a pragma
+(`#include <async>` emits `#pragma pawnx_async` for `async`/`await`,
+`#include <foreach>` emits `#pragma pawnx_yield` for `yield`), which keeps them from
+clashing with PawnPlus's own `async`/`await`/`yield` syntax. The newer string-hash
+intrinsics (`hash`/`ihash`/`fnv1`/`fnv1a`) are **call-position soft** (identifiers
+except directly before `(`), which is the friendlier model; the older reserved
+keywords are downgraded only in declaration positions. **Upgrade:** rename a
+variable/function that collides with a reserved keyword (as when adopting any YSI
+keyword). This is
 the accepted trade of a compiler feature over an optional, `YSI_NO_KEYWORD_*`-style
 library; his `__hook`+`#define hook __hook` alternative remains a reasonable
 future option if collisions prove common.
