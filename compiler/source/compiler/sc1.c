@@ -2399,6 +2399,7 @@ SC_FUNC void emit_timer_schedule(int repeating)
   char *str;
   int nargs,k,haveinterval,interval_runtime,ident,tag,ntmp;
   symbol *rt,*argsym;
+  int localstaging,stgindex;
 
   if (!needtoken(tSYMBOL)) {
     lexclr(TRUE);
@@ -2407,6 +2408,21 @@ SC_FUNC void emit_timer_schedule(int repeating)
   tokeninfo(&val,&str);
   assert(strlen(str)<=sNAMEMAX);
   strcpy(name,str);
+
+  /* Stage-buffer the whole thing. The interval and each argument are parsed
+   * with expression(); without staging the peephole optimizer and the stgdel()
+   * that plnge2() uses to scratch a pushed left operand when the right operand
+   * is a constant are no-ops, so "<expr> OP <constant>" (e.g. "defer F[ms](n+1)"
+   * or an interval like "[strlen(s)*60]") emits broken code -- the pushed left
+   * operand is orphaned and ALT is loaded with the constant, computing
+   * "<const> OP <const>" instead. Same fix as the yield-return path. */
+  localstaging=FALSE;
+  if (!staging) {
+    stgset(TRUE);                   /* start stage-buffering */
+    localstaging=TRUE;
+    assert(stgidx==0);
+  } /* if */
+  stgindex=stgidx;
 
   /* optional explicit "[interval]" -- may be a RUNTIME expression (e.g.
    * "defer Kick[time](id)"), not just a constant. A constant is folded; a
@@ -2538,6 +2554,11 @@ SC_FUNC void emit_timer_schedule(int repeating)
     modstk((int)ntmp*(int)sizeof(cell));
     declared-=ntmp;
   } /* if */
+
+  if (localstaging) {
+    stgout(stgindex);
+    stgset(FALSE);                  /* flush the staged code, stop staging */
+  } /* if */
 }
 
 /* "defer Name[ms](args);" statement: schedule a one-shot call and discard the
@@ -2652,6 +2673,30 @@ static void dotask(int perplayer)
   t->perplayer=perplayer;
   t->next=timer_registry;
   timer_registry=t;
+
+  /* Keep the runtime binding alive. timers_emit() (run after end-of-parse)
+   * synthesises @yt_init, which CALLS the Timer_Set stock (and, for ptask, the
+   * __ptask_dispatch helper). Those calls are created after dead-code
+   * elimination, so without an early reference the stocks are dropped as unused;
+   * @yt_init's call then resolves to a wrong address and SetTimer is never
+   * issued -> the timer silently never fires. Mark them read here, as soon as a
+   * task/ptask is seen, exactly as the @yt_Name body above is kept. Requires
+   * <timers> (and <ptask>) to be included before the task/ptask, which they are
+   * by construction (the keyword's runtime lives there). */
+  {
+    symbol *rtsym=findglb("Timer_Set",sGLOBAL);
+    /* Only the pawn STOCK is the DCE victim. A native Timer_Set keeps its own
+     * liveness via timers_emit's uREAD-AFTER-ffcall (which also assigns its
+     * sysreq id); marking a native uREAD here, before that first ffcall, revives
+     * the original bug (no sysreq id -> corrupt natives table). So skip natives. */
+    if (rtsym!=NULL && rtsym->ident==iFUNCTN && (rtsym->usage & uNATIVE)==0)
+      markusage(rtsym,uREAD);
+    if (perplayer) {
+      symbol *dsym=findglb("__ptask_dispatch",sGLOBAL);
+      if (dsym!=NULL && dsym->ident==iFUNCTN && (dsym->usage & uNATIVE)==0)
+        markusage(dsym,uREAD);
+    } /* if */
+  }
 }
 
 /*  timers_emit - at end-of-parse (both passes, before hook_emit_dispatchers),

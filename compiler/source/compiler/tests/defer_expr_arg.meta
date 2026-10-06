@@ -1,0 +1,9 @@
+{
+  'test_type': 'pcode_check',
+  'code_pattern': r"""
+load.s.pri 0000000c
+[0-9a-f]+  add.c 00000001
+[0-9a-f]+  stack fffffffc
+[0-9a-f]+  stor.s.pri fffffffc
+"""
+}
